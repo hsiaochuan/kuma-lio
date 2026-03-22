@@ -45,7 +45,11 @@ atv_config = '../config/MCD_VIRAL_ATV.yaml'
 handheld_config = '../config/MCD_VIRAL_HandHeld.yaml'
 time_str = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 f = open(os.path.join("/tmp/result_" + time_str + ".txt"), 'w')
-
+branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode("utf-8").strip()
+commit_id = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
+f.write(f'GIT_BRANCH = "{branch}"\n')
+f.write(f'GIT_COMMIT = "{commit_id}"\n')
+f.flush()
 for bag_fname in bag_files:
     dir = os.path.dirname(bag_fname)
     base_name = os.path.basename(bag_fname)

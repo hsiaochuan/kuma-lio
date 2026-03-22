@@ -6,6 +6,8 @@ bf = open(b_fname, 'r')
 a = dict()
 b = dict()
 for line_num, line in enumerate(af, 1):
+    if ',' not in line:
+        continue
     line = line.strip()
     parts = line.split(',', 1)
     name = parts[0].strip()
@@ -13,6 +15,8 @@ for line_num, line in enumerate(af, 1):
     num = float(num_str)
     a[name] = num
 for line_num, line in enumerate(bf, 1):
+    if ',' not in line:
+        continue
     line = line.strip()
     parts = line.split(',', 1)
     name = parts[0].strip()
