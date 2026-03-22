@@ -765,6 +765,10 @@ void LaserMapping::PublishFrameWorld() {
         static int scan_wait_num = 0;
         scan_wait_num++;
         if (pcl_wait_save_->size() > 0 && pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
+            pcl::VoxelGrid<PointType> sampler;
+            sampler.setLeafSize(0.2, 0.2, 0.2);
+            sampler.setInputCloud(pcl_wait_save_);
+            sampler.filter(*pcl_wait_save_);
             pcd_index_++;
             std::string all_points_dir(std::string(std::string(ROOT_DIR) + "PCD/scans_") + std::to_string(pcd_index_) +
                                        std::string(".pcd"));
@@ -879,7 +883,7 @@ void LaserMapping::Finish() {
         std::string all_points_dir(std::string(std::string(ROOT_DIR) + "PCD/") + file_name);
         pcl::PCDWriter pcd_writer;
         LOG(INFO) << "current scan saved to /PCD/" << file_name;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_);
+//        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_);
     }
 
     LOG(INFO) << "finish done";
