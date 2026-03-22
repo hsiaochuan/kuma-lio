@@ -91,12 +91,10 @@ class LaserMapping {
     float det_range_ = 300.0f;
     double cube_len_ = 0;
     double filter_size_map_min_ = 0;
-    bool localmap_initialized_ = false;
 
     /// params
     std::vector<double> extrinT_{3, 0.0};  // lidar-imu translation
     std::vector<double> extrinR_{9, 0.0};  // lidar-imu rotation
-    std::string map_file_path_;
 
     /// point clouds data
     CloudPtr scan_undistort_{new PointCloudType()};   // scan after undistortion
@@ -125,7 +123,6 @@ class LaserMapping {
     std::deque<double> time_buffer_;
     std::deque<PointCloudType::Ptr> lidar_buffer_;
     std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer_;
-    nav_msgs::Odometry odom_aft_mapped_;
 
     /// options
     bool time_sync_en_ = false;
@@ -151,8 +148,6 @@ class LaserMapping {
     common::MeasureGroup measures_;                    // sync IMU and lidar scan
     esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;  // esekf
     state_ikfom state_point_;                          // ekf current state
-    vect3 pos_lidar_;                                  // lidar position after eskf update
-    common::V3D euler_cur_ = common::V3D::Zero();      // rotation in euler angles
     bool extrinsic_est_en_ = true;
 
     /////////////////////////  debug show / save /////////////////////////////////////////////////////////
@@ -166,11 +161,9 @@ class LaserMapping {
     bool runtime_pos_log_ = true;
     int pcd_save_interval_ = -1;
     bool path_save_en_ = false;
-    std::string dataset_;
 
     PointCloudType::Ptr pcl_wait_save_{new PointCloudType()};  // debug save
     nav_msgs::Path path_;
-    geometry_msgs::PoseStamped msg_body_pose_;
 };
 
 }  // namespace faster_lio

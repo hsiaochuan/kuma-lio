@@ -69,7 +69,6 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
 
     nh.param<int>("max_iteration", options::NUM_MAX_ITERATIONS, 4);
     nh.param<float>("esti_plane_threshold", options::ESTI_PLANE_THRESHOLD, 0.1);
-    nh.param<std::string>("map_file_path", map_file_path_, "");
     nh.param<bool>("common/time_sync_en", time_sync_en_, false);
     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
     nh.param<double>("filter_size_map", filter_size_map_min_, 0.0);
@@ -337,8 +336,6 @@ void LaserMapping::Run() {
             kf_.update_iterated_dyn_share_modified(options::LASER_POINT_COV, solve_H_time);
             // save the state
             state_point_ = kf_.get_x();
-            euler_cur_ = SO3ToEuler(state_point_.rot);
-            pos_lidar_ = state_point_.pos + state_point_.rot * state_point_.offset_T_L_I;
         },
         "IEKF Solve and Update");
 
@@ -689,45 +686,47 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 /////////////////////////////////////  debug save / show /////////////////////////////////////////////////////
 
 void LaserMapping::PublishPath(const ros::Publisher pub_path) {
-    SetPosestamp(msg_body_pose_);
-    msg_body_pose_.header.stamp = ros::Time().fromSec(lidar_end_time_);
-    msg_body_pose_.header.frame_id = tf_world_frame_;
+    geometry_msgs::PoseStamped msg_body_pose;
+    SetPosestamp(msg_body_pose);
+    msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time_);
+    msg_body_pose.header.frame_id = tf_world_frame_;
 
     /*** if path is too large, the rvis will crash ***/
-    path_.poses.push_back(msg_body_pose_);
-    if (run_in_offline_ == false) {
+    path_.poses.push_back(msg_body_pose);
+    if (!run_in_offline_) {
         pub_path.publish(path_);
     }
 }
 
 void LaserMapping::PublishOdometry(const ros::Publisher &pub_odom_aft_mapped) {
-    odom_aft_mapped_.header.frame_id = tf_world_frame_;
-    odom_aft_mapped_.child_frame_id = tf_imu_frame_;
-    odom_aft_mapped_.header.stamp = ros::Time().fromSec(lidar_end_time_);  // ros::Time().fromSec(lidar_end_time_);
-    SetPosestamp(odom_aft_mapped_.pose);
-    pub_odom_aft_mapped.publish(odom_aft_mapped_);
+    nav_msgs::Odometry odom_aft_mapped;
+    odom_aft_mapped.header.frame_id = tf_world_frame_;
+    odom_aft_mapped.child_frame_id = tf_imu_frame_;
+    odom_aft_mapped.header.stamp = ros::Time().fromSec(lidar_end_time_);  // ros::Time().fromSec(lidar_end_time_);
+    SetPosestamp(odom_aft_mapped.pose);
+    pub_odom_aft_mapped.publish(odom_aft_mapped);
     auto P = kf_.get_P();
     for (int i = 0; i < 6; i++) {
         int k = i < 3 ? i + 3 : i - 3;
-        odom_aft_mapped_.pose.covariance[i * 6 + 0] = P(k, 3);
-        odom_aft_mapped_.pose.covariance[i * 6 + 1] = P(k, 4);
-        odom_aft_mapped_.pose.covariance[i * 6 + 2] = P(k, 5);
-        odom_aft_mapped_.pose.covariance[i * 6 + 3] = P(k, 0);
-        odom_aft_mapped_.pose.covariance[i * 6 + 4] = P(k, 1);
-        odom_aft_mapped_.pose.covariance[i * 6 + 5] = P(k, 2);
+        odom_aft_mapped.pose.covariance[i * 6 + 0] = P(k, 3);
+        odom_aft_mapped.pose.covariance[i * 6 + 1] = P(k, 4);
+        odom_aft_mapped.pose.covariance[i * 6 + 2] = P(k, 5);
+        odom_aft_mapped.pose.covariance[i * 6 + 3] = P(k, 0);
+        odom_aft_mapped.pose.covariance[i * 6 + 4] = P(k, 1);
+        odom_aft_mapped.pose.covariance[i * 6 + 5] = P(k, 2);
     }
 
     static tf::TransformBroadcaster br;
     tf::Transform transform;
     tf::Quaternion q;
-    transform.setOrigin(tf::Vector3(odom_aft_mapped_.pose.pose.position.x, odom_aft_mapped_.pose.pose.position.y,
-                                    odom_aft_mapped_.pose.pose.position.z));
-    q.setW(odom_aft_mapped_.pose.pose.orientation.w);
-    q.setX(odom_aft_mapped_.pose.pose.orientation.x);
-    q.setY(odom_aft_mapped_.pose.pose.orientation.y);
-    q.setZ(odom_aft_mapped_.pose.pose.orientation.z);
+    transform.setOrigin(tf::Vector3(odom_aft_mapped.pose.pose.position.x, odom_aft_mapped.pose.pose.position.y,
+                                    odom_aft_mapped.pose.pose.position.z));
+    q.setW(odom_aft_mapped.pose.pose.orientation.w);
+    q.setX(odom_aft_mapped.pose.pose.orientation.x);
+    q.setY(odom_aft_mapped.pose.pose.orientation.y);
+    q.setZ(odom_aft_mapped.pose.pose.orientation.z);
     transform.setRotation(q);
-    br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped_.header.stamp, tf_world_frame_, tf_imu_frame_));
+    br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped.header.stamp, tf_world_frame_, tf_imu_frame_));
 }
 
 void LaserMapping::PublishFrameWorld() {
