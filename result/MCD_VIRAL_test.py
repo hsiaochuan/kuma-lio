@@ -50,6 +50,12 @@ commit_id = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8"
 f.write(f'GIT_BRANCH = "{branch}"\n')
 f.write(f'GIT_COMMIT = "{commit_id}"\n')
 f.flush()
+
+subprocess.run([
+    'make',
+    '-C', '../build',
+    '-j', '4',
+], check=True)
 for bag_fname in bag_files:
     dir = os.path.dirname(bag_fname)
     base_name = os.path.basename(bag_fname)
@@ -64,12 +70,9 @@ for bag_fname in bag_files:
     subprocess.run([OFFLINE_APP,
                     '--config_file', config,
                     '--bag_file', bag_fname,
-                    '--time_log_file', os.path.join(output_dir, 'time.txt'),
-                    '--traj_log_file', os.path.join(output_dir, 'traj.txt'),
+                    '--output_dir', output_dir,
                     ])
-    pcd_dir = "../PCD"
     points_count = 0
-    for fname in os.listdir(pcd_dir):
-        points_count += pcd_points_count(os.path.join(pcd_dir, fname))
-        os.remove(os.path.join(pcd_dir, fname))
+    for fname in os.listdir(os.path.join(output_dir, "maps")):
+        points_count += pcd_points_count(os.path.join(output_dir, "maps", fname))
     f.write("{},{}\n".format(name, points_count))

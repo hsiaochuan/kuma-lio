@@ -53,8 +53,6 @@ inline Eigen::Matrix<S, 3, 3> MatFromArray(const boost::array<S, 9> &v) {
     return m;
 }
 
-inline std::string DEBUG_FILE_DIR(const std::string &name) { return std::string(ROOT_DIR) + "Log/" + name; }
-
 
 using V3D = Eigen::Vector3d;
 using V4D = Eigen::Vector4d;

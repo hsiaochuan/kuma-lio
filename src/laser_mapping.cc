@@ -5,7 +5,7 @@
 
 #include "laser_mapping.h"
 #include "utils.h"
-
+namespace fs = boost::filesystem;
 namespace faster_lio {
 
 bool LaserMapping::InitROS(ros::NodeHandle &nh) {
@@ -71,7 +71,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     nh.param<float>("esti_plane_threshold", options::ESTI_PLANE_THRESHOLD, 0.1);
     nh.param<bool>("common/time_sync_en", time_sync_en_, false);
     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
-    nh.param<double>("filter_size_map", filter_size_map_min_, 0.0);
+    nh.param<double>("filter_size_map", map_filter_size_, 0.0);
     nh.param<double>("cube_side_length", cube_len_, 200);
     nh.param<float>("mapping/det_range", det_range_, 300.f);
     nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);
@@ -134,7 +134,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     path_.header.stamp = ros::Time::now();
     path_.header.frame_id = tf_world_frame_;
 
-    voxel_scan_.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
+    scan_sampler_.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
 
     lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
     lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
@@ -151,7 +151,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     // get params from yaml
     int lidar_type, ivox_nearby_type;
     double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
-    double filter_size_surf_min;
+    double scan_sampler_filter_size;
     common::V3D lidar_T_wrt_IMU;
     common::M3D lidar_R_wrt_IMU;
 
@@ -170,8 +170,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         options::ESTI_PLANE_THRESHOLD = yaml["esti_plane_threshold"].as<float>();
         time_sync_en_ = yaml["common"]["time_sync_en"].as<bool>();
 
-        filter_size_surf_min = yaml["filter_size_surf"].as<float>();
-        filter_size_map_min_ = yaml["filter_size_map"].as<float>();
+        scan_sampler_filter_size = yaml["filter_size_surf"].as<float>();
+        map_filter_size_ = yaml["filter_size_map"].as<float>();
         cube_len_ = yaml["cube_side_length"].as<int>();
         det_range_ = yaml["mapping"]["det_range"].as<float>();
         gyr_cov = yaml["mapping"]["gyr_cov"].as<float>();
@@ -234,7 +234,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
     }
 
-    voxel_scan_.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
+    scan_sampler_.setLeafSize(scan_sampler_filter_size, scan_sampler_filter_size, scan_sampler_filter_size);
 
     lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
     lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
@@ -311,8 +311,8 @@ void LaserMapping::Run() {
     /// downsample
     Timer::Evaluate(
         [&, this]() {
-            voxel_scan_.setInputCloud(scan_undistort_);
-            voxel_scan_.filter(*scan_down_body_);
+            scan_sampler_.setInputCloud(scan_undistort_);
+            scan_sampler_.filter(*scan_down_body_);
         },
         "Downsample PointCloud");
 
@@ -525,13 +525,13 @@ void LaserMapping::MapIncremental() {
             const PointVector &points_near = nearest_points_[i];
 
             Eigen::Vector3f center =
-                ((point_world.getVector3fMap() / filter_size_map_min_).array().floor() + 0.5) * filter_size_map_min_;
+                ((point_world.getVector3fMap() / map_filter_size_).array().floor() + 0.5) * map_filter_size_;
 
             Eigen::Vector3f dis_2_center = points_near[0].getVector3fMap() - center;
 
-            if (fabs(dis_2_center.x()) > 0.5 * filter_size_map_min_ &&
-                fabs(dis_2_center.y()) > 0.5 * filter_size_map_min_ &&
-                fabs(dis_2_center.z()) > 0.5 * filter_size_map_min_) {
+            if (fabs(dis_2_center.x()) > 0.5 * map_filter_size_ &&
+                fabs(dis_2_center.y()) > 0.5 * map_filter_size_ &&
+                fabs(dis_2_center.z()) > 0.5 * map_filter_size_) {
                 point_no_need_downsample.emplace_back(point_world);
                 return;
             }
@@ -755,25 +755,20 @@ void LaserMapping::PublishFrameWorld() {
         publish_count_ -= options::PUBFRAME_PERIOD;
     }
 
-    /**************** save map ****************/
-    /* 1. make sure you have enough memories
-    /* 2. noted that pcd save will influence the real-time performences **/
+
     if (pcd_save_en_) {
         *pcl_wait_save_ += *laserCloudWorld;
-
         static int scan_wait_num = 0;
         scan_wait_num++;
         if (pcl_wait_save_->size() > 0 && pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
-            pcl::VoxelGrid<PointType> sampler;
-            sampler.setLeafSize(0.2, 0.2, 0.2);
-            sampler.setInputCloud(pcl_wait_save_);
-            sampler.filter(*pcl_wait_save_);
             pcd_index_++;
-            std::string all_points_dir(std::string(std::string(ROOT_DIR) + "PCD/scans_") + std::to_string(pcd_index_) +
-                                       std::string(".pcd"));
+            static auto once = fs::create_directories(output_dir + "/maps");
+            scan_sampler_.setInputCloud(pcl_wait_save_);
+            scan_sampler_.filter(*pcl_wait_save_);
+            std::string pcd_save_fname(output_dir + "/maps/map_" + std::to_string(pcd_index_) + ".pcd");
             pcl::PCDWriter pcd_writer;
-            LOG(INFO) << "current scan saved to /PCD/" << all_points_dir;
-            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_);
+            LOG(INFO) << "current scan saved to " << pcd_save_fname;
+            pcd_writer.writeBinary(pcd_save_fname, *pcl_wait_save_);
             pcl_wait_save_->clear();
             scan_wait_num = 0;
         }
@@ -874,15 +869,11 @@ void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *con
 }
 
 void LaserMapping::Finish() {
-    /**************** save map ****************/
-    /* 1. make sure you have enough memories
-    /* 2. pcd save will largely influence the real-time performences **/
-    if (pcl_wait_save_->size() > 0 && pcd_save_en_) {
-        std::string file_name = std::string("scans.pcd");
-        std::string all_points_dir(std::string(std::string(ROOT_DIR) + "PCD/") + file_name);
+    if (pcl_wait_save_->size() > 0 && pcd_save_en_ && pcd_save_interval_ < 0) {
+        std::string pcd_save_fname(output_dir + "/map.pcd");
         pcl::PCDWriter pcd_writer;
-        LOG(INFO) << "current scan saved to /PCD/" << file_name;
-//        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_);
+        LOG(INFO) << "current scan saved to " << pcd_save_fname;
+        pcd_writer.writeBinary(pcd_save_fname, *pcl_wait_save_);
     }
 
     LOG(INFO) << "finish done";

@@ -90,7 +90,7 @@ class LaserMapping {
     /// local map related
     float det_range_ = 300.0f;
     double cube_len_ = 0;
-    double filter_size_map_min_ = 0;
+    double map_filter_size_ = 0;
 
     /// params
     std::vector<double> extrinT_{3, 0.0};  // lidar-imu translation
@@ -103,7 +103,7 @@ class LaserMapping {
     std::vector<PointVector> nearest_points_;         // nearest points of current scan
     common::VV4F corr_pts_;                           // inlier pts
     common::VV4F corr_norm_;                          // inlier plane norms
-    pcl::VoxelGrid<PointType> voxel_scan_;            // voxel filter for current scan
+    pcl::VoxelGrid<PointType> scan_sampler_;            // voxel filter for current scan
     std::vector<float> residuals_;                    // point-to-plane residuals
     std::vector<char> point_selected_surf_;           // selected points
     common::VV4F plane_coef_;                         // plane coeffs
@@ -164,6 +164,8 @@ class LaserMapping {
 
     PointCloudType::Ptr pcl_wait_save_{new PointCloudType()};  // debug save
     nav_msgs::Path path_;
+   public:
+    std::string output_dir;
 };
 
 }  // namespace faster_lio

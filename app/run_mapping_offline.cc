@@ -10,14 +10,12 @@
 
 #include "laser_mapping.h"
 #include "utils.h"
-
-/// run faster-LIO in offline mode
+#include <boost/filesystem.hpp>
+namespace fs = boost::filesystem;
 
 DEFINE_string(config_file, "./config/avia.yaml", "path to config file");
-DEFINE_string(bag_file, "/home/xiang/Data/dataset/fast_lio2/avia/2020-09-16-quick-shack.bag", "path to the ros bag");
-DEFINE_string(time_log_file, "./Log/time.log", "path to time log file");
-DEFINE_string(traj_log_file, "./Log/traj.txt", "path to traj log file");
-
+DEFINE_string(bag_file, "", "path to the ros bag");
+DEFINE_string(output_dir, "", "save the result to the dir");
 void SigHandle(int sig) {
     faster_lio::options::FLAG_EXIT = true;
     ROS_WARN("catch sig %d", sig);
@@ -32,8 +30,9 @@ int main(int argc, char **argv) {
 
     const std::string bag_file = FLAGS_bag_file;
     const std::string config_file = FLAGS_config_file;
-
+    const std::string output_dir = FLAGS_output_dir;
     auto laser_mapping = std::make_shared<faster_lio::LaserMapping>();
+    laser_mapping->output_dir = output_dir;
     if (!laser_mapping->InitWithoutROS(FLAGS_config_file)) {
         LOG(ERROR) << "laser mapping init failed.";
         return -1;
@@ -88,11 +87,12 @@ int main(int argc, char **argv) {
     double fps = 1.0 / (faster_lio::Timer::GetMeanTime("Laser Mapping Single Run") / 1000.);
     LOG(INFO) << "Faster LIO average FPS: " << fps;
 
-    LOG(INFO) << "save trajectory to: " << FLAGS_traj_log_file;
-    laser_mapping->Savetrajectory(FLAGS_traj_log_file);
+    std::string traj_fname = output_dir + "/traj_log.txt";
+    LOG(INFO) << "save trajectory to: " << traj_fname;
+    laser_mapping->Savetrajectory(traj_fname);
 
     faster_lio::Timer::PrintAll();
-    faster_lio::Timer::DumpIntoFile(FLAGS_time_log_file);
+    faster_lio::Timer::DumpIntoFile(output_dir + "/time_log.txt");
 
     return 0;
 }
