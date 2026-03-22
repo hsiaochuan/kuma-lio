@@ -17,7 +17,6 @@
 #include <boost/array.hpp>
 #include <unsupported/Eigen/ArpackSupport>
 
-#include "faster_lio/Pose6D.h"
 #include "options.h"
 #include "so3_math.h"
 
@@ -56,7 +55,7 @@ inline Eigen::Matrix<S, 3, 3> MatFromArray(const boost::array<S, 9> &v) {
 
 inline std::string DEBUG_FILE_DIR(const std::string &name) { return std::string(ROOT_DIR) + "Log/" + name; }
 
-using Pose6D = faster_lio::Pose6D;
+
 using V3D = Eigen::Vector3d;
 using V4D = Eigen::Vector4d;
 using V5D = Eigen::Matrix<double, 5, 1>;
@@ -89,16 +88,14 @@ struct MeasureGroup {
     PointCloudType::Ptr lidar_ = nullptr;
     std::deque<sensor_msgs::Imu::ConstPtr> imu_;
 };
-
-template <typename T>
-T rad2deg(const T &radians) {
-    return radians * 180.0 / M_PI;
-}
-
-template <typename T>
-T deg2rad(const T &degrees) {
-    return degrees * M_PI / 180.0;
-}
+struct Pose6D{
+    double offset_time = 0;
+    boost::array<double,3> acc;
+    boost::array<double,3> gyr;
+    boost::array<double,3> vel;
+    boost::array<double,3> pos;
+    boost::array<double,9> rot;
+};
 
 /**
  * set a pose 6d from ekf status
@@ -124,57 +121,6 @@ Pose6D set_pose6d(const double t, const Eigen::Matrix<T, 3, 1> &a, const Eigen::
         for (int j = 0; j < 3; j++) rot_kp.rot[i * 3 + j] = R(i, j);
     }
     return rot_kp;
-}
-
-/* comment
-plane equation: Ax + By + Cz + D = 0
-convert to: A/D*x + B/D*y + C/D*z = -1
-solve: A0*x0 = b0
-where A0_i = [x_i, y_i, z_i], x0 = [A/D, B/D, C/D]^T, b0 = [-1, ..., -1]^T
-normvec_:  normalized x0
-*/
-/**
- * 计算一组点的法线
- * @tparam T
- * @param normvec
- * @param point
- * @param threshold
- * @param point_num
- * @return
- */
-template <typename T>
-bool esti_normvector(Eigen::Matrix<T, 3, 1> &normvec, const PointVector &point, const T &threshold,
-                     const int &point_num) {
-    Eigen::MatrixXf A(point_num, 3);
-    Eigen::MatrixXf b(point_num, 1);
-    b.setOnes();
-    b *= -1.0f;
-
-    for (int j = 0; j < point_num; j++) {
-        A(j, 0) = point[j].x;
-        A(j, 1) = point[j].y;
-        A(j, 2) = point[j].z;
-    }
-    normvec = A.colPivHouseholderQr().solve(b);
-
-    for (int j = 0; j < point_num; j++) {
-        if (fabs(normvec(0) * point[j].x + normvec(1) * point[j].y + normvec(2) * point[j].z + 1.0f) > threshold) {
-            return false;
-        }
-    }
-
-    normvec.normalize();
-    return true;
-}
-
-/**
- * squared distance
- * @param p1
- * @param p2
- * @return
- */
-inline float calc_dist(const PointType &p1, const PointType &p2) {
-    return (p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y) + (p1.z - p2.z) * (p1.z - p2.z);
 }
 
 inline float calc_dist(const Eigen::Vector3f &p1, const Eigen::Vector3f &p2) { return (p1 - p2).squaredNorm(); }

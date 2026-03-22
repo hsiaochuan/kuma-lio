@@ -12,7 +12,6 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
-add_subdirectory(thirdparty/livox_ros_driver)
 
 include(cmake/packages.cmake)
 
@@ -29,5 +28,29 @@ else ()
     message("USING_IVOX_NODE_TYPE_DEFAULT")
 endif()
 
-add_subdirectory(src)
-add_subdirectory(app)
+add_library(${PROJECT_NAME}
+        src/laser_mapping.cc
+        src/pointcloud_preprocess.cc
+        src/options.cc
+        src/utils.cc
+        )
+
+target_link_libraries(${PROJECT_NAME}
+        ${catkin_LIBRARIES}
+        ${PCL_LIBRARIES}
+        ${PYTHON_LIBRARIES}
+        tbb
+        glog
+        yaml-cpp
+        )
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${PYTHON_INCLUDE_DIRS})
+add_executable(run_mapping_online app/run_mapping_online.cc)
+target_link_libraries(run_mapping_online
+        ${PROJECT_NAME} gflags
+        )
+add_executable(run_mapping_offline app/run_mapping_offline.cc)
+target_link_libraries(run_mapping_offline
+        ${PROJECT_NAME} gflags
+        )
+

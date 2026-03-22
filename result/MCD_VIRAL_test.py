@@ -18,8 +18,7 @@ def pcd_points_count(pcd_fname: str) -> int:
         return -1
 
 
-OFFLINE_APP = "./devel/lib/faster_lio/run_mapping_offline"
-subprocess.run(['catkin_make'])
+OFFLINE_APP = "../build/run_mapping_offline"
 bag_files = [
     "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/ntu_day_01.bag",
     "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/ntu_day_02.bag",
@@ -42,8 +41,8 @@ bag_files = [
     "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/tuhh_night_08.bag",
     "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/tuhh_night_09.bag",
 ]
-atv_config = '/home/hsiaochuan/slam/Kuma-LIO/src/faster-lio/config/MCD_VIRAL_ATV.yaml'
-handheld_config = '/home/hsiaochuan/slam/Kuma-LIO/src/faster-lio/config/MCD_VIRAL_HandHeld.yaml'
+atv_config = '../config/MCD_VIRAL_ATV.yaml'
+handheld_config = '../config/MCD_VIRAL_HandHeld.yaml'
 time_str = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 f = open(os.path.join("/tmp/result_" + time_str + ".txt"), 'w')
 
@@ -64,7 +63,7 @@ for bag_fname in bag_files:
                     '--time_log_file', os.path.join(output_dir, 'time.txt'),
                     '--traj_log_file', os.path.join(output_dir, 'traj.txt'),
                     ])
-    pcd_dir = "/home/hsiaochuan/slam/Kuma-LIO/src/faster-lio/PCD"
+    pcd_dir = "../PCD"
     points_count = 0
     for fname in os.listdir(pcd_dir):
         points_count += pcd_points_count(os.path.join(pcd_dir, fname))
