@@ -262,7 +262,7 @@ void ImuProcess::UndistortPcl(const common::MeasureGroup &meas, esekfom::esekf<s
              * Note: Compensation direction is INVERSE of Frame's moving direction
              * So if we want to compensate a point at timestamp-i to the frame-e
              * p_compensate = R_imu_e ^ T * (R_i * P_i + T_ei) where T_ei is represented in global frame */
-            common::M3D R_i(R_imu * Exp(angvel_avr, dt));
+            common::M3D R_i(R_imu * ExpMat(angvel_avr * dt));
 
             common::V3D P_i(it_pcl->x, it_pcl->y, it_pcl->z);
             common::V3D T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt - imu_state.pos);

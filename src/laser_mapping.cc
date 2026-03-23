@@ -656,9 +656,9 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 common::V3F point_this_be = corr_pts_[i].head<3>();
-                common::M3F point_be_crossmat = SKEW_SYM_MATRIX(point_this_be);
+                common::M3F point_be_crossmat = Hat(point_this_be);
                 common::V3F point_this = off_R * point_this_be + off_t;
-                common::M3F point_crossmat = SKEW_SYM_MATRIX(point_this);
+                common::M3F point_crossmat = Hat(point_this);
 
                 /*** get the normal vector of closest surface/corner ***/
                 common::V3F norm_vec = corr_norm_[i].head<3>();
