@@ -11,12 +11,12 @@ void PointCloudPreprocess::Set(LidarType lid_type, double bld, int pfilt_num) {
     point_filter_num_ = pfilt_num;
 }
 
-void PointCloudPreprocess::Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloudType::Ptr &pcl_out) {
+void PointCloudPreprocess::Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out) {
     AviaHandler(msg);
     *pcl_out = cloud_out_;
 }
 
-void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudType::Ptr &pcl_out) {
+void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out) {
     switch (lidar_type_) {
         case LidarType::OUST64:
             Oust64Handler(msg);
@@ -64,9 +64,8 @@ void PointCloudPreprocess::AviaHandler(const livox_ros_driver::CustomMsg::ConstP
                 cloud_full_[i].y = msg->points[i].y;
                 cloud_full_[i].z = msg->points[i].z;
                 cloud_full_[i].intensity = msg->points[i].reflectivity;
-                cloud_full_[i].curvature = static_cast<float>(msg->points[i].offset_time) / static_cast<float>(1000000);
-                // use curvature as time of each laser points, curvature unit: ms
                 // unit of offset_time: nanosecond
+                cloud_full_[i].time_nsec = msg->points[i].offset_time;
 
                 if ((abs(cloud_full_[i].x - cloud_full_[i - 1].x) > 1e-7) ||
                     (abs(cloud_full_[i].y - cloud_full_[i - 1].y) > 1e-7) ||
@@ -109,10 +108,8 @@ void PointCloudPreprocess::Oust64Handler(const sensor_msgs::PointCloud2::ConstPt
         added_pt.y = pl_orig.points[i].y;
         added_pt.z = pl_orig.points[i].z;
         added_pt.intensity = pl_orig.points[i].intensity;
-        added_pt.normal_x = 0;
-        added_pt.normal_y = 0;
-        added_pt.normal_z = 0;
-        added_pt.curvature = pl_orig.points[i].t / 1e6;  // curvature unit: ms
+        // unit of offset_time: nanosecond
+        added_pt.time_nsec = pl_orig.points[i].t;
 
         cloud_out_.points.push_back(added_pt);
     }
@@ -152,41 +149,11 @@ void PointCloudPreprocess::VelodyneHandler(const sensor_msgs::PointCloud2::Const
 
     for (int i = 0; i < plsize; i++) {
         PointType added_pt;
-
-        added_pt.normal_x = 0;
-        added_pt.normal_y = 0;
-        added_pt.normal_z = 0;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
         added_pt.z = pl_orig.points[i].z;
         added_pt.intensity = pl_orig.points[i].intensity;
-        added_pt.curvature = pl_orig.points[i].time * time_scale_;  // curvature unit: ms
-
-        if (!given_offset_time_) {
-            int layer = pl_orig.points[i].ring;
-            double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
-
-            if (is_first[layer]) {
-                yaw_fp[layer] = yaw_angle;
-                is_first[layer] = false;
-                added_pt.curvature = 0.0;
-                yaw_last[layer] = yaw_angle;
-                time_last[layer] = added_pt.curvature;
-                continue;
-            }
-
-            // compute offset time
-            if (yaw_angle <= yaw_fp[layer]) {
-                added_pt.curvature = (yaw_fp[layer] - yaw_angle) / omega_l;
-            } else {
-                added_pt.curvature = (yaw_fp[layer] - yaw_angle + 360.0) / omega_l;
-            }
-
-            if (added_pt.curvature < time_last[layer]) added_pt.curvature += 360.0 / omega_l;
-
-            yaw_last[layer] = yaw_angle;
-            time_last[layer] = added_pt.curvature;
-        }
+        added_pt.SetTime(pl_orig.points[i].time * time_scale_);
 
         if (i % point_filter_num_ == 0) {
             if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind_ * blind_)) {
@@ -233,40 +200,12 @@ void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr
     for (int i = 0; i < plsize; i++) {
         PointType added_pt;
 
-        added_pt.normal_x = 0;
-        added_pt.normal_y = 0;
-        added_pt.normal_z = 0;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
         added_pt.z = pl_orig.points[i].z;
         added_pt.intensity = pl_orig.points[i].intensity;
-        added_pt.curvature = (pl_orig.points[i].timestamp - time_head) * 1000.f;  // curvature unit: ms
-
-        if (!given_offset_time_) {
-            int layer = pl_orig.points[i].ring;
-            double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
-
-            if (is_first[layer]) {
-                yaw_fp[layer] = yaw_angle;
-                is_first[layer] = false;
-                added_pt.curvature = 0.0;
-                yaw_last[layer] = yaw_angle;
-                time_last[layer] = added_pt.curvature;
-                continue;
-            }
-
-            // compute offset time
-            if (yaw_angle <= yaw_fp[layer]) {
-                added_pt.curvature = (yaw_fp[layer] - yaw_angle) / omega_l;
-            } else {
-                added_pt.curvature = (yaw_fp[layer] - yaw_angle + 360.0) / omega_l;
-            }
-
-            if (added_pt.curvature < time_last[layer]) added_pt.curvature += 360.0 / omega_l;
-
-            yaw_last[layer] = yaw_angle;
-            time_last[layer] = added_pt.curvature;
-        }
+        // unit of offset_time: second
+        added_pt.SetTime(pl_orig.points[i].timestamp - time_head);
 
         if (i % point_filter_num_ == 0) {
             if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind_ * blind_)) {
@@ -303,11 +242,8 @@ void PointCloudPreprocess::LivoxHandler(const sensor_msgs::PointCloud2::ConstPtr
                 cloud_full_[i].y = pl_orig.points[i].y;
                 cloud_full_[i].z = pl_orig.points[i].z;
                 cloud_full_[i].intensity = pl_orig.points[i].intensity;
-                cloud_full_[i].curvature =
-                    static_cast<float>(pl_orig.points[i].timestamp - timebase) / static_cast<float>(1000000);
-                // use curvature as time of each laser points, curvature unit: ms
                 // unit of offset_time: nanosecond
-
+                cloud_full_[i].time_nsec = pl_orig.points[i].timestamp - timebase;
                 if ((abs(cloud_full_[i].x - cloud_full_[i - 1].x) > 1e-7) ||
                     (abs(cloud_full_[i].y - cloud_full_[i - 1].y) > 1e-7) ||
                     (abs(cloud_full_[i].z - cloud_full_[i - 1].z) > 1e-7) &&

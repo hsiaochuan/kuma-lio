@@ -18,7 +18,7 @@ namespace faster_lio {
 
 constexpr int MAX_INI_COUNT = 20;
 
-bool time_list(const PointType &x, const PointType &y) { return (x.curvature < y.curvature); };
+bool time_list(const PointType &x, const PointType &y) { return (x.time_nsec < y.time_nsec); };
 
 /// IMU Process and undistortion
 class ImuProcess {
@@ -35,7 +35,7 @@ class ImuProcess {
     void SetGyrBiasCov(const common::V3D &b_g);
     void SetAccBiasCov(const common::V3D &b_a);
     void Process(const common::MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                 PointCloudType::Ptr pcl_un_);
+                 PointCloud::Ptr pcl_un_);
 
     Eigen::Matrix<double, 12, 12> Q_;
     common::V3D cov_acc_;
@@ -48,9 +48,9 @@ class ImuProcess {
    private:
     void IMUInit(const common::MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);
     void UndistortPcl(const common::MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                      PointCloudType &pcl_out);
+                      PointCloud &pcl_out);
 
-    PointCloudType::Ptr cur_pcl_un_;
+    PointCloud::Ptr cur_pcl_un_;
     sensor_msgs::ImuConstPtr last_imu_;
     std::deque<sensor_msgs::ImuConstPtr> v_imu_;
     std::vector<common::Pose6D> IMUpose_;
@@ -93,7 +93,7 @@ void ImuProcess::Reset() {
     v_imu_.clear();
     IMUpose_.clear();
     last_imu_.reset(new sensor_msgs::Imu());
-    cur_pcl_un_.reset(new PointCloudType());
+    cur_pcl_un_.reset(new PointCloud());
 }
 
 void ImuProcess::SetExtrinsic(const common::V3D &transl, const common::M3D &rot) {
@@ -162,7 +162,7 @@ void ImuProcess::IMUInit(const common::MeasureGroup &meas, esekfom::esekf<state_
 }
 
 void ImuProcess::UndistortPcl(const common::MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                              PointCloudType &pcl_out) {
+                              PointCloud &pcl_out) {
     /*** add the imu_ of the last frame-tail to the of current frame-head ***/
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
@@ -255,8 +255,8 @@ void ImuProcess::UndistortPcl(const common::MeasureGroup &meas, esekfom::esekf<s
         acc_imu = common::VecFromArray(tail->acc);
         angvel_avr = common::VecFromArray(tail->gyr);
 
-        for (; it_pcl->curvature / double(1000) > head->offset_time; it_pcl--) {
-            dt = it_pcl->curvature / double(1000) - head->offset_time;
+        for (; it_pcl->GetTime() > head->offset_time; it_pcl--) {
+            dt = it_pcl->GetTime() - head->offset_time;
 
             /* Transform to the 'end' frame, using only the rotation
              * Note: Compensation direction is INVERSE of Frame's moving direction
@@ -284,7 +284,7 @@ void ImuProcess::UndistortPcl(const common::MeasureGroup &meas, esekfom::esekf<s
 }
 
 void ImuProcess::Process(const common::MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                         PointCloudType::Ptr cur_pcl_un_) {
+                         PointCloud::Ptr cur_pcl_un_) {
     if (meas.imu_.empty()) {
         return;
     }

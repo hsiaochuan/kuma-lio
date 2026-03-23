@@ -97,9 +97,9 @@ class LaserMapping {
     std::vector<double> extrinR_{9, 0.0};  // lidar-imu rotation
 
     /// point clouds data
-    CloudPtr scan_undistort_{new PointCloudType()};   // scan after undistortion
-    CloudPtr scan_down_body_{new PointCloudType()};   // downsampled scan in body
-    CloudPtr scan_down_world_{new PointCloudType()};  // downsampled scan in world
+    PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion
+    PointCloud::Ptr scan_down_body_{new PointCloud()};   // downsampled scan in body
+    PointCloud::Ptr scan_down_world_{new PointCloud()};  // downsampled scan in world
     std::vector<PointVector> nearest_points_;         // nearest points of current scan
     common::VV4F corr_pts_;                           // inlier pts
     common::VV4F corr_norm_;                          // inlier plane norms
@@ -121,7 +121,7 @@ class LaserMapping {
 
     std::mutex mtx_buffer_;
     std::deque<double> time_buffer_;
-    std::deque<PointCloudType::Ptr> lidar_buffer_;
+    std::deque<PointCloud::Ptr> lidar_buffer_;
     std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer_;
 
     /// options
@@ -162,7 +162,7 @@ class LaserMapping {
     int pcd_save_interval_ = -1;
     bool path_save_en_ = false;
 
-    PointCloudType::Ptr pcl_wait_save_{new PointCloudType()};  // debug save
+    PointCloud::Ptr pcl_wait_save_{new PointCloud()};  // debug save
     nav_msgs::Path path_;
    public:
     std::string output_dir;

@@ -29,6 +29,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
+add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
 
 include_directories(

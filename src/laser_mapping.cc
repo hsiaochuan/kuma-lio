@@ -385,7 +385,7 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
                 lidar_buffer_.clear();
             }
 
-            PointCloudType::Ptr ptr(new PointCloudType());
+            PointCloud::Ptr ptr(new PointCloud());
             preprocess_->Process(msg, ptr);
             lidar_buffer_.push_back(ptr);
             time_buffer_.push_back(msg->header.stamp.toSec());
@@ -420,7 +420,7 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
                 LOG(INFO) << "Self sync IMU and LiDAR, time diff is " << timediff_lidar_wrt_imu_;
             }
 
-            PointCloudType::Ptr ptr(new PointCloudType());
+            PointCloud::Ptr ptr(new PointCloud());
             preprocess_->Process(msg, ptr);
             lidar_buffer_.emplace_back(ptr);
             time_buffer_.emplace_back(last_timestamp_lidar_);
@@ -464,13 +464,13 @@ bool LaserMapping::SyncPackages() {
         if (measures_.lidar_->points.size() <= 1) {
             LOG(WARNING) << "Too few input point cloud!";
             lidar_end_time_ = measures_.lidar_bag_time_ + lidar_mean_scantime_;
-        } else if (measures_.lidar_->points.back().curvature / double(1000) < 0.5 * lidar_mean_scantime_) {
+        } else if (measures_.lidar_->points.back().GetTime() < 0.5 * lidar_mean_scantime_) {
             lidar_end_time_ = measures_.lidar_bag_time_ + lidar_mean_scantime_;
         } else {
             scan_num_++;
-            lidar_end_time_ = measures_.lidar_bag_time_ + measures_.lidar_->points.back().curvature / double(1000);
+            lidar_end_time_ = measures_.lidar_bag_time_ + measures_.lidar_->points.back().GetTime();
             lidar_mean_scantime_ +=
-                (measures_.lidar_->points.back().curvature / double(1000) - lidar_mean_scantime_) / scan_num_;
+                (measures_.lidar_->points.back().GetTime() - lidar_mean_scantime_) / scan_num_;
         }
 
         measures_.lidar_end_time_ = lidar_end_time_;
@@ -734,11 +734,11 @@ void LaserMapping::PublishFrameWorld() {
         return;
     }
 
-    PointCloudType::Ptr laserCloudWorld;
+    PointCloud::Ptr laserCloudWorld;
     if (dense_pub_en_) {
-        PointCloudType::Ptr laserCloudFullRes(scan_undistort_);
+        PointCloud::Ptr laserCloudFullRes(scan_undistort_);
         int size = laserCloudFullRes->points.size();
-        laserCloudWorld.reset(new PointCloudType(size, 1));
+        laserCloudWorld.reset(new PointCloud(size, 1));
         for (int i = 0; i < size; i++) {
             PointBodyToWorld(&laserCloudFullRes->points[i], &laserCloudWorld->points[i]);
         }
@@ -777,7 +777,7 @@ void LaserMapping::PublishFrameWorld() {
 
 void LaserMapping::PublishFrameBody(const ros::Publisher &pub_laser_cloud_body) {
     int size = scan_undistort_->points.size();
-    PointCloudType::Ptr laser_cloud_imu_body(new PointCloudType(size, 1));
+    PointCloud::Ptr laser_cloud_imu_body(new PointCloud(size, 1));
 
     for (int i = 0; i < size; i++) {
         PointBodyLidarToIMU(&scan_undistort_->points[i], &laser_cloud_imu_body->points[i]);
@@ -793,7 +793,7 @@ void LaserMapping::PublishFrameBody(const ros::Publisher &pub_laser_cloud_body) 
 
 void LaserMapping::PublishFrameEffectWorld(const ros::Publisher &pub_laser_cloud_effect_world) {
     int size = corr_pts_.size();
-    PointCloudType::Ptr laser_cloud(new PointCloudType(size, 1));
+    PointCloud::Ptr laser_cloud(new PointCloud(size, 1));
 
     for (int i = 0; i < size; i++) {
         PointBodyToWorld(corr_pts_[i].head<3>(), &laser_cloud->points[i]);

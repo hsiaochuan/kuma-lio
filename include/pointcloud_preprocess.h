@@ -140,8 +140,8 @@ class PointCloudPreprocess {
     ~PointCloudPreprocess() = default;
 
     /// processors
-    void Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloudType::Ptr &pcl_out);
-    void Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudType::Ptr &pcl_out);
+    void Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out);
+    void Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out);
     void Set(LidarType lid_type, double bld, int pfilt_num);
 
     // accessors
@@ -160,7 +160,7 @@ class PointCloudPreprocess {
     void HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxHandler(const sensor_msgs::PointCloud2::ConstPtr &msg);
 
-    PointCloudType cloud_full_, cloud_out_;
+    PointCloud cloud_full_, cloud_out_;
 
     LidarType lidar_type_ = LidarType::AVIA;
     bool feature_enabled_ = false;

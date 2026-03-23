@@ -20,11 +20,35 @@
 #include "options.h"
 #include "so3_math.h"
 
-using PointType = pcl::PointXYZINormal;
-using PointCloudType = pcl::PointCloud<PointType>;
-using CloudPtr = PointCloudType::Ptr;
-using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
+namespace faster_lio {
+struct EIGEN_ALIGN16 Point {
+    PCL_ADD_POINT4D;
+    float intensity;
+    std::uint32_t time_nsec;
+    std::uint16_t ring;
+    double GetTime(){
+        return time_nsec / 1e9;
+    }
+    void SetTime(double time){
+        time_nsec = time * 1e9;
+    }
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}  // namespace livox_ros
 
+// clang-format off
+POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
+                                (float, x, x)
+                                (float, y, y)
+                                (float, z, z)
+                                (float, intensity, intensity)
+                                (std::uint32_t, time_nsec, time_nsec)
+                                (std::uint16_t, ring, ring)
+)
+// clang-format on
+using PointType = faster_lio::Point;
+using PointCloud = pcl::PointCloud<faster_lio::Point>;
+using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
 namespace faster_lio::common {
 
 constexpr double G_m_s2 = 9.81;  // Gravity const in GuangDong/China
@@ -79,11 +103,11 @@ const V3F Zero3f(0, 0, 0);
 
 /// sync imu and lidar measurements
 struct MeasureGroup {
-    MeasureGroup() { this->lidar_.reset(new PointCloudType()); };
+    MeasureGroup() { this->lidar_.reset(new PointCloud()); };
 
     double lidar_bag_time_ = 0;
     double lidar_end_time_ = 0;
-    PointCloudType::Ptr lidar_ = nullptr;
+    PointCloud::Ptr lidar_ = nullptr;
     std::deque<sensor_msgs::Imu::ConstPtr> imu_;
 };
 struct Pose6D{
