@@ -20,7 +20,7 @@ bool LaserMapping::InitROS(ros::NodeHandle &nh) {
     kf_.init_dyn_share(
         get_f, df_dx, df_dw,
         [this](state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) { ObsModel(s, ekfom_data); },
-        options::NUM_MAX_ITERATIONS, epsi.data());
+        max_iteraions, epsi.data());
 
     return true;
 }
@@ -39,7 +39,7 @@ bool LaserMapping::InitWithoutROS(const std::string &config_yaml) {
     kf_.init_dyn_share(
         get_f, df_dx, df_dw,
         [this](state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) { ObsModel(s, ekfom_data); },
-        options::NUM_MAX_ITERATIONS, epsi.data());
+        max_iteraions, epsi.data());
 
     if (std::is_same<IVoxType, IVox<3, IVoxNodeType::PHC, pcl::PointXYZI>>::value == true) {
         LOG(INFO) << "using phc ivox";
@@ -54,7 +54,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     // get params from param server
     int lidar_type, ivox_nearby_type;
     double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
-    double filter_size_surf_min;
+    double scan_filter_size;
     common::V3D lidar_T_wrt_IMU;
     common::M3D lidar_R_wrt_IMU;
 
@@ -67,11 +67,10 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     nh.param<std::string>("publish/tf_imu_frame", tf_imu_frame_, "body");
     nh.param<std::string>("publish/tf_world_frame", tf_world_frame_, "camera_init");
 
-    nh.param<int>("max_iteration", options::NUM_MAX_ITERATIONS, 4);
-    nh.param<float>("esti_plane_threshold", options::ESTI_PLANE_THRESHOLD, 0.1);
-    nh.param<bool>("common/time_sync_en", time_sync_en_, false);
-    nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
-    nh.param<double>("filter_size_map", map_filter_size_, 0.0);
+    nh.param<int>("max_iteration", max_iteraions, 4);
+    nh.param<float>("esti_plane_threshold", esti_plane_thr, 0.1);
+    nh.param<double>("scan_filter_size", scan_filter_size, 0.5);
+    nh.param<double>("map_filter_size", map_filter_size_, 0.0);
     nh.param<double>("cube_side_length", cube_len_, 200);
     nh.param<float>("mapping/det_range", det_range_, 300.f);
     nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);
@@ -134,7 +133,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     path_.header.stamp = ros::Time::now();
     path_.header.frame_id = tf_world_frame_;
 
-    scan_sampler_.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
+    scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
     lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
     lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
@@ -151,7 +150,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     // get params from yaml
     int lidar_type, ivox_nearby_type;
     double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
-    double scan_sampler_filter_size;
+    double scan_filter_size;
     common::V3D lidar_T_wrt_IMU;
     common::M3D lidar_R_wrt_IMU;
 
@@ -166,12 +165,11 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         tf_world_frame_ = yaml["publish"]["tf_world_frame"].as<std::string>("camera_init");
         path_save_en_ = yaml["path_save_en"].as<bool>();
 
-        options::NUM_MAX_ITERATIONS = yaml["max_iteration"].as<int>();
-        options::ESTI_PLANE_THRESHOLD = yaml["esti_plane_threshold"].as<float>();
-        time_sync_en_ = yaml["common"]["time_sync_en"].as<bool>();
+        max_iteraions = yaml["max_iteration"].as<int>();
+        esti_plane_thr = yaml["esti_plane_threshold"].as<float>();
 
-        scan_sampler_filter_size = yaml["filter_size_surf"].as<float>();
-        map_filter_size_ = yaml["filter_size_map"].as<float>();
+        scan_filter_size = yaml["scan_filter_size"].as<float>();
+        map_filter_size_ = yaml["map_filter_size"].as<float>();
         cube_len_ = yaml["cube_side_length"].as<int>();
         det_range_ = yaml["mapping"]["det_range"].as<float>();
         gyr_cov = yaml["mapping"]["gyr_cov"].as<float>();
@@ -234,7 +232,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
     }
 
-    scan_sampler_.setLeafSize(scan_sampler_filter_size, scan_sampler_filter_size, scan_sampler_filter_size);
+    scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
     lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
     lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
@@ -406,18 +404,10 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
             }
 
             last_timestamp_lidar_ = msg->header.stamp.toSec();
-
-            if (!time_sync_en_ && abs(last_timestamp_imu_ - last_timestamp_lidar_) > 10.0 && !imu_buffer_.empty() &&
+            if (abs(last_timestamp_imu_ - last_timestamp_lidar_) > 10.0 && !imu_buffer_.empty() &&
                 !lidar_buffer_.empty()) {
                 LOG(INFO) << "IMU and LiDAR not Synced, IMU time: " << last_timestamp_imu_
                           << ", lidar header time: " << last_timestamp_lidar_;
-            }
-
-            if (time_sync_en_ && !timediff_set_flg_ && abs(last_timestamp_lidar_ - last_timestamp_imu_) > 1 &&
-                !imu_buffer_.empty()) {
-                timediff_set_flg_ = true;
-                timediff_lidar_wrt_imu_ = last_timestamp_lidar_ + 0.1 - last_timestamp_imu_;
-                LOG(INFO) << "Self sync IMU and LiDAR, time diff is " << timediff_lidar_wrt_imu_;
             }
 
             PointCloud::Ptr ptr(new PointCloud());
@@ -426,17 +416,12 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
             time_buffer_.emplace_back(last_timestamp_lidar_);
         },
         "Preprocess (Livox)");
-
     mtx_buffer_.unlock();
 }
 
 void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     publish_count_++;
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
-
-    if (abs(timediff_lidar_wrt_imu_) > 0.1 && time_sync_en_) {
-        msg->header.stamp = ros::Time().fromSec(timediff_lidar_wrt_imu_ + msg_in->header.stamp.toSec());
-    }
 
     double timestamp = msg->header.stamp.toSec();
 
@@ -600,7 +585,7 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
                     point_selected_surf_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
                     if (point_selected_surf_[i]) {
                         point_selected_surf_[i] =
-                            common::esti_plane(plane_coef_[i], points_near, options::ESTI_PLANE_THRESHOLD);
+                            common::esti_plane(plane_coef_[i], points_near, esti_plane_thr);
                     }
                 }
 

@@ -125,14 +125,13 @@ class LaserMapping {
     std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer_;
 
     /// options
-    bool time_sync_en_ = false;
-    double timediff_lidar_wrt_imu_ = 0.0;
     double last_timestamp_lidar_ = 0;
     double lidar_end_time_ = 0;
     double last_timestamp_imu_ = -1.0;
     double first_lidar_time_ = 0.0;
     bool lidar_pushed_ = false;
-
+    float esti_plane_thr = 0.1;
+    int max_iteraions = 4;
     /// statistics and flags ///
     int scan_count_ = 0;
     int publish_count_ = 0;
@@ -141,7 +140,6 @@ class LaserMapping {
     int pcd_index_ = 0;
     double lidar_mean_scantime_ = 0.0;
     int scan_num_ = 0;
-    bool timediff_set_flg_ = false;
     int effect_feat_num_ = 0, frame_num_ = 0;
 
     ///////////////////////// EKF inputs and output ///////////////////////////////////////////////////////

@@ -1,7 +1,6 @@
 common:
   lid_topic: "/livox/lidar"
   imu_topic: "/vn100/imu"
-  time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
 
 preprocess:
   lidar_type: 1                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
@@ -39,8 +38,8 @@ pcd_save:
 feature_extract_enable: false
 point_filter_num: 1
 max_iteration: 3
-filter_size_surf: 0.2
-filter_size_map: 0.2             # 暂时未用到，代码中为0， 即倾向于将降采样后的scan中的所有点加入map
+scan_filter_size: 0.2
+map_filter_size: 0.2             # 暂时未用到，代码中为0， 即倾向于将降采样后的scan中的所有点加入map
 cube_side_length: 1000
 
 ivox_grid_resolution: 0.2        # default=0.2
