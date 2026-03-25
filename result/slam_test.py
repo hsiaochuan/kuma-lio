@@ -2,10 +2,6 @@
 SLAM Test Framework
 ====================
 General SLAM algorithm test framework, supporting multiple datasets, offline/online modes, automatic compilation and result aggregation.
-
-Usage examples:
-    python slam_test_framework.py --config test_config.yaml
-    python slam_test_framework.py --datasets botanic mcd_viral
 """
 
 import subprocess
@@ -432,7 +428,7 @@ def _default_datasets() -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    return [mcd_viral]
+    return [mcd_viral, botanic]
 
 
 if __name__ == "__main__":
