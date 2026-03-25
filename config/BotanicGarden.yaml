@@ -1,24 +1,22 @@
 common:
   lid_topic: "/livox/lidar"
-  imu_topic: "/vn200/imu"
+  imu_topic: "/livox/imu"
 
 preprocess:
   lidar_type: 1                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
   blind: 4
-  time_scale: 1e-3
+  time_scale: 1e-6
 
 mapping:
-  acc_cov:       6.0e-2
-  gyr_cov:       5.0e-3
-  b_acc_cov:     8.0e-5
-  b_gyr_cov:     3.0e-6
+  acc_cov: 0.1
+  gyr_cov: 0.1
+  b_acc_cov: 0.0001
+  b_gyr_cov: 0.0001
   fov_degree:    360
   det_range:     100.0
   extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
-  extrinsic_T: [ 0.020,  0.000,  0.037 ]
-  extrinsic_R: [ 1.000,  0.000,  0.000,
-                 0.000, -1.000,  0.000,
-                 0.000,  0.000, -1.000 ]
+  extrinsic_T: [ 0.04165, 0.02326, -0.0284 ]
+  extrinsic_R: [ 1, 0, 0, 0, 1, 0, 0, 0, 1]
 
 publish:
   path_publish_en: false

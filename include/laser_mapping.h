@@ -156,7 +156,6 @@ class LaserMapping {
     bool scan_body_pub_en_ = false;
     bool scan_effect_pub_en_ = false;
     bool pcd_save_en_ = false;
-    bool runtime_pos_log_ = true;
     int pcd_save_interval_ = -1;
     bool path_save_en_ = false;
 

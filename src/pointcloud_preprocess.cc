@@ -57,7 +57,7 @@ void PointCloudPreprocess::AviaHandler(const livox_ros_driver::CustomMsg::ConstP
     }
 
     std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const uint &i) {
-        if ((msg->points[i].line < num_scans_) &&
+        if ((msg->points[i].line < 1) &&
             ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {
             if (i % point_filter_num_ == 0) {
                 cloud_full_[i].x = msg->points[i].x;
@@ -124,29 +124,6 @@ void PointCloudPreprocess::VelodyneHandler(const sensor_msgs::PointCloud2::Const
     int plsize = pl_orig.points.size();
     cloud_out_.reserve(plsize);
 
-    /*** These variables only works when no point timestamps given ***/
-    double omega_l = 3.61;  // scan angular velocity
-    std::vector<bool> is_first(num_scans_, true);
-    std::vector<double> yaw_fp(num_scans_, 0.0);    // yaw of first scan point
-    std::vector<float> yaw_last(num_scans_, 0.0);   // yaw of last scan point
-    std::vector<float> time_last(num_scans_, 0.0);  // last offset time
-    /*****************************************************************/
-
-    if (pl_orig.points[plsize - 1].time > 0) {
-        given_offset_time_ = true;
-    } else {
-        given_offset_time_ = false;
-        double yaw_first = atan2(pl_orig.points[0].y, pl_orig.points[0].x) * 57.29578;
-        double yaw_end = yaw_first;
-        int layer_first = pl_orig.points[0].ring;
-        for (uint i = plsize - 1; i > 0; i--) {
-            if (pl_orig.points[i].ring == layer_first) {
-                yaw_end = atan2(pl_orig.points[i].y, pl_orig.points[i].x) * 57.29578;
-                break;
-            }
-        }
-    }
-
     for (int i = 0; i < plsize; i++) {
         PointType added_pt;
         added_pt.x = pl_orig.points[i].x;
@@ -171,29 +148,6 @@ void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr
     pcl::fromROSMsg(*msg, pl_orig);
     int plsize = pl_orig.points.size();
     cloud_out_.reserve(plsize);
-
-    /*** These variables only works when no point timestamps given ***/
-    double omega_l = 3.61;  // scan angular velocity
-    std::vector<bool> is_first(num_scans_, true);
-    std::vector<double> yaw_fp(num_scans_, 0.0);    // yaw of first scan point
-    std::vector<float> yaw_last(num_scans_, 0.0);   // yaw of last scan point
-    std::vector<float> time_last(num_scans_, 0.0);  // last offset time
-    /*****************************************************************/
-
-    if (pl_orig.points[plsize - 1].timestamp > 0) {
-        given_offset_time_ = true;
-    } else {
-        given_offset_time_ = false;
-        double yaw_first = atan2(pl_orig.points[0].y, pl_orig.points[0].x) * 57.29578;
-        double yaw_end = yaw_first;
-        int layer_first = pl_orig.points[0].ring;
-        for (uint i = plsize - 1; i > 0; i--) {
-            if (pl_orig.points[i].ring == layer_first) {
-                yaw_end = atan2(pl_orig.points[i].y, pl_orig.points[i].x) * 57.29578;
-                break;
-            }
-        }
-    }
 
     double time_head = pl_orig.points[0].timestamp;
 
@@ -235,7 +189,7 @@ void PointCloudPreprocess::LivoxHandler(const sensor_msgs::PointCloud2::ConstPtr
     double timebase = pl_orig.points[0].timestamp;
 
     std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const uint &i) {
-        if ((pl_orig.points[i].line < num_scans_) &&
+        if ((pl_orig.points[i].line < 1) &&
             ((pl_orig.points[i].tag & 0x30) == 0x10 || (pl_orig.points[i].tag & 0x30) == 0x00)) {
             if (i % point_filter_num_ == 0) {
                 cloud_full_[i].x = pl_orig.points[i].x;

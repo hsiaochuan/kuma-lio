@@ -80,10 +80,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     nh.param<double>("preprocess/blind", preprocess_->Blind(), 0.01);
     nh.param<float>("preprocess/time_scale", preprocess_->TimeScale(), 1e-3);
     nh.param<int>("preprocess/lidar_type", lidar_type, 1);
-    nh.param<int>("preprocess/scan_line", preprocess_->NumScans(), 16);
     nh.param<int>("point_filter_num", preprocess_->PointFilterNum(), 2);
-    nh.param<bool>("feature_extract_enable", preprocess_->FeatureEnabled(), false);
-    nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_, true);
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en_, true);
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en_, false);
     nh.param<int>("pcd_save/interval", pcd_save_interval_, -1);
@@ -179,9 +176,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         preprocess_->Blind() = yaml["preprocess"]["blind"].as<double>();
         preprocess_->TimeScale() = yaml["preprocess"]["time_scale"].as<double>();
         lidar_type = yaml["preprocess"]["lidar_type"].as<int>();
-        preprocess_->NumScans() = yaml["preprocess"]["scan_line"].as<int>();
         preprocess_->PointFilterNum() = yaml["point_filter_num"].as<int>();
-        preprocess_->FeatureEnabled() = yaml["feature_extract_enable"].as<bool>();
         extrinsic_est_en_ = yaml["mapping"]["extrinsic_est_en"].as<bool>();
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();

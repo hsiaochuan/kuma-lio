@@ -146,9 +146,7 @@ class PointCloudPreprocess {
 
     // accessors
     double &Blind() { return blind_; }
-    int &NumScans() { return num_scans_; }
     int &PointFilterNum() { return point_filter_num_; }
-    bool &FeatureEnabled() { return feature_enabled_; }
     float &TimeScale() { return time_scale_; }
     LidarType GetLidarType() const { return lidar_type_; }
     void SetLidarType(LidarType lt) { lidar_type_ = lt; }
@@ -163,12 +161,9 @@ class PointCloudPreprocess {
     PointCloud cloud_full_, cloud_out_;
 
     LidarType lidar_type_ = LidarType::AVIA;
-    bool feature_enabled_ = false;
     int point_filter_num_ = 1;
-    int num_scans_ = 6;
     double blind_ = 0.01;
     float time_scale_ = 1e-3;
-    bool given_offset_time_ = false;
 };
 }  // namespace faster_lio
 
