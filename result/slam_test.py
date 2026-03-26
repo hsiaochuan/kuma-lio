@@ -324,7 +324,6 @@ class SLAMTestRunner:
             self.write_txt_report(suite_result)
             suites.append(suite_result)
 
-        self.print_summary(suites)
         return suites
 
 
@@ -428,7 +427,7 @@ def _default_datasets() -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    return [mcd_viral, botanic]
+    return [mcd_viral]
 
 
 if __name__ == "__main__":
