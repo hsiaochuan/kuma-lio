@@ -20,21 +20,21 @@ struct State {
   State() {
     timestamp = -1.0;
     this->rot_end = Eigen::Quaterniond::Identity();
-    this->pos_end = Eigen::Vector3d::Zero();
-    this->vel_end = Eigen::Vector3d::Zero();
-    this->bias_g = Eigen::Vector3d::Zero();
-    this->bias_a = Eigen::Vector3d::Zero();
-    this->gravity = Eigen::Vector3d::Zero();
+    this->pos_end = common::V3D::Zero();
+    this->vel_end = common::V3D::Zero();
+    this->bias_g =  common::V3D::Zero();
+    this->bias_a =  common::V3D::Zero();
+    this->gravity = common::V3D::Zero();
 
     // init cov
     this->cov = Eigen::Matrix<double, STATE_DOF, STATE_DOF>::Identity() * 0.01;
-    this->cov.block<3, 3>(ROT, ROT) = Eigen::Matrix3d::Identity() * 1e-3;
-    this->cov.block<3, 3>(POS, POS) = Eigen::Matrix3d::Identity() * 1e-12;
-    this->cov.block<3, 3>(VEL, VEL) = Eigen::Matrix3d::Identity() * 1e-12;
-    this->cov.block<3, 3>(BIAS_G, BIAS_G) = Eigen::Matrix3d::Identity() * 1e-3;
-    this->cov.block<3, 3>(BIAS_A, BIAS_A) = Eigen::Matrix3d::Identity() * 1e-3;
+    this->cov.block<3, 3>(ROT, ROT) = common::M3D::Identity() * 1e-3;
+    this->cov.block<3, 3>(POS, POS) = common::M3D::Identity() * 1e-12;
+    this->cov.block<3, 3>(VEL, VEL) = common::M3D::Identity() * 1e-12;
+    this->cov.block<3, 3>(BIAS_G, BIAS_G) = common::M3D::Identity() * 1e-3;
+    this->cov.block<3, 3>(BIAS_A, BIAS_A) = common::M3D::Identity() * 1e-3;
     this->cov.block<3, 3>(GRAVITY, GRAVITY) =
-        Eigen::Matrix3d::Identity() * 1e-3;
+        common::M3D::Identity() * 1e-3;
   };
 
   State &operator=(const State &b) = default;
@@ -78,11 +78,11 @@ struct State {
 
   double timestamp;
   Eigen::Quaterniond rot_end;
-  Eigen::Vector3d pos_end;
-  Eigen::Vector3d vel_end;
-  Eigen::Vector3d bias_g;
-  Eigen::Vector3d bias_a;
-  Eigen::Vector3d gravity;
+  common::V3D pos_end;
+  common::V3D vel_end;
+  common::V3D bias_g;
+  common::V3D bias_a;
+  common::V3D gravity;
   Eigen::Matrix<double, STATE_DOF, STATE_DOF> cov;  // states covariance
 };
 }  // namespace open_livo
