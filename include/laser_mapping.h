@@ -97,7 +97,7 @@ class LaserMapping {
     std::vector<double> extrinR_{9, 0.0};  // lidar-imu rotation
 
     /// point clouds data
-    PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion
+    PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
     PointCloud::Ptr scan_down_body_{new PointCloud()};   // downsampled scan in body
     PointCloud::Ptr scan_down_world_{new PointCloud()};  // downsampled scan in world
     std::vector<PointVector> nearest_points_;         // nearest points of current scan

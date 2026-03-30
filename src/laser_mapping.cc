@@ -714,30 +714,35 @@ void LaserMapping::PublishFrameWorld() {
         return;
     }
 
-    PointCloud::Ptr laserCloudWorld;
+    PointCloud::Ptr scan_world;
     if (dense_pub_en_) {
-        PointCloud::Ptr laserCloudFullRes(scan_undistort_);
-        int size = laserCloudFullRes->points.size();
-        laserCloudWorld.reset(new PointCloud(size, 1));
+        PointCloud::Ptr scan_full(scan_undistort_);
+        int size = scan_full->points.size();
+        scan_world.reset(new PointCloud(size, 1));
         for (int i = 0; i < size; i++) {
-            PointBodyToWorld(&laserCloudFullRes->points[i], &laserCloudWorld->points[i]);
+            PointBodyToWorld(&scan_full->points[i], &scan_world->points[i]);
         }
     } else {
-        laserCloudWorld = scan_down_world_;
+        scan_world = scan_down_world_;
     }
 
     if (run_in_offline_ == false && scan_pub_en_) {
-        sensor_msgs::PointCloud2 laserCloudmsg;
-        pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
-        laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time_);
-        laserCloudmsg.header.frame_id = tf_world_frame_;
-        pub_laser_cloud_world_.publish(laserCloudmsg);
+        sensor_msgs::PointCloud2 scan_msg;
+        pcl::toROSMsg(*scan_world, scan_msg);
+        scan_msg.header.stamp = ros::Time().fromSec(lidar_end_time_);
+        scan_msg.header.frame_id = tf_world_frame_;
+        pub_laser_cloud_world_.publish(scan_msg);
         publish_count_ -= options::PUBFRAME_PERIOD;
     }
 
+    if (pcd_save_en_) {
+        static auto once = fs::create_directories(output_dir + "/scans");
+        std::string pcd_save_fname(output_dir + "/scans/" + std::to_string(measures_.lidar_end_time_) + ".pcd");
+        pcl::io::savePCDFileBinary(pcd_save_fname, *scan_undistort_);
+    }
 
     if (pcd_save_en_) {
-        *pcl_wait_save_ += *laserCloudWorld;
+        *pcl_wait_save_ += *scan_world;
         static int scan_wait_num = 0;
         scan_wait_num++;
         if (pcl_wait_save_->size() > 0 && pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
@@ -746,9 +751,8 @@ void LaserMapping::PublishFrameWorld() {
             scan_sampler_.setInputCloud(pcl_wait_save_);
             scan_sampler_.filter(*pcl_wait_save_);
             std::string pcd_save_fname(output_dir + "/maps/map_" + std::to_string(pcd_index_) + ".pcd");
-            pcl::PCDWriter pcd_writer;
             LOG(INFO) << "current scan saved to " << pcd_save_fname;
-            pcd_writer.writeBinary(pcd_save_fname, *pcl_wait_save_);
+            pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
             pcl_wait_save_->clear();
             scan_wait_num = 0;
         }
