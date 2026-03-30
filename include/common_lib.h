@@ -86,7 +86,7 @@ inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double>& v) {
     q.w() = v[3];
     return q;
 }
-
+using V2D = Eigen::Vector2d;
 using V3D = Eigen::Vector3d;
 using V4D = Eigen::Vector4d;
 using V5D = Eigen::Matrix<double, 5, 1>;

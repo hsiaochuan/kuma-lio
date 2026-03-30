@@ -38,7 +38,7 @@ target_link_libraries(${PROJECT_NAME}
         yaml-cpp
         )
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${PYTHON_INCLUDE_DIRS})
+include_directories(${PROJECT_NAME} PRIVATE ${PYTHON_INCLUDE_DIRS})
 add_executable(run_mapping_online app/run_mapping_online.cc)
 target_link_libraries(run_mapping_online
         ${PROJECT_NAME} gflags
@@ -47,4 +47,14 @@ add_executable(run_mapping_offline app/run_mapping_offline.cc)
 target_link_libraries(run_mapping_offline
         ${PROJECT_NAME} gflags
         )
+
+find_package(GTest REQUIRED)
+enable_testing()
+add_executable(camera_test src/camera_test.cpp)
+target_link_libraries(camera_test
+        ${PROJECT_NAME}
+        GTest::GTest
+        GTest::Main
+)
+add_test(NAME camera_test COMMAND camera_test)
 
