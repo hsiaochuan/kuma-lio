@@ -93,8 +93,8 @@ class LaserMapping {
     double map_filter_size_ = 0;
 
     /// params
-    std::vector<double> extrinT_{3, 0.0};  // lidar-imu translation
-    std::vector<double> extrinR_{9, 0.0};  // lidar-imu rotation
+    std::vector<double> extrinT_{0.0, 0.0, 0.0};  // lidar-imu translation
+    std::vector<double> extrinR_;  // lidar-imu rotation
 
     /// point clouds data
     PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
