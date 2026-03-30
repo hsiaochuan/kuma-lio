@@ -427,7 +427,15 @@ def _default_datasets() -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    return [mcd_viral]
+    new_college = DatasetConfig(
+        name="new_college",
+        config="../config/New_College.yaml",
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/New_College/rooster_2020-07-10-09-23-18_0.bag"
+        ],
+        run_mode=RunMode.OFFLINE,
+    )
+    return [new_college]
 
 
 if __name__ == "__main__":

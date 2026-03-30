@@ -133,8 +133,12 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
     lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
-    lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
-
+    if (extrinR_.size() == 9)
+        lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
+    else if (extrinR_.size() == 4)
+        lidar_R_wrt_IMU = common::QuatFromArray<double>(extrinR_).toRotationMatrix();
+    else
+        throw "extrinsic should be 9 or 4";
     p_imu_->SetExtrinsic(lidar_T_wrt_IMU, lidar_R_wrt_IMU);
     p_imu_->SetGyrCov(common::V3D(gyr_cov, gyr_cov, gyr_cov));
     p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
@@ -230,7 +234,12 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
     lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
-    lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
+    if (extrinR_.size() == 9)
+        lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
+    else if (extrinR_.size() == 4)
+        lidar_R_wrt_IMU = common::QuatFromArray<double>(extrinR_).toRotationMatrix();
+    else
+        throw "extrinsic should be 9 or 4";
 
     p_imu_->SetExtrinsic(lidar_T_wrt_IMU, lidar_R_wrt_IMU);
     p_imu_->SetGyrCov(common::V3D(gyr_cov, gyr_cov, gyr_cov));

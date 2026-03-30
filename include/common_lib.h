@@ -77,6 +77,15 @@ inline Eigen::Matrix<S, 3, 3> MatFromArray(const boost::array<S, 9> &v) {
     return m;
 }
 
+template <typename S>
+inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double>& v) {
+    Eigen::Quaternion<S> q;
+    q.x() = v[0];
+    q.y() = v[1];
+    q.z() = v[2];
+    q.w() = v[3];
+    return q;
+}
 
 using V3D = Eigen::Vector3d;
 using V4D = Eigen::Vector4d;
