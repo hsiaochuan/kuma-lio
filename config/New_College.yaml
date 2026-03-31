@@ -1,7 +1,11 @@
 common:
   lid_topic: "/os1_cloud_node/points"
   imu_topic: "/os1_cloud_node/imu"
-
+  camera_topic: ""
+  camera_enable: false
+  scan_interval: 0.1
+  lidar_time_offset: 0
+  camera_time_offset: 0
 preprocess:
   lidar_type: 3                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
   blind: 4

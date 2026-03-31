@@ -1,7 +1,11 @@
 common:
   lid_topic: "/livox/lidar"
   imu_topic: "/livox/imu"
-
+  camera_topic: ""
+  camera_enable: false
+  scan_interval: 0.1
+  lidar_time_offset: 0
+  camera_time_offset: 0
 preprocess:
   lidar_type: 1                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
   blind: 4

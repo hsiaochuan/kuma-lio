@@ -6,6 +6,8 @@
 #include <pcl/filters/voxel_grid.h>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/CompressedImage.h>
 #include <condition_variable>
 #include <thread>
 
@@ -46,6 +48,8 @@ class LaserMapping {
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
+    void ImageCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
+    void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
 
     // sync lidar with imu
     bool SyncPackages();
@@ -80,7 +84,7 @@ class LaserMapping {
 
     void PrintState(const state_ikfom &s);
 
-   private:
+   public:
     /// modules
     IVoxType::Options ivox_options_;
     std::shared_ptr<IVoxType> ivox_ = nullptr;                    // localmap in ivox
@@ -94,20 +98,27 @@ class LaserMapping {
 
     /// params
     std::vector<double> extrinT_{0.0, 0.0, 0.0};  // lidar-imu translation
-    std::vector<double> extrinR_;  // lidar-imu rotation
+    std::vector<double> extrinR_;                 // lidar-imu rotation
 
     /// point clouds data
     PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
     PointCloud::Ptr scan_down_body_{new PointCloud()};   // downsampled scan in body
     PointCloud::Ptr scan_down_world_{new PointCloud()};  // downsampled scan in world
-    std::vector<PointVector> nearest_points_;         // nearest points of current scan
-    common::VV4F corr_pts_;                           // inlier pts
-    common::VV4F corr_norm_;                          // inlier plane norms
-    pcl::VoxelGrid<PointType> scan_sampler_;            // voxel filter for current scan
-    std::vector<float> residuals_;                    // point-to-plane residuals
-    std::vector<char> point_selected_surf_;           // selected points
-    common::VV4F plane_coef_;                         // plane coeffs
+    std::vector<PointVector> nearest_points_;            // nearest points of current scan
+    common::VV4F corr_pts_;                              // inlier pts
+    common::VV4F corr_norm_;                             // inlier plane norms
+    pcl::VoxelGrid<PointType> scan_sampler_;             // voxel filter for current scan
+    std::vector<float> residuals_;                       // point-to-plane residuals
+    std::vector<char> point_selected_surf_;              // selected points
+    common::VV4F plane_coef_;                            // plane coeffs
 
+    /// topics
+    std::string lidar_topic_;
+    std::string imu_topic_;
+    std::string camera_topic_;
+    bool camera_enable_;
+    double lidar_time_offset_ = 0.;
+    double camera_time_offset_ = 0.;
     /// ros pub and sub stuffs
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
@@ -123,24 +134,25 @@ class LaserMapping {
     std::deque<double> time_buffer_;
     std::deque<PointCloud::Ptr> lidar_buffer_;
     std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer_;
+    std::deque<double> img_time_buffer_;
 
-    /// options
     double last_timestamp_lidar_ = 0;
-    double lidar_end_time_ = 0;
     double last_timestamp_imu_ = -1.0;
+    double last_timestamp_camera_ = 0.0;
+    /// options
+    double scan_interval_ = 0.1;
+    double lidar_end_time_ = 0;
     double first_lidar_time_ = 0.0;
     bool lidar_pushed_ = false;
     float esti_plane_thr = 0.1;
     int max_iteraions = 4;
     /// statistics and flags ///
-    int scan_count_ = 0;
-    int publish_count_ = 0;
     bool flg_first_scan_ = true;
     bool flg_EKF_inited_ = false;
     int pcd_index_ = 0;
     double lidar_mean_scantime_ = 0.0;
     int scan_num_ = 0;
-    int effect_feat_num_ = 0, frame_num_ = 0;
+    int effect_feat_num_ = 0;
 
     ///////////////////////// EKF inputs and output ///////////////////////////////////////////////////////
     common::MeasureGroup measures_;                    // sync IMU and lidar scan
