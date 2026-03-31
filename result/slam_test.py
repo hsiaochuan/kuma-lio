@@ -398,7 +398,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     )
 
     mcd_viral = DatasetConfig(
-        name="MCD_VIRAL",
+        name="mcd_viral",
         config="../config/MCD_VIRAL_HandHeld.yaml",
         config_map={
             "ntu": "../config/MCD_VIRAL_ATV.yaml",
