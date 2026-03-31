@@ -366,19 +366,18 @@ def load_config(config_path: str) -> Tuple[SLAMTestRunner, List[DatasetConfig]]:
 
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
-    parser.add_argument("--datasets", nargs="*", help="Run only specified datasets (by name)")
+    parser.add_argument("--datasets", nargs="+", default=["mcd_viral", "botanic", "new_college"],
+                        help="Run only specified datasets (by name)")
     args = parser.parse_args()
 
+    data_name_list = args.datasets
     runner = SLAMTestRunner()
-    datasets = _default_datasets()
-
-    if args.datasets:
-        datasets = [d for d in datasets if d.name in args.datasets]
+    datasets = DatasetsList(data_name_list)
 
     runner.run_all(datasets)
 
 
-def _default_datasets() -> List[DatasetConfig]:
+def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     """Default datasets equivalent to original two test scripts"""
     botanic = DatasetConfig(
         name="Botanic Garden",
@@ -435,7 +434,13 @@ def _default_datasets() -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    return [new_college]
+
+    all_datasets = [botanic, mcd_viral, new_college]
+    run_datasets = []
+    for dataset in all_datasets:
+        if dataset.name in name_list:
+            run_datasets.append(dataset)
+    return run_datasets
 
 
 if __name__ == "__main__":
