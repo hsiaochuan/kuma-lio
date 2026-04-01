@@ -87,7 +87,6 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
         nh.param<double>("mapping/b_gyr_cov", b_gyr_cov, 0.0001);
         nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);
         nh.param<double>("preprocess/blind", preprocess_->Blind(), 0.01);
-        nh.param<float>("preprocess/time_scale", preprocess_->TimeScale(), 1e-3);
         nh.param<int>("preprocess/lidar_type", lidar_type, 1);
         nh.param<int>("point_filter_num", preprocess_->PointFilterNum(), 2);
         nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en_, true);
@@ -106,21 +105,9 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     if (lidar_type == 1) {
         preprocess_->SetLidarType(LidarType::AVIA);
         LOG(INFO) << "Using AVIA Lidar (livox_ros_driver::CustomMsg)";
-    } else if (lidar_type == 2) {
-        preprocess_->SetLidarType(LidarType::VELO32);
-        LOG(INFO) << "Using Velodyne 32 Lidar";
     } else if (lidar_type == 3) {
         preprocess_->SetLidarType(LidarType::OUST64);
         LOG(INFO) << "Using OUST 64 Lidar";
-    } else if (lidar_type == 4) {
-        preprocess_->SetLidarType(LidarType::HESAIxt32);
-        LOG(INFO) << "Using Hesai Pandar 32 Lidar";
-    } else if (lidar_type == 5) {
-        preprocess_->SetLidarType(LidarType::ROBOSENSE);
-        LOG(INFO) << "Using Robosense Lidar";
-    } else if (lidar_type == 6) {
-        preprocess_->SetLidarType(LidarType::LIVOX);
-        LOG(INFO) << "Using Livox Lidar (sensor_msgs::PointCloud2)";
     } else {
         LOG(WARNING) << "unknown lidar_type";
         return false;
@@ -189,7 +176,6 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         b_gyr_cov = yaml["mapping"]["b_gyr_cov"].as<float>();
         b_acc_cov = yaml["mapping"]["b_acc_cov"].as<float>();
         preprocess_->Blind() = yaml["preprocess"]["blind"].as<double>();
-        preprocess_->TimeScale() = yaml["preprocess"]["time_scale"].as<double>();
         lidar_type = yaml["preprocess"]["lidar_type"].as<int>();
         preprocess_->PointFilterNum() = yaml["point_filter_num"].as<int>();
         extrinsic_est_en_ = yaml["mapping"]["extrinsic_est_en"].as<bool>();
@@ -217,21 +203,9 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     if (lidar_type == 1) {
         preprocess_->SetLidarType(LidarType::AVIA);
         LOG(INFO) << "Using AVIA Lidar (livox_ros_driver::CustomMsg)";
-    } else if (lidar_type == 2) {
-        preprocess_->SetLidarType(LidarType::VELO32);
-        LOG(INFO) << "Using Velodyne 32 Lidar";
     } else if (lidar_type == 3) {
         preprocess_->SetLidarType(LidarType::OUST64);
         LOG(INFO) << "Using OUST 64 Lidar";
-    } else if (lidar_type == 4) {
-        preprocess_->SetLidarType(LidarType::HESAIxt32);
-        LOG(INFO) << "Using Hesai Pandar 32 Lidar";
-    } else if (lidar_type == 5) {
-        preprocess_->SetLidarType(LidarType::ROBOSENSE);
-        LOG(INFO) << "Using Robosense Lidar";
-    } else if (lidar_type == 6) {
-        preprocess_->SetLidarType(LidarType::LIVOX);
-        LOG(INFO) << "Using Livox Lidar (sensor_msgs::PointCloud2)";
     } else {
         LOG(WARNING) << "unknown lidar_type";
         return false;
@@ -310,18 +284,16 @@ void LaserMapping::Run() {
     }
 
     /// the first scan
-    if (flg_first_scan_) {
+    if (if_local_map_init_) {
         state_point_ = kf_.get_x();
         scan_down_world_->resize(scan_undistort_->size());
         for (int i = 0; i < scan_undistort_->size(); i++) {
             PointBodyToWorld(&scan_undistort_->points[i], &scan_down_world_->points[i]);
         }
         ivox_->AddPoints(scan_down_world_->points);
-        first_lidar_time_ = measures_.lidar_bag_time_;
-        flg_first_scan_ = false;
+        if_local_map_init_ = false;
         return;
     }
-    flg_EKF_inited_ = (measures_.lidar_bag_time_ - first_lidar_time_) >= options::INIT_TIME;
 
     /// downsample
     Timer::Evaluate(
@@ -392,17 +364,30 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
     Timer::Evaluate(
         [&, this]() {
             double timestamp = msg->header.stamp.toSec();
+
+            // time offset
             timestamp += lidar_time_offset_;
+
+            // loop
             if (timestamp < last_timestamp_lidar_) {
                 LOG(ERROR) << "lidar loop back, clear buffer";
-                lidar_buffer_.clear();
             }
             last_timestamp_lidar_ = timestamp;
 
-            PointCloud::Ptr ptr(new PointCloud());
-            preprocess_->Process(msg, ptr);
-            lidar_buffer_.push_back(ptr);
-            time_buffer_.push_back(timestamp);
+            // set start offset
+            if (if_first_scan_) {
+                first_scan_time_ = timestamp;
+                if_first_scan_ = false;
+            }
+
+            timestamp = timestamp - first_scan_time_;
+
+            // push to buffer
+            PointCloud::Ptr scan(new PointCloud());
+            preprocess_->Process(msg, scan, timestamp);
+            for (int i = 0; i < scan->size(); ++i) {
+                points_buffer_.emplace_back(scan->points[i]);
+            }
         },
         "Preprocess (Standard)");
 }
@@ -412,105 +397,143 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
     Timer::Evaluate(
         [&, this]() {
             double timestamp = msg->header.stamp.toSec();
+
+            // time offset
             timestamp += lidar_time_offset_;
+
+            // loop
             if (timestamp < last_timestamp_lidar_) {
-                LOG(WARNING) << "lidar loop back, clear buffer";
-                lidar_buffer_.clear();
+                LOG(ERROR) << "lidar loop back, clear buffer";
             }
-
             last_timestamp_lidar_ = timestamp;
-            if (abs(last_timestamp_imu_ - last_timestamp_lidar_) > 10.0 && !imu_buffer_.empty() &&
-                !lidar_buffer_.empty()) {
-                LOG(INFO) << "IMU and LiDAR not Synced, IMU time: " << last_timestamp_imu_
-                          << ", lidar header time: " << last_timestamp_lidar_;
+
+            // set start offset
+            if (if_first_scan_) {
+                first_scan_time_ = timestamp;
+                if_first_scan_ = false;
             }
 
-            PointCloud::Ptr ptr(new PointCloud());
-            preprocess_->Process(msg, ptr);
-            lidar_buffer_.emplace_back(ptr);
-            time_buffer_.emplace_back(timestamp);
+            timestamp = timestamp - first_scan_time_;
+
+            // push to buffer
+            PointCloud::Ptr scan(new PointCloud());
+            preprocess_->Process(msg, scan, timestamp);
+            for (int i = 0; i < scan->size(); ++i) {
+                points_buffer_.emplace_back(scan->points[i]);
+            }
         },
         "Preprocess (Livox)");
 }
 
 void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
-    sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
-    double timestamp = msg->header.stamp.toSec();
+    double timestamp = msg_in->header.stamp.toSec();
 
+    // loop
     if (timestamp < last_timestamp_imu_) {
         LOG(WARNING) << "imu loop back, clear buffer";
         imu_buffer_.clear();
     }
-
     last_timestamp_imu_ = timestamp;
-    imu_buffer_.emplace_back(msg);
+
+    // set start offset
+    if (if_first_scan_) {
+        return;
+    }else {
+        timestamp = timestamp - first_scan_time_;
+    }
+
+    // push to buffer
+    Imu imu;
+    imu.timestamp = timestamp;
+    imu.angular_velocity.x() = msg_in->angular_velocity.x;
+    imu.angular_velocity.y() = msg_in->angular_velocity.y;
+    imu.angular_velocity.z() = msg_in->angular_velocity.z;
+    imu.linear_acceleration.x() = msg_in->linear_acceleration.x;
+    imu.linear_acceleration.y() = msg_in->linear_acceleration.y;
+    imu.linear_acceleration.z() = msg_in->linear_acceleration.z;
+    imu_buffer_.emplace_back(imu);
 }
 void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     double timestamp = msg_in->header.stamp.toSec();
+
+    // time offset
     timestamp += camera_time_offset_;
+
+    // loop
     if (timestamp < last_timestamp_camera_) {
         LOG(WARNING) << "image loop back, clear buffer";
         img_time_buffer_.clear();
     }
     last_timestamp_camera_ = timestamp;
+
+    // set start offset
+    if (if_first_scan_)
+        return;
+    else
+        timestamp = timestamp - first_scan_time_;
+
+    // push to buffer
     img_time_buffer_.emplace_back(timestamp);
 }
 void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
+
+    // offset
     double timestamp = msg_in->header.stamp.toSec();
+
+    // loop
     timestamp += camera_time_offset_;
     if (timestamp < last_timestamp_camera_) {
         LOG(WARNING) << "image loop back, clear buffer";
         img_time_buffer_.clear();
     }
     last_timestamp_camera_ = timestamp;
+
+    // set start offset
+    if (if_first_scan_)
+        return;
+    else
+        timestamp = timestamp - first_scan_time_;
+
+    // push to buffer
     img_time_buffer_.emplace_back(timestamp);
 }
 bool LaserMapping::SyncPackages() {
-    if (lidar_buffer_.empty() || imu_buffer_.empty()) {
+    if (points_buffer_.empty() || imu_buffer_.empty()) {
         return false;
     }
 
-    /*** push a lidar scan ***/
-    if (!lidar_pushed_) {
-        measures_.lidar_ = lidar_buffer_.front();
-        measures_.lidar_bag_time_ = time_buffer_.front();
-
-        if (measures_.lidar_->points.size() <= 1) {
-            LOG(WARNING) << "Too few input point cloud!";
-            lidar_end_time_ = measures_.lidar_bag_time_ + lidar_mean_scantime_;
-        } else if (measures_.lidar_->points.back().GetTime() < 0.5 * lidar_mean_scantime_) {
-            lidar_end_time_ = measures_.lidar_bag_time_ + lidar_mean_scantime_;
-        } else {
-            scan_num_++;
-            lidar_end_time_ = measures_.lidar_bag_time_ + measures_.lidar_->points.back().GetTime();
-            lidar_mean_scantime_ +=
-                (measures_.lidar_->points.back().GetTime() - lidar_mean_scantime_) / scan_num_;
-        }
-
-        measures_.lidar_end_time_ = lidar_end_time_;
-        lidar_pushed_ = true;
+    // set the measure end timestamp
+    if (lidar_end_time_ == 0) {
+        lidar_end_time_ = points_buffer_.front().timestamp + scan_interval_;
+    } else if (measures_.lidar_end_time_ == lidar_end_time_) {
+        // after the update, incre the end time
+        lidar_end_time_ = lidar_end_time_ + scan_interval_;
+    } else {
+        // the measure is not synced, no need to set the lidar end time
+        lidar_end_time_ = lidar_end_time_;
     }
 
-    if (last_timestamp_imu_ < lidar_end_time_) {
-        return false;
-    }
+    if (imu_buffer_.back().timestamp < lidar_end_time_) return false;
+    if (points_buffer_.back().timestamp < lidar_end_time_) return false;
 
-    /*** push imu_ data, and pop from imu_ buffer ***/
-    double imu_time = imu_buffer_.front()->header.stamp.toSec();
+    // push the imu data
     measures_.imu_.clear();
-    while ((!imu_buffer_.empty()) && (imu_time < lidar_end_time_)) {
-        imu_time = imu_buffer_.front()->header.stamp.toSec();
-        if (imu_time > lidar_end_time_) break;
-        measures_.imu_.push_back(imu_buffer_.front());
+    while (imu_buffer_.front().timestamp < lidar_end_time_ && !imu_buffer_.empty()) {
+        measures_.imu_.emplace_back(imu_buffer_.front());
         imu_buffer_.pop_front();
     }
 
-    lidar_buffer_.pop_front();
-    time_buffer_.pop_front();
-    lidar_pushed_ = false;
+    // push the lidar points
+    measures_.lidar_->clear();
+    while (points_buffer_.front().timestamp < lidar_end_time_ && !points_buffer_.empty()) {
+        measures_.lidar_->emplace_back(points_buffer_.front());
+        points_buffer_.pop_front();
+    }
+
+    measures_.lidar_end_time_ = lidar_end_time_;
     return true;
 }
 
@@ -538,7 +561,7 @@ void LaserMapping::MapIncremental() {
 
         /* decide if need add to map */
         PointType &point_world = scan_down_world_->points[i];
-        if (!nearest_points_[i].empty() && flg_EKF_inited_) {
+        if (!nearest_points_[i].empty()) {
             const PointVector &points_near = nearest_points_[i];
 
             Eigen::Vector3f center =
@@ -546,8 +569,7 @@ void LaserMapping::MapIncremental() {
 
             Eigen::Vector3f dis_2_center = points_near[0].getVector3fMap() - center;
 
-            if (fabs(dis_2_center.x()) > 0.5 * map_filter_size_ &&
-                fabs(dis_2_center.y()) > 0.5 * map_filter_size_ &&
+            if (fabs(dis_2_center.x()) > 0.5 * map_filter_size_ && fabs(dis_2_center.y()) > 0.5 * map_filter_size_ &&
                 fabs(dis_2_center.z()) > 0.5 * map_filter_size_) {
                 point_no_need_downsample.emplace_back(point_world);
                 return;

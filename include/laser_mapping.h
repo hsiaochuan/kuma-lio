@@ -130,10 +130,12 @@ class LaserMapping {
     std::string tf_imu_frame_;
     std::string tf_world_frame_;
 
+    double first_scan_time_;
+    bool if_first_scan_ = true;
+
     std::mutex mtx_buffer_;
-    std::deque<double> time_buffer_;
-    std::deque<PointCloud::Ptr> lidar_buffer_;
-    std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer_;
+    std::deque<Point> points_buffer_;
+    std::deque<Imu> imu_buffer_;
     std::deque<double> img_time_buffer_;
 
     double last_timestamp_lidar_ = 0;
@@ -142,16 +144,11 @@ class LaserMapping {
     /// options
     double scan_interval_ = 0.1;
     double lidar_end_time_ = 0;
-    double first_lidar_time_ = 0.0;
-    bool lidar_pushed_ = false;
     float esti_plane_thr = 0.1;
     int max_iteraions = 4;
     /// statistics and flags ///
-    bool flg_first_scan_ = true;
-    bool flg_EKF_inited_ = false;
+    bool if_local_map_init_ = true;
     int pcd_index_ = 0;
-    double lidar_mean_scantime_ = 0.0;
-    int scan_num_ = 0;
     int effect_feat_num_ = 0;
 
     ///////////////////////// EKF inputs and output ///////////////////////////////////////////////////////

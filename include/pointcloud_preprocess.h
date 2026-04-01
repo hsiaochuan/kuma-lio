@@ -126,7 +126,10 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::Point,
 
 namespace faster_lio {
 
-enum class LidarType { AVIA = 1, VELO32, OUST64, HESAIxt32, ROBOSENSE, LIVOX };
+enum class LidarType {
+  AVIA = 1,
+  OUST64 = 3,
+};
 
 /**
  * point cloud preprocess
@@ -140,30 +143,25 @@ class PointCloudPreprocess {
     ~PointCloudPreprocess() = default;
 
     /// processors
-    void Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out);
-    void Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out);
+    void Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start);
+    void Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start);
     void Set(LidarType lid_type, double bld, int pfilt_num);
 
     // accessors
     double &Blind() { return blind_; }
     int &PointFilterNum() { return point_filter_num_; }
-    float &TimeScale() { return time_scale_; }
     LidarType GetLidarType() const { return lidar_type_; }
     void SetLidarType(LidarType lt) { lidar_type_ = lt; }
 
    private:
-    void AviaHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg);
-    void Oust64Handler(const sensor_msgs::PointCloud2::ConstPtr &msg);
-    void VelodyneHandler(const sensor_msgs::PointCloud2::ConstPtr &msg);
-    void HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg);
-    void LivoxHandler(const sensor_msgs::PointCloud2::ConstPtr &msg);
+    void AviaHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
+    void Oust64Handler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
 
     PointCloud cloud_full_, cloud_out_;
 
     LidarType lidar_type_ = LidarType::AVIA;
     int point_filter_num_ = 1;
     double blind_ = 0.01;
-    float time_scale_ = 1e-3;
 };
 }  // namespace faster_lio
 

@@ -2,8 +2,8 @@
 #define COMMON_LIB_H
 
 #include <deque>
-#include <vector>
 #include <string>
+#include <vector>
 
 #include <eigen_conversions/eigen_msg.h>
 #include <nav_msgs/Odometry.h>
@@ -24,17 +24,19 @@ namespace faster_lio {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
     float intensity;
-    std::uint32_t time_nsec;
+    double timestamp;
     std::uint16_t ring;
-    double GetTime(){
-        return time_nsec / 1e9;
-    }
-    void SetTime(double time){
-        time_nsec = time * 1e9;
-    }
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
-}  // namespace livox_ros
+struct Imu {
+    using Ptr = std::shared_ptr<Imu>;
+    double timestamp;
+    Eigen::Vector3d linear_acceleration;
+    Eigen::Vector3d angular_velocity;
+    Eigen::Vector3d orientation;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}  // namespace faster_lio
 
 // clang-format off
 POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
@@ -42,10 +44,11 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
                                 (float, y, y)
                                 (float, z, z)
                                 (float, intensity, intensity)
-                                (std::uint32_t, time_nsec, time_nsec)
+                                (double, timestamp, timestamp)
                                 (std::uint16_t, ring, ring)
 )
 // clang-format on
+
 using PointType = faster_lio::Point;
 using PointCloud = pcl::PointCloud<faster_lio::Point>;
 using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
@@ -78,7 +81,7 @@ inline Eigen::Matrix<S, 3, 3> MatFromArray(const boost::array<S, 9> &v) {
 }
 
 template <typename S>
-inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double>& v) {
+inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double> &v) {
     Eigen::Quaternion<S> q;
     q.x() = v[0];
     q.y() = v[1];
@@ -113,19 +116,17 @@ const V3F Zero3f(0, 0, 0);
 /// sync imu and lidar measurements
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
-
-    double lidar_bag_time_ = 0;
     double lidar_end_time_ = 0;
     PointCloud::Ptr lidar_ = nullptr;
-    std::deque<sensor_msgs::Imu::ConstPtr> imu_;
+    std::deque<Imu> imu_;
 };
-struct Pose6D{
+struct Pose6D {
     double offset_time = 0;
-    boost::array<double,3> acc;
-    boost::array<double,3> gyr;
-    boost::array<double,3> vel;
-    boost::array<double,3> pos;
-    boost::array<double,9> rot;
+    boost::array<double, 3> acc;
+    boost::array<double, 3> gyr;
+    boost::array<double, 3> vel;
+    boost::array<double, 3> pos;
+    boost::array<double, 9> rot;
 };
 
 /**
