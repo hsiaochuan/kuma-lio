@@ -35,6 +35,7 @@ target_link_libraries(${PROJECT_NAME}
         ${PCL_LIBRARIES}
         ${PYTHON_LIBRARIES}
         ${CERES_LIBRARIES}
+        ${OpenCV_LIBS}
         tbb
         glog
         yaml-cpp

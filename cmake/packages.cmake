@@ -25,6 +25,7 @@ find_package(catkin REQUIRED COMPONENTS
         pcl_ros
         tf
         eigen_conversions
+        cv_bridge
         )
 
 find_package(Eigen3 REQUIRED)
@@ -32,6 +33,7 @@ find_package(PCL 1.8 REQUIRED)
 add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
 find_package(Ceres REQUIRED)
+find_package(OpenCV REQUIRED)
 include_directories(
         ${catkin_INCLUDE_DIRS}
         ${EIGEN3_INCLUDE_DIR}
@@ -39,5 +41,6 @@ include_directories(
         ${PYTHON_INCLUDE_DIRS}
         ${yaml-cpp_INCLUDE_DIRS}
         ${CERES_INCLUDE_DIRS}
+        ${OpenCV_INCLUDE_DIRS}
         include
 )

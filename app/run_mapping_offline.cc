@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
 
         auto img_msg = m.instantiate<sensor_msgs::Image>();
         if (laser_mapping->camera_enable_ && m.getTopic() == laser_mapping->camera_topic_ && img_msg) {
-            laser_mapping->ImageCallBack(img_msg);
+            laser_mapping->ImageMsgCallBack(img_msg);
             continue;
         }
         auto compress_img = m.instantiate<sensor_msgs::CompressedImage>();
