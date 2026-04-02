@@ -21,6 +21,34 @@
 #include "so3_math.h"
 
 namespace faster_lio {
+class VOXEL_LOCATION {
+   public:
+    int64_t x;
+    int64_t y;
+    int64_t z;
+    VOXEL_LOCATION(const Eigen::Vector3d &p, const double &v) {
+        x = static_cast<int64_t>(std::floor(p(0) / v));
+        y = static_cast<int64_t>(std::floor(p(1) / v));
+        z = static_cast<int64_t>(std::floor(p(2) / v));
+    }
+
+    explicit VOXEL_LOCATION(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0)
+        : x(vx), y(vy), z(vz) {}
+
+    bool operator==(const VOXEL_LOCATION &other) const {
+        return (x == other.x && y == other.y && z == other.z);
+    }
+
+    bool operator<(const VOXEL_LOCATION &b) const {
+        if (x < b.x) return true;
+        if (x > b.x) return false;
+
+        if (y < b.y) return true;
+        if (y > b.y) return false;
+
+        return z < b.z;
+    }
+};
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
     float intensity;
@@ -49,6 +77,16 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
 )
 // clang-format on
 
+namespace std {
+template <>
+struct hash<faster_lio::VOXEL_LOCATION> {
+    int64_t operator()(const faster_lio::VOXEL_LOCATION &s) const {
+        using std::hash;
+        using std::size_t;
+        return size_t(((s.x) * 73856093) ^ ((s.y) * 471943) ^ ((s.z) * 83492791)) % 10000000;
+    }
+};
+}
 using PointType = faster_lio::Point;
 using PointCloud = pcl::PointCloud<faster_lio::Point>;
 using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;

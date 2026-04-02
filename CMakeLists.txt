@@ -27,12 +27,14 @@ add_library(${PROJECT_NAME}
         src/pointcloud_preprocess.cc
         src/options.cc
         src/utils.cc
+        src/voxel_map.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
         ${PYTHON_LIBRARIES}
+        ${CERES_LIBRARIES}
         tbb
         glog
         yaml-cpp
@@ -51,10 +53,23 @@ target_link_libraries(run_mapping_offline
 find_package(GTest REQUIRED)
 enable_testing()
 add_executable(camera_test src/camera_test.cpp)
+add_executable(lidar_sim_test src/lidar_sim_test.cc)
+add_executable(bareg_test src/bareg_test.cc)
 target_link_libraries(camera_test
         ${PROJECT_NAME}
         GTest::GTest
         GTest::Main
 )
+target_link_libraries(lidar_sim_test
+        ${PROJECT_NAME}
+        GTest::GTest
+        GTest::Main
+)
+target_link_libraries(bareg_test
+        ${PROJECT_NAME}
+        GTest::GTest
+        GTest::Main
+)
 add_test(NAME camera_test COMMAND camera_test)
-
+add_test(NAME lidar_sim_test COMMAND lidar_sim_test)
+add_test(NAME bareg_test COMMAND bareg_test)

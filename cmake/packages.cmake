@@ -31,12 +31,13 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
 add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
-
+find_package(Ceres REQUIRED)
 include_directories(
         ${catkin_INCLUDE_DIRS}
         ${EIGEN3_INCLUDE_DIR}
         ${PCL_INCLUDE_DIRS}
         ${PYTHON_INCLUDE_DIRS}
         ${yaml-cpp_INCLUDE_DIRS}
+        ${CERES_INCLUDE_DIRS}
         include
 )
