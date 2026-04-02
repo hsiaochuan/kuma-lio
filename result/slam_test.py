@@ -182,7 +182,10 @@ class SLAMTestRunner:
                 [self.offline_app,
                  "--config_file", config,
                  "--bag_file", bag_file,
-                 "--output_dir", output_dir],
+                 "--output_dir", output_dir,
+                 "--start", '0',
+                 '--duration', '-1',
+                 ],
                 check=True,
             )
             return True

@@ -16,6 +16,8 @@ namespace fs = boost::filesystem;
 DEFINE_string(config_file, "./config/avia.yaml", "path to config file");
 DEFINE_string(bag_file, "", "path to the ros bag");
 DEFINE_string(output_dir, "", "save the result to the dir");
+DEFINE_double(start, 0.0, "start time in seconds from beginning of bag");
+DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
 void SigHandle(int sig) {
     faster_lio::options::FLAG_EXIT = true;
     ROS_WARN("catch sig %d", sig);
@@ -45,8 +47,23 @@ int main(int argc, char **argv) {
     LOG(INFO) << "Opening rosbag, be patient";
     rosbag::Bag bag(FLAGS_bag_file, rosbag::bagmode::Read);
 
+    rosbag::View full_view(bag);
+    ros::Time bag_start = full_view.getBeginTime();
+    ros::Time bag_end   = full_view.getEndTime();
+    ros::Time start_time = bag_start + ros::Duration(FLAGS_start);
+
+    ros::Time end_time;
+    if (FLAGS_duration < 0) {
+        end_time = bag_end;
+    } else {
+        end_time = start_time + ros::Duration(FLAGS_duration);
+        if (end_time > bag_end) {
+            end_time = bag_end;
+        }
+    }
     LOG(INFO) << "Go!";
-    for (const rosbag::MessageInstance &m : rosbag::View(bag)) {
+    rosbag::View view(bag, start_time, end_time);
+    for (const rosbag::MessageInstance &m : view) {
         auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>();
         if (m.getTopic() == laser_mapping->lidar_topic_ && livox_msg) {
             faster_lio::Timer::Evaluate(
