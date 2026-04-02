@@ -15,7 +15,7 @@
 #include "ivox3d/ivox3d.h"
 #include "options.h"
 #include "pointcloud_preprocess.h"
-
+#include <opencv2/opencv.hpp>
 namespace faster_lio {
 
 class LaserMapping {
@@ -48,7 +48,8 @@ class LaserMapping {
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
-    void ImageCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
+    void ImageCallBack(const cv::Mat& img, double timestamp);
+    void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
 
     // sync lidar with imu
@@ -119,9 +120,11 @@ class LaserMapping {
     bool camera_enable_;
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
+    int image_skip_ = 3;
     /// ros pub and sub stuffs
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
+    ros::Subscriber sub_img_;
     ros::Publisher pub_laser_cloud_world_;
     ros::Publisher pub_laser_cloud_body_;
     ros::Publisher pub_laser_cloud_effect_world_;

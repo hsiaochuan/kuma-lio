@@ -2,7 +2,7 @@
 #include <yaml-cpp/yaml.h>
 #include <execution>
 #include <fstream>
-
+#include <cv_bridge/cv_bridge.h>
 #include "laser_mapping.h"
 #include "utils.h"
 namespace fs = boost::filesystem;
@@ -75,7 +75,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
         nh.param<double>("common/scan_interval", scan_interval_, 0.1);
         nh.param<double>("common/lidar_time_offset", lidar_time_offset_, 0.1);
         nh.param<double>("common/camera_time_offset", camera_time_offset_, 0.1);
-
+        nh.param<int>("common/image_skip", image_skip_, 3);
         nh.param<int>("max_iteration", max_iteraions, 4);
         nh.param<float>("esti_plane_threshold", esti_plane_thr, 0.1);
         nh.param<double>("scan_filter_size", scan_filter_size, 0.5);
@@ -194,6 +194,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         camera_enable_ = yaml["common"]["camera_enable"].as<bool>();
         camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
         lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();
+        image_skip_ = yaml["common"]["image_skip"].as<int>();
     } catch (...) {
         LOG(ERROR) << "bad conversion";
         return false;
@@ -255,6 +256,9 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(imu_topic_, 200000,
                                               [this](const sensor_msgs::Imu::ConstPtr &msg) { IMUCallBack(msg); });
 
+    sub_img_ = nh.subscribe<sensor_msgs::Image>(camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr &msg) {
+        ImageMsgCallBack(msg);
+    });
     // ROS publisher init
     path_.header.stamp = ros::Time::now();
     path_.header.frame_id = tf_world_frame_;
@@ -454,9 +458,17 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     imu.linear_acceleration.z() = msg_in->linear_acceleration.z;
     imu_buffer_.emplace_back(imu);
 }
-void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
+void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
-    double timestamp = msg_in->header.stamp.toSec();
+    static int img_count = 0;
+    if (img_count % image_skip_ == 0) {
+        cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
+        ImageCallBack(img,msg_in->header.stamp.toSec());
+    }
+    img_count++;
+}
+
+void LaserMapping::ImageCallBack(const cv::Mat& img, double timestamp) {
 
     // time offset
     timestamp += camera_time_offset_;
@@ -479,38 +491,35 @@ void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
 }
 void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
-
-    // offset
-    double timestamp = msg_in->header.stamp.toSec();
-
-    // loop
-    timestamp += camera_time_offset_;
-    if (timestamp < last_timestamp_camera_) {
-        LOG(WARNING) << "image loop back, clear buffer";
-        img_time_buffer_.clear();
+    static int img_count = 0;
+    if (img_count % image_skip_ == 0) {
+        cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
+        ImageCallBack(img,msg_in->header.stamp.toSec());
     }
-    last_timestamp_camera_ = timestamp;
-
-    // set start offset
-    if (if_first_scan_)
-        return;
-    else
-        timestamp = timestamp - first_scan_time_;
-
-    // push to buffer
-    img_time_buffer_.emplace_back(timestamp);
+    img_count++;
 }
 bool LaserMapping::SyncPackages() {
     if (points_buffer_.empty() || imu_buffer_.empty()) {
         return false;
     }
 
+    if (camera_enable_ && img_time_buffer_.empty())
+        return false;
+
     // set the measure end timestamp
     if (lidar_end_time_ == 0) {
-        lidar_end_time_ = points_buffer_.front().timestamp + scan_interval_;
+        if (camera_enable_) {
+            lidar_end_time_ = img_time_buffer_.front();
+            img_time_buffer_.pop_front();
+        }else
+            lidar_end_time_ = points_buffer_.front().timestamp + scan_interval_;
     } else if (measures_.lidar_end_time_ == lidar_end_time_) {
         // after the update, incre the end time
-        lidar_end_time_ = lidar_end_time_ + scan_interval_;
+        if (camera_enable_) {
+            lidar_end_time_ = img_time_buffer_.front();
+            img_time_buffer_.pop_front();
+        } else
+            lidar_end_time_ = lidar_end_time_ + scan_interval_;
     } else {
         // the measure is not synced, no need to set the lidar end time
         lidar_end_time_ = lidar_end_time_;
@@ -534,6 +543,8 @@ bool LaserMapping::SyncPackages() {
     }
 
     measures_.lidar_end_time_ = lidar_end_time_;
+    if (measures_.lidar_->empty() || measures_.imu_.empty())
+        return false;
     return true;
 }
 
