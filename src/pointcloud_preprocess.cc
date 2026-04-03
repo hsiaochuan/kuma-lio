@@ -12,13 +12,13 @@ void PointCloudPreprocess::Set(LidarType lid_type, double bld, int pfilt_num) {
 }
 
 void PointCloudPreprocess::Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start) {
-    AviaHandler(msg, scan_start);
+    LivoxHandler(msg, scan_start);
     *pcl_out = cloud_out_;
 }
 
 void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start) {
     switch (lidar_type_) {
-        case LidarType::OUST64:
+        case LidarType::OUSTER:
             Oust64Handler(msg, scan_start);
             break;
         default:
@@ -28,7 +28,7 @@ void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg
     *pcl_out = cloud_out_;
 }
 
-void PointCloudPreprocess::AviaHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start) {
+void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start) {
     cloud_out_.clear();
     cloud_full_.clear();
     int plsize = msg->point_num;

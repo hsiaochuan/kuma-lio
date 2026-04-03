@@ -13,10 +13,14 @@
 namespace fs = boost::filesystem;
 namespace faster_lio {
 
-bool LaserMapping::InitROS(ros::NodeHandle &nh) {
-    LoadParams(nh);
+bool LaserMapping::InitROS(ros::NodeHandle &nh, const std::string & config_fname) {
+    LOG(INFO) << "init laser mapping from " << config_fname;
+    if (!LoadParamsFromYAML(config_fname))
+        return false;
     SubAndPubToROS(nh);
 
+
+    run_in_offline_ = false;
     // localmap init (after LoadParams)
     ivox_ = std::make_shared<IVoxType>(ivox_options_);
 
@@ -35,7 +39,7 @@ bool LaserMapping::InitWithoutROS(const std::string &config_yaml) {
     if (!LoadParamsFromYAML(config_yaml)) {
         return false;
     }
-
+    run_in_offline_ = true;
     // localmap init (after LoadParams)
     ivox_ = std::make_shared<IVoxType>(ivox_options_);
 
@@ -55,104 +59,9 @@ bool LaserMapping::InitWithoutROS(const std::string &config_yaml) {
     return true;
 }
 
-bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
-    // get params from param server
-    int lidar_type, ivox_nearby_type;
-    double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
-    double scan_filter_size;
-    common::V3D lidar_T_wrt_IMU;
-    common::M3D lidar_R_wrt_IMU;
-
-    try {
-        nh.param<bool>("path_save_en", path_save_en_, true);
-        nh.param<bool>("publish/path_publish_en", path_pub_en_, true);
-        nh.param<bool>("publish/scan_publish_en", scan_pub_en_, true);
-        nh.param<bool>("publish/dense_publish_en", dense_pub_en_, false);
-        nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en_, true);
-        nh.param<bool>("publish/scan_effect_pub_en", scan_effect_pub_en_, false);
-        nh.param<std::string>("publish/tf_imu_frame", tf_imu_frame_, "body");
-        nh.param<std::string>("publish/tf_world_frame", tf_world_frame_, "camera_init");
-
-        nh.param<std::string>("common/lid_topic", lidar_topic_, "/livox/lidar");
-        nh.param<std::string>("common/imu_topic", imu_topic_, "/livox/imu");
-        nh.param<std::string>("common/camera_topic", camera_topic_, "/livox/imu");
-        nh.param<bool>("common/camera_enable", camera_enable_, "/livox/imu");
-        nh.param<double>("common/scan_interval", scan_interval_, 0.1);
-        nh.param<double>("common/lidar_time_offset", lidar_time_offset_, 0.1);
-        nh.param<double>("common/camera_time_offset", camera_time_offset_, 0.1);
-        nh.param<int>("common/image_skip", image_skip_, 3);
-        nh.param<int>("max_iteration", max_iteraions, 4);
-        nh.param<float>("esti_plane_threshold", esti_plane_thr, 0.1);
-        nh.param<double>("scan_filter_size", scan_filter_size, 0.5);
-        nh.param<double>("map_filter_size", map_filter_size_, 0.0);
-        nh.param<double>("cube_side_length", cube_len_, 200);
-        nh.param<float>("mapping/det_range", det_range_, 300.f);
-        nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);
-        nh.param<double>("mapping/acc_cov", acc_cov, 0.1);
-        nh.param<double>("mapping/b_gyr_cov", b_gyr_cov, 0.0001);
-        nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);
-        nh.param<double>("preprocess/blind", preprocess_->Blind(), 0.01);
-        nh.param<int>("preprocess/lidar_type", lidar_type, 1);
-        nh.param<int>("point_filter_num", preprocess_->PointFilterNum(), 2);
-        nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en_, true);
-        nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en_, false);
-        nh.param<int>("pcd_save/interval", pcd_save_interval_, -1);
-        nh.param<std::vector<double>>("mapping/extrinsic_T", extrinT_, std::vector<double>());
-        nh.param<std::vector<double>>("mapping/extrinsic_R", extrinR_, std::vector<double>());
-
-        nh.param<float>("ivox_grid_resolution", ivox_options_.resolution_, 0.2);
-        nh.param<int>("ivox_nearby_type", ivox_nearby_type, 18);
-    } catch (...) {
-        LOG(ERROR) << "bad conversion";
-        return false;
-    }
-    LOG(INFO) << "lidar_type " << lidar_type;
-    if (lidar_type == 1) {
-        preprocess_->SetLidarType(LidarType::AVIA);
-        LOG(INFO) << "Using AVIA Lidar (livox_ros_driver::CustomMsg)";
-    } else if (lidar_type == 3) {
-        preprocess_->SetLidarType(LidarType::OUST64);
-        LOG(INFO) << "Using OUST 64 Lidar";
-    } else {
-        LOG(WARNING) << "unknown lidar_type";
-        return false;
-    }
-
-    if (ivox_nearby_type == 0) {
-        ivox_options_.nearby_type_ = IVoxType::NearbyType::CENTER;
-    } else if (ivox_nearby_type == 6) {
-        ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY6;
-    } else if (ivox_nearby_type == 18) {
-        ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
-    } else if (ivox_nearby_type == 26) {
-        ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY26;
-    } else {
-        LOG(WARNING) << "unknown ivox_nearby_type, use NEARBY18";
-        ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
-    }
-
-    path_.header.stamp = ros::Time::now();
-    path_.header.frame_id = tf_world_frame_;
-
-    scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
-
-    lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
-    if (extrinR_.size() == 9) lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
-    else if (extrinR_.size() == 4)
-        lidar_R_wrt_IMU = common::QuatFromArray<double>(extrinR_).toRotationMatrix();
-    else
-        throw "extrinsic should be 9 or 4";
-    p_imu_->SetExtrinsic(lidar_T_wrt_IMU, lidar_R_wrt_IMU);
-    p_imu_->SetGyrCov(common::V3D(gyr_cov, gyr_cov, gyr_cov));
-    p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
-    p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
-    p_imu_->SetAccBiasCov(common::V3D(b_acc_cov, b_acc_cov, b_acc_cov));
-    return true;
-}
-
 bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
-    // get params from yaml
-    int lidar_type, ivox_nearby_type;
+    std::string lidar_type;
+    int ivox_nearby_type;
     double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
     double scan_filter_size;
     common::V3D lidar_T_wrt_IMU;
@@ -181,7 +90,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         b_gyr_cov = yaml["mapping"]["b_gyr_cov"].as<float>();
         b_acc_cov = yaml["mapping"]["b_acc_cov"].as<float>();
         preprocess_->Blind() = yaml["preprocess"]["blind"].as<double>();
-        lidar_type = yaml["preprocess"]["lidar_type"].as<int>();
+        lidar_type = yaml["preprocess"]["lidar_type"].as<std::string>();
         preprocess_->PointFilterNum() = yaml["point_filter_num"].as<int>();
         extrinsic_est_en_ = yaml["mapping"]["extrinsic_est_en"].as<bool>();
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
@@ -260,16 +169,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     }
 
     LOG(INFO) << "lidar_type " << lidar_type;
-    if (lidar_type == 1) {
-        preprocess_->SetLidarType(LidarType::AVIA);
-        LOG(INFO) << "Using AVIA Lidar (livox_ros_driver::CustomMsg)";
-    } else if (lidar_type == 3) {
-        preprocess_->SetLidarType(LidarType::OUST64);
-        LOG(INFO) << "Using OUST 64 Lidar";
-    } else {
-        LOG(WARNING) << "unknown lidar_type";
-        return false;
-    }
+    preprocess_->SetLidarType(LidarTypeFromString(lidar_type));
 
     if (ivox_nearby_type == 0) {
         ivox_options_.nearby_type_ = IVoxType::NearbyType::CENTER;
@@ -298,13 +198,11 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
     p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu_->SetAccBiasCov(common::V3D(b_acc_cov, b_acc_cov, b_acc_cov));
-
-    run_in_offline_ = true;
     return true;
 }
 
 void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
-    if (preprocess_->GetLidarType() == LidarType::AVIA) {
+    if (preprocess_->GetLidarType() == LidarType::LIVOX) {
         sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
             lidar_topic_, 200000, [this](const livox_ros_driver::CustomMsg::ConstPtr &msg) { LivoxPCLCallBack(msg); });
     } else {

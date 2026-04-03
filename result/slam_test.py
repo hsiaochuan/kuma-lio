@@ -205,9 +205,10 @@ class SLAMTestRunner:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             time.sleep(self.online_wait)
-            subprocess.run(["rosparam", "load", config], check=True)
             online_proc = subprocess.Popen(
-                [self.online_app, "--output_dir", output_dir]
+                [self.online_app,
+                 "--output_dir", output_dir,
+                 "--config_fname", config]
             )
             subprocess.run(
                 ["rosbag", "play", bag_file],

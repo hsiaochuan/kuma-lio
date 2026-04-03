@@ -8,9 +8,8 @@ common:
   camera_time_offset: 0
   image_skip: 3
 preprocess:
-  lidar_type: 3                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
+  lidar_type: OUSTER
   blind: 4
-  time_scale: 1e-3
 
 mapping:
   acc_cov:       6.0e-2

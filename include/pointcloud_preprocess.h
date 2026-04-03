@@ -9,7 +9,7 @@
 #include <cstdint>
 
 #include "common_lib.h"
-
+#include <glog/logging.h>
 namespace velodyne_ros {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
@@ -127,9 +127,19 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::Point,
 namespace faster_lio {
 
 enum class LidarType {
-  AVIA = 1,
-  OUST64 = 3,
+  LIVOX = 1,
+  OUSTER,
 };
+inline LidarType LidarTypeFromString(const std::string & lidar_type_str) {
+    if (lidar_type_str == "LIVOX") {
+        return LidarType::LIVOX;
+    }else if (lidar_type_str == "OUSTER") {
+        return LidarType::OUSTER;
+    }else {
+        LOG(ERROR) << "Unknown lidar type: " << lidar_type_str;
+        return LidarType::LIVOX;
+    }
+}
 
 /**
  * point cloud preprocess
@@ -154,12 +164,12 @@ class PointCloudPreprocess {
     void SetLidarType(LidarType lt) { lidar_type_ = lt; }
 
    private:
-    void AviaHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
+    void LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
     void Oust64Handler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
 
     PointCloud cloud_full_, cloud_out_;
 
-    LidarType lidar_type_ = LidarType::AVIA;
+    LidarType lidar_type_ = LidarType::LIVOX;
     int point_filter_num_ = 1;
     double blind_ = 0.01;
 };

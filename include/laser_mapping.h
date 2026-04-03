@@ -38,7 +38,7 @@ class LaserMapping {
     }
 
     /// init with ros
-    bool InitROS(ros::NodeHandle &nh);
+    bool InitROS(ros::NodeHandle &nh, const std::string & config_fname);
 
     /// init without ros
     bool InitWithoutROS(const std::string &config_yaml);
@@ -80,8 +80,6 @@ class LaserMapping {
     void MapIncremental();
 
     void SubAndPubToROS(ros::NodeHandle &nh);
-
-    bool LoadParams(ros::NodeHandle &nh);
     bool LoadParamsFromYAML(const std::string &yaml);
 
     void PrintState(const state_ikfom &s);
