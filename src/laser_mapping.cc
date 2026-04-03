@@ -4,6 +4,11 @@
 #include <fstream>
 #include <cv_bridge/cv_bridge.h>
 #include "laser_mapping.h"
+
+#include <cameras/pinhole_fisheye_camera.h>
+#include <cameras/pinhole_camera.h>
+#include <cameras/spherial_camera.h>
+#include <cameras/pinhole_radial.h>
 #include "utils.h"
 namespace fs = boost::filesystem;
 namespace faster_lio {
@@ -198,6 +203,60 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     } catch (...) {
         LOG(ERROR) << "bad conversion";
         return false;
+    }
+
+    if (camera_enable_) {
+        std::string camera_type;
+        try {
+            camera_type = yaml["cam"]["camera_model"].as<std::string>();
+        } catch (...) {
+            LOG(ERROR) << "fail to load the camera type";
+            return false;
+        }
+        CAMERA_MODEL camera_model = ToCameraModel(camera_type);
+        std::vector<double> resolution;
+        std::vector<double> distort_param;
+        std::vector<double> pinhole_param;
+        try {
+            resolution = yaml["cam"]["resolution"].as<std::vector<double>>();
+            if (IsPinhole(camera_model)) {
+                pinhole_param = yaml["cam"]["pinhole_param"].as<std::vector<double>>();
+            }
+            if (IsDistorted(camera_model)) {
+                distort_param = yaml["cam"]["distortion_param"].as<std::vector<double>>();
+            }
+        } catch (...) {
+            LOG(ERROR) << "bad conversion in camera load";
+            return false;
+        }
+
+        std::vector<double> param;
+        param.insert(param.end(),pinhole_param.begin(), pinhole_param.end());
+        param.insert(param.end(),distort_param.begin(), distort_param.end());
+        bool update_param = false;
+        switch (camera_model) {
+            case PINHOLE:
+                camera_.reset(new PinholeCamera);
+                break;
+            case PINHOLE_RADIAL:
+                camera_.reset(new PinholeRadialCamera);
+                update_param = camera_->updateFromParams(param);
+                break;
+            case PINHOLE_FISHEYE:
+                camera_.reset(new PinholeFisheyeCamera);
+                update_param = camera_->updateFromParams(param);
+                break;
+            case SPHERICAL:
+                camera_.reset(new PinholeCamera);
+                break;
+        }
+        if (!update_param) {
+            LOG(ERROR) << "fail to update the param";
+            return false;
+        }
+        camera_->w_ = static_cast<unsigned int>(resolution[0]);
+        camera_->h_ = static_cast<unsigned int>(resolution[1]);
+        LOG(INFO) << "camera type: " << camera_model;
     }
 
     LOG(INFO) << "lidar_type " << lidar_type;

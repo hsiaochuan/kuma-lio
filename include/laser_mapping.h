@@ -16,6 +16,7 @@
 #include "options.h"
 #include "pointcloud_preprocess.h"
 #include <opencv2/opencv.hpp>
+#include <cameras/cameras.h>
 namespace faster_lio {
 
 class LaserMapping {
@@ -121,6 +122,9 @@ class LaserMapping {
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
     int image_skip_ = 3;
+
+    std::shared_ptr<CameraBase> camera_;
+
     /// ros pub and sub stuffs
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
