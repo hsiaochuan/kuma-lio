@@ -439,7 +439,35 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    all_datasets = [botanic, mcd_viral, new_college]
+    hilti2021 = DatasetConfig(
+        name="hilti2021",
+        config="../config/Hilti2021.yaml",
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/Hilti2021/Basement_1.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2021/Construction_Site_1.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2021/IC_Office_1.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2021/LAB_Survey_2.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2021/uzh_tracking_area_run2.bag",
+            "/mnt/data/home/hsiaochuan/data/New_College/rooster_2020-07-10-09-23-18_0.bag"
+        ],
+        run_mode=RunMode.OFFLINE,
+    )
+
+    hilti2022 = DatasetConfig(
+        name="hilti2022",
+        config="../config/Hilti2022.yaml",
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp04_construction_upper_level.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp07_long_corridor.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp11_lower_gallery.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp14_basement_2.bag",
+            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp18_corridor_lower_gallery_2.bag"
+            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp21_outside_building.bag",
+        ],
+        run_mode=RunMode.OFFLINE,
+    )
+
+    all_datasets = [botanic, mcd_viral, new_college, hilti2021, hilti2022]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
