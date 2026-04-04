@@ -19,8 +19,10 @@ void PointCloudPreprocess::Process(const livox_ros_driver::CustomMsg::ConstPtr &
 void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start) {
     switch (lidar_type_) {
         case LidarType::OUSTER:
-            Oust64Handler(msg, scan_start);
+            OusterHandler(msg, scan_start);
             break;
+        case LidarType::HESAI:
+
         default:
             LOG(ERROR) << "Error LiDAR Type";
             break;
@@ -41,7 +43,9 @@ void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::Const
     for (uint i = 0; i < plsize - 1; ++i) {
         index[i] = i + 1;  // 从1开始
     }
-
+// tag (uint8_t): bits [7-6] reserved; [5-4] echo index (0/1/2); 
+// [3-2] intensity noise (0=normal,1=high,2=medium); 
+// [1-0] geometry noise (0=normal,1=high,2=medium,3=low)
     std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const uint &i) {
         if ((msg->points[i].line < 1) &&
             ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {
@@ -72,7 +76,7 @@ void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::Const
     }
 }
 
-void PointCloudPreprocess::Oust64Handler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
+void PointCloudPreprocess::OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
     cloud_out_.clear();
     cloud_full_.clear();
     pcl::PointCloud<ouster_ros::Point> pl_orig;
@@ -101,5 +105,33 @@ void PointCloudPreprocess::Oust64Handler(const sensor_msgs::PointCloud2::ConstPt
         cloud_out_.points.push_back(added_pt);
     }
 }
+void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
+    cloud_out_.clear();
+    cloud_full_.clear();
+    pcl::PointCloud<hesai_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.size();
+    cloud_out_.reserve(plsize);
 
+
+    double base_time = msg->header.stamp.toSec();
+    for (int i = 0; i < pl_orig.points.size(); i++) {
+        if (i % point_filter_num_ != 0) continue;
+
+        double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
+                       pl_orig.points[i].z * pl_orig.points[i].z;
+
+        if (range < (blind_ * blind_)) continue;
+
+        Eigen::Vector3d pt_vec;
+        PointType added_pt;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        //
+        added_pt.timestamp = scan_start + pl_orig.points[i].timestamp - base_time;
+        cloud_out_.points.push_back(added_pt);
+    }
+}
 }  // namespace faster_lio

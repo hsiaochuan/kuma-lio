@@ -8,8 +8,8 @@
 #include <pcl/point_types.h>
 #include <cstdint>
 
-#include "common_lib.h"
 #include <glog/logging.h>
+#include "common_lib.h"
 namespace velodyne_ros {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
@@ -80,27 +80,6 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(hesai_ros::Point,
 )
 // clang-format on
 
-namespace robosense_ros {
-struct EIGEN_ALIGN16 Point {
-    PCL_ADD_POINT4D;
-    float intensity;
-    uint16_t ring;
-    double timestamp;
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};
-}  // namespace robosense_ros
-
-// clang-format off
-POINT_CLOUD_REGISTER_POINT_STRUCT(robosense_ros::Point,
-                                (float, x, x)
-                                (float, y, y)
-                                (float, z, z)
-                                (float, intensity, intensity)
-                                (std::uint16_t, ring, ring)
-                                (double, timestamp, timestamp)
-)
-// clang-format on
-
 namespace livox_ros {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
@@ -127,15 +106,18 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::Point,
 namespace faster_lio {
 
 enum class LidarType {
-  LIVOX = 1,
-  OUSTER,
+    LIVOX = 1,
+    OUSTER,
+    HESAI,
 };
-inline LidarType LidarTypeFromString(const std::string & lidar_type_str) {
+inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
     if (lidar_type_str == "LIVOX") {
         return LidarType::LIVOX;
-    }else if (lidar_type_str == "OUSTER") {
+    } else if (lidar_type_str == "OUSTER") {
         return LidarType::OUSTER;
-    }else {
+    } else if (lidar_type_str == "HESAI") {
+        return LidarType::HESAI;
+    } else {
         LOG(ERROR) << "Unknown lidar type: " << lidar_type_str;
         return LidarType::LIVOX;
     }
@@ -165,8 +147,8 @@ class PointCloudPreprocess {
 
    private:
     void LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
-    void Oust64Handler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
-
+    void OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
+    void HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
     PointCloud cloud_full_, cloud_out_;
 
     LidarType lidar_type_ = LidarType::LIVOX;
