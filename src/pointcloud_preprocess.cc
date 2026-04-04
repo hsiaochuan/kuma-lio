@@ -22,7 +22,7 @@ void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg
             OusterHandler(msg, scan_start);
             break;
         case LidarType::HESAI:
-
+            HesaiHandler(msg,scan_start);
         default:
             LOG(ERROR) << "Error LiDAR Type";
             break;
@@ -107,7 +107,6 @@ void PointCloudPreprocess::OusterHandler(const sensor_msgs::PointCloud2::ConstPt
 }
 void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
     cloud_out_.clear();
-    cloud_full_.clear();
     pcl::PointCloud<hesai_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     int plsize = pl_orig.size();
@@ -121,9 +120,8 @@ void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                        pl_orig.points[i].z * pl_orig.points[i].z;
 
-        if (range < (blind_ * blind_)) continue;
+        if (range < blind_ * blind_) continue;
 
-        Eigen::Vector3d pt_vec;
         PointType added_pt;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
