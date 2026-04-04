@@ -9,7 +9,7 @@ common:
   image_skip: 1
 preprocess:
   lidar_type: HESAI
-  blind: 4
+  blind: 1
 
 mapping:
   acc_cov: 0.1
