@@ -33,46 +33,26 @@ void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg
 void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start) {
     cloud_out_.clear();
     cloud_full_.clear();
-    int plsize = msg->point_num;
+    cloud_out_.reserve(msg->point_num);
+    for (int i = 0; i < msg->point_num; i++) {
+        if ((msg->points[i].tag & 0x30) != 0x10 && (msg->points[i].tag & 0x30) != 0x00)
+            continue;
+        if (i % point_filter_num_ != 0) continue;
 
-    cloud_out_.reserve(plsize);
-    cloud_full_.resize(plsize);
+        double range = msg->points[i].x * msg->points[i].x + msg->points[i].y * msg->points[i].y +
+                       msg->points[i].z * msg->points[i].z;
 
-    std::vector<char> is_valid_pt(plsize, false);
-    std::vector<uint> index(plsize - 1);
-    for (uint i = 0; i < plsize - 1; ++i) {
-        index[i] = i + 1;  // 从1开始
-    }
-// tag (uint8_t): bits [7-6] reserved; [5-4] echo index (0/1/2); 
-// [3-2] intensity noise (0=normal,1=high,2=medium); 
-// [1-0] geometry noise (0=normal,1=high,2=medium,3=low)
-    std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const uint &i) {
-        if ((msg->points[i].line < 1) &&
-            ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {
-            if (i % point_filter_num_ == 0) {
-                cloud_full_[i].x = msg->points[i].x;
-                cloud_full_[i].y = msg->points[i].y;
-                cloud_full_[i].z = msg->points[i].z;
-                cloud_full_[i].intensity = msg->points[i].reflectivity;
-                // unit of offset_time: nanosecond
-                cloud_full_[i].timestamp = scan_start + msg->points[i].offset_time / 1e9;
+        if (range < (blind_ * blind_)) continue;
 
-                if ((abs(cloud_full_[i].x - cloud_full_[i - 1].x) > 1e-7) ||
-                    (abs(cloud_full_[i].y - cloud_full_[i - 1].y) > 1e-7) ||
-                    (abs(cloud_full_[i].z - cloud_full_[i - 1].z) > 1e-7) &&
-                        (cloud_full_[i].x * cloud_full_[i].x + cloud_full_[i].y * cloud_full_[i].y +
-                             cloud_full_[i].z * cloud_full_[i].z >
-                         (blind_ * blind_))) {
-                    is_valid_pt[i] = true;
-                }
-            }
-        }
-    });
+        PointType added_pt;
+        added_pt.x = msg->points[i].x;
+        added_pt.y = msg->points[i].y;
+        added_pt.z = msg->points[i].z;
+        added_pt.intensity = msg->points[i].reflectivity;
+        // unit of offset_time: nanosecond
+        added_pt.timestamp = scan_start + msg->points[i].offset_time / 1e9;
 
-    for (uint i = 1; i < plsize; i++) {
-        if (is_valid_pt[i]) {
-            cloud_out_.points.push_back(cloud_full_[i]);
-        }
+        cloud_out_.points.push_back(added_pt);
     }
 }
 
