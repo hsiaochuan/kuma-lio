@@ -5,7 +5,7 @@
 #ifndef PINHOLE_FISHEYE_CAMERA_H
 #define PINHOLE_FISHEYE_CAMERA_H
 
-#include "cameras.h"
+#include "camera_base.h"
 
 namespace faster_lio {
 

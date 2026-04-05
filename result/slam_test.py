@@ -370,21 +370,21 @@ def load_config(config_path: str) -> Tuple[SLAMTestRunner, List[DatasetConfig]]:
 
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
-    parser.add_argument("--datasets", nargs="+", default=["mcd_viral", "botanic", "new_college"],
+    parser.add_argument("--datasets", nargs="+", default=["mcd_viral", "botanic_garden", "new_college"],
                         help="Run only specified datasets (by name)")
     args = parser.parse_args()
 
     data_name_list = args.datasets
     runner = SLAMTestRunner()
     datasets = DatasetsList(data_name_list)
-
+    print(f"Selected datasets: {[d.name for d in datasets]}")
     runner.run_all(datasets)
 
 
 def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     """Default datasets equivalent to original two test scripts"""
     botanic = DatasetConfig(
-        name="Botanic Garden",
+        name="botanic_garden",
         config="../config/BotanicGarden.yaml",
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/Botanic/1005_00_LIO.bag",
@@ -467,7 +467,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    all_datasets = [botanic, mcd_viral, new_college, hilti2021, hilti2022]
+    all_datasets = [botanic, mcd_viral, new_college, hilti2022]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:

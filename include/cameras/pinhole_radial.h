@@ -5,7 +5,7 @@
 #ifndef PINHOLE_RADIAL_H
 #define PINHOLE_RADIAL_H
 
-#include "cameras.h"
+#include "camera_base.h"
 
 namespace faster_lio {
 

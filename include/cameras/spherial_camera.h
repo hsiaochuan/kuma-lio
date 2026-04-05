@@ -5,7 +5,7 @@
 #ifndef SPHERICAL_CAMERA_H
 #define SPHERICAL_CAMERA_H
 
-#include "cameras.h"
+#include "camera_base.h"
 
 namespace faster_lio {
 
