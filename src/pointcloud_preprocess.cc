@@ -23,6 +23,7 @@ void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg
             break;
         case LidarType::HESAI:
             HesaiHandler(msg,scan_start);
+            break;
         default:
             LOG(ERROR) << "Error LiDAR Type";
             break;
