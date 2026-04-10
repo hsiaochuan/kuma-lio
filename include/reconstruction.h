@@ -7,9 +7,10 @@ using camera_t = uint32_t;
 const camera_t kInvalidCameraId = std::numeric_limits<camera_t>::max();
 const image_t kInvalidImageId = std::numeric_limits<image_t>::max();
 using namespace faster_lio;
+namespace fs = boost::filesystem;
 struct Image {
     using Ptr = std::shared_ptr<Image>;
-    Image(image_t image_id) : image_id_(image_id){}
+    Image(image_t image_id) : image_id_(image_id) {}
     image_t image_id_ = kInvalidImageId;
     camera_t camera_id_ = kInvalidCameraId;
     CameraBase::Ptr camera_ = nullptr;
@@ -27,6 +28,17 @@ struct Image {
     Pose3 Pose() const {
         CHECK(cam_from_world_.has_value());
         return *cam_from_world_;
+    }
+
+    double TryReadTimeFromName() {
+        double image_stamp = 0.0;
+        try {
+            std::string image_stamp_str = fs::path(name_).stem().string();
+            image_stamp = std::stod(image_stamp_str);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("fail to load the image timestamp from filename");
+        }
+        return image_stamp;
     }
 };
 struct Reconstruction {
