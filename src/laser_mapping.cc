@@ -64,8 +64,11 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     int ivox_nearby_type;
     double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
     double scan_filter_size;
-    common::V3D lidar_T_wrt_IMU;
-    common::M3D lidar_R_wrt_IMU;
+
+    std::vector<double> extrin_R_il_param;
+    std::vector<double> extrin_t_il_param;
+    std::vector<double> extrin_R_ic_param;
+    std::vector<double> extrin_t_ic_param;
 
     auto yaml = YAML::LoadFile(yaml_file);
     try {
@@ -95,8 +98,10 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         extrinsic_est_en_ = yaml["mapping"]["extrinsic_est_en"].as<bool>();
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
-        extrinT_ = yaml["mapping"]["extrinsic_T"].as<std::vector<double>>();
-        extrinR_ = yaml["mapping"]["extrinsic_R"].as<std::vector<double>>();
+        extrin_R_il_param = yaml["mapping"]["extrinsic_R"].as<std::vector<double>>();
+        extrin_t_il_param = yaml["mapping"]["extrinsic_T"].as<std::vector<double>>();
+        extrin_R_ic_param = yaml["cam"]["extrinsic_R"].as<std::vector<double>>();
+        extrin_t_ic_param = yaml["cam"]["extrinsic_T"].as<std::vector<double>>();
 
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
         ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
@@ -166,6 +171,14 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         camera_->w_ = static_cast<unsigned int>(resolution[0]);
         camera_->h_ = static_cast<unsigned int>(resolution[1]);
         LOG(INFO) << "camera type: " << camera_model;
+
+        extrin_t_ic = common::VecFromArray<double>(extrin_t_ic_param);
+        CHECK(extrin_R_ic_param.size() == 9 || extrin_R_ic_param.size() == 4) << "extrinsic should be 9 or 4";
+        if (extrin_R_ic_param.size() == 9)
+            extrin_R_ic = common::MatFromArray<double>(extrin_R_ic_param);
+        else if (extrin_R_ic_param.size() == 4)
+            extrin_R_ic = common::QuatFromArray<double>(extrin_R_ic_param).toRotationMatrix();
+
     }
 
     LOG(INFO) << "lidar_type " << lidar_type;
@@ -186,14 +199,14 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
 
     scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
-    lidar_T_wrt_IMU = common::VecFromArray<double>(extrinT_);
-    if (extrinR_.size() == 9) lidar_R_wrt_IMU = common::MatFromArray<double>(extrinR_);
-    else if (extrinR_.size() == 4)
-        lidar_R_wrt_IMU = common::QuatFromArray<double>(extrinR_).toRotationMatrix();
-    else
-        throw "extrinsic should be 9 or 4";
+    extrin_t_il = common::VecFromArray<double>(extrin_t_il_param);
+    CHECK(extrin_R_il_param.size() == 9 || extrin_R_il_param.size() == 4) << "extrinsic should be 9 or 4";
+    if (extrin_R_il_param.size() == 9)
+        extrin_R_il = common::MatFromArray<double>(extrin_R_il_param);
+    else if (extrin_R_il_param.size() == 4)
+        extrin_R_il = common::QuatFromArray<double>(extrin_R_il_param).toRotationMatrix();
 
-    p_imu_->SetExtrinsic(lidar_T_wrt_IMU, lidar_R_wrt_IMU);
+    p_imu_->SetExtrinsic(extrin_t_il, extrin_R_il);
     p_imu_->SetGyrCov(common::V3D(gyr_cov, gyr_cov, gyr_cov));
     p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
     p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));

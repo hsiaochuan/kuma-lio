@@ -12,21 +12,21 @@
 namespace faster_lio {
 
 enum CAMERA_MODEL {
-    PINHOLE         = 0,  ///< Ideal pinhole, no distortion
-    PINHOLE_RADIAL  = 1,  ///< Pinhole + radial(K1,K2,K3) + tangential(T1,T2)
+    PINHOLE = 0,          ///< Ideal pinhole, no distortion
+    PINHOLE_RADIAL = 1,   ///< Pinhole + radial(K1,K2,K3) + tangential(T1,T2)
     PINHOLE_FISHEYE = 2,  ///< Pinhole + fisheye polynomial (K1,K2,K3,K4)
-    SPHERICAL       = 3,  ///< Full spherical / equirectangular
+    SPHERICAL = 3,        ///< Full spherical / equirectangular
 };
 CAMERA_MODEL ToCameraModel(const std::string& camera_model) {
     if (camera_model == "pinhole") {
         return PINHOLE;
-    }else if (camera_model == "pinhole_radial") {
+    } else if (camera_model == "pinhole_radial") {
         return PINHOLE_RADIAL;
-    }else if (camera_model == "pinhole_fisheye") {
+    } else if (camera_model == "pinhole_fisheye") {
         return PINHOLE_FISHEYE;
-    }else if (camera_model == "spherical") {
+    } else if (camera_model == "spherical") {
         return SPHERICAL;
-    }else {
+    } else {
         LOG(ERROR) << "Unknown camera type: " << camera_model;
         return PINHOLE;
     }
@@ -38,6 +38,7 @@ CAMERA_MODEL ToCameraModel(const std::string& camera_model) {
  */
 class CameraBase {
    public:
+    using Ptr = std::shared_ptr<CameraBase>;
     explicit CameraBase(unsigned int w = 0, unsigned int h = 0) : w_(w), h_(h) {}
     virtual ~CameraBase() = default;
 
@@ -58,18 +59,19 @@ class CameraBase {
      *        Default: cam2ima( add_disto( X.hnormalized() ) )
      *        SphericalCamera overrides this entirely.
      */
-    virtual common::V2D project(const common::V3D& X,
-                                bool ignore_distortion = false) const {
-        if (have_disto() && !ignore_distortion)
-            return cam2ima(add_disto(X.hnormalized()));
+    virtual common::V2D project(const common::V3D& X, bool ignore_distortion = false) const {
+        if (have_disto() && !ignore_distortion) return cam2ima(add_disto(X.hnormalized()));
         else
             return cam2ima(X.hnormalized());
     }
 
+    bool valid(const common::V2D& point_img) const {
+        if (point_img.x() < 0 || point_img.x() >= w() || point_img.y() < 0 || point_img.y() < h()) return false;
+        return true;
+    }
+
     /// Residual: observed pixel minus projected pixel
-    common::V2D residual(const common::V3D& X,
-                         const common::V2D& x,
-                         bool ignore_distortion = false) const {
+    common::V2D residual(const common::V3D& X, const common::V2D& x, bool ignore_distortion = false) const {
         return x - project(X, ignore_distortion);
     }
 
@@ -78,26 +80,24 @@ class CameraBase {
     virtual common::V2D ima2cam(const common::V2D& p) const = 0;
 
     // -- Distortion (pure virtual) -------------------------------------------
-    virtual bool        have_disto()                         const = 0;
-    virtual common::V2D add_disto   (const common::V2D& p)  const = 0;
-    virtual common::V2D remove_disto(const common::V2D& p)  const = 0;
-    virtual common::V2D get_ud_pixel(const common::V2D& p)  const = 0;
-    virtual common::V2D get_d_pixel (const common::V2D& p)  const = 0;
+    virtual bool have_disto() const = 0;
+    virtual common::V2D add_disto(const common::V2D& p) const = 0;
+    virtual common::V2D remove_disto(const common::V2D& p) const = 0;
+    virtual common::V2D get_ud_pixel(const common::V2D& p) const = 0;
+    virtual common::V2D get_d_pixel(const common::V2D& p) const = 0;
 
     // -- Parameters (pure virtual) -------------------------------------------
-    virtual std::vector<double> getParams()                                  const = 0;
-    virtual bool                updateFromParams(const std::vector<double>&)       = 0;
-
+    virtual std::vector<double> getParams() const = 0;
+    virtual bool updateFromParams(const std::vector<double>&) = 0;
 
     unsigned int w_;
     unsigned int h_;
 };
 
-inline bool IsPinhole  (CAMERA_MODEL m) { return m <= PINHOLE_FISHEYE; }
+inline bool IsPinhole(CAMERA_MODEL m) { return m <= PINHOLE_FISHEYE; }
 inline bool IsSpherical(CAMERA_MODEL m) { return m == SPHERICAL; }
 inline bool IsDistorted(CAMERA_MODEL m) {
-    if (m == PINHOLE || m == SPHERICAL)
-        return false;
+    if (m == PINHOLE || m == SPHERICAL) return false;
     return true;
 }
 }  // namespace faster_lio
