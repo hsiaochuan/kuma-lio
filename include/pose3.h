@@ -1,5 +1,6 @@
 #pragma once
 #include <Eigen/Eigen>
+#include <random>
 namespace faster_lio {
 
 struct Pose3 {
