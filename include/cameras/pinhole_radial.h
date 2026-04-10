@@ -21,7 +21,7 @@ namespace faster_lio {
  *         + \bigl(T_1(r^2 + 2y_u^2) + 2T_2 x_u y_u\bigr)
  * \f]
  *
- * Parameters: [ f, cx, cy, K1, K2, K3, T1, T2 ]
+ * Parameters: [ f, cx, cy, K1, K2, K3, P1, P2 ]
  */
 class PinholeRadialCamera : public CameraBase {
    public:
@@ -34,10 +34,10 @@ class PinholeRadialCamera : public CameraBase {
                         double       k1 = 0.0,
                         double       k2 = 0.0,
                         double       k3 = 0.0,
-                        double       t1 = 0.0,
-                        double       t2 = 0.0)
+                        double       p1 = 0.0,
+                        double       p2 = 0.0)
         : CameraBase(w, h), fx_(fx), cx_(cx), cy_(cy),
-          params_({k1, k2, k3, t1, t2}) {}
+          params_({k1, k2, k3, p1, p2}) {}
 
     ~PinholeRadialCamera() override = default;
 
@@ -91,7 +91,7 @@ class PinholeRadialCamera : public CameraBase {
     std::vector<double> getParams() const override {
         return {fx_, fy_, cx_, cy_,
                 params_[0], params_[1], params_[2],   // K1, K2, K3
-                params_[3], params_[4]};               // T1, T2
+                params_[3], params_[4]};               // P1, P2
     }
     bool updateFromParams(const std::vector<double>& params) override {
         if (params.size() != 9) return false;
@@ -112,13 +112,13 @@ class PinholeRadialCamera : public CameraBase {
     static common::V2D distoFunction(const std::vector<double>& params,
                                      const common::V2D& p) {
         const double k1 = params[0], k2 = params[1], k3 = params[2];
-        const double t1 = params[3], t2 = params[4];
+        const double p1 = params[3], p2 = params[4];
         const double r2     = p(0) * p(0) + p(1) * p(1);
         const double r4     = r2 * r2;
         const double r6     = r4 * r2;
         const double k_diff = k1 * r2 + k2 * r4 + k3 * r6;
-        const double tx     = t2 * (r2 + 2.0 * p(0) * p(0)) + 2.0 * t1 * p(0) * p(1);
-        const double ty     = t1 * (r2 + 2.0 * p(1) * p(1)) + 2.0 * t2 * p(0) * p(1);
+        const double tx     = p2 * (r2 + 2.0 * p(0) * p(0)) + 2.0 * p1 * p(0) * p(1);
+        const double ty     = p1 * (r2 + 2.0 * p(1) * p(1)) + 2.0 * p2 * p(0) * p(1);
         return {p(0) * k_diff + tx, p(1) * k_diff + ty};
     }
 };
