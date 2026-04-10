@@ -67,8 +67,6 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
 
     std::vector<double> extrin_R_il_param;
     std::vector<double> extrin_t_il_param;
-    std::vector<double> extrin_R_ic_param;
-    std::vector<double> extrin_t_ic_param;
 
     auto yaml = YAML::LoadFile(yaml_file);
     try {
@@ -100,8 +98,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
         extrin_R_il_param = yaml["mapping"]["extrinsic_R"].as<std::vector<double>>();
         extrin_t_il_param = yaml["mapping"]["extrinsic_T"].as<std::vector<double>>();
-        extrin_R_ic_param = yaml["cam"]["extrinsic_R"].as<std::vector<double>>();
-        extrin_t_ic_param = yaml["cam"]["extrinsic_T"].as<std::vector<double>>();
+
 
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
         ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
@@ -120,6 +117,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     }
 
     if (camera_enable_) {
+        std::vector<double> extrin_R_ic_param;
+        std::vector<double> extrin_t_ic_param;
         std::string camera_type;
         try {
             camera_type = yaml["cam"]["camera_model"].as<std::string>();
@@ -139,6 +138,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
             if (IsDistorted(camera_model)) {
                 distort_param = yaml["cam"]["distortion_param"].as<std::vector<double>>();
             }
+            extrin_R_ic_param = yaml["cam"]["extrinsic_R"].as<std::vector<double>>();
+            extrin_t_ic_param = yaml["cam"]["extrinsic_T"].as<std::vector<double>>();
         } catch (...) {
             LOG(ERROR) << "bad conversion in camera load";
             return false;
