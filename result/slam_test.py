@@ -183,8 +183,8 @@ class SLAMTestRunner:
                  "--config_file", config,
                  "--bag_file", bag_file,
                  "--output_dir", output_dir,
-                 "--start", '0',
-                 '--duration', '-1',
+                 "--start", '8',
+                 '--duration', '28',
                  ],
                 check=True,
             )
@@ -373,7 +373,7 @@ def load_config(config_path: str) -> Tuple[SLAMTestRunner, List[DatasetConfig]]:
 
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
-    parser.add_argument("--datasets", nargs="+", default=["mcd_viral", "botanic_garden", "new_college"],
+    parser.add_argument("--datasets", nargs="+", default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
                         help="Run only specified datasets (by name)")
     args = parser.parse_args()
 
@@ -386,9 +386,9 @@ def main():
 
 def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     """Default datasets equivalent to original two test scripts"""
-    botanic = DatasetConfig(
+    botanic_garden = DatasetConfig(
         name="botanic_garden",
-        config="../config/BotanicGarden.yaml",
+        config="../config/botanic_garden.yaml",
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/Botanic/1005_00_LIO.bag",
             "/mnt/data/home/hsiaochuan/data/Botanic/1005_01_LIO.bag",
@@ -406,9 +406,9 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     mcd_viral = DatasetConfig(
         name="mcd_viral",
-        config="../config/MCD_VIRAL_HandHeld.yaml",
+        config="../config/mcd_viral_handheld.yaml",
         config_map={
-            "ntu": "../config/MCD_VIRAL_ATV.yaml",
+            "ntu": "../config/mcd_viral_atv.yaml",
         },
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/ntu_day_01.bag",
@@ -435,16 +435,16 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     new_college = DatasetConfig(
         name="new_college",
-        config="../config/New_College.yaml",
+        config="../config/new_college.yaml",
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/New_College/rooster_2020-07-10-09-23-18_0.bag"
         ],
         run_mode=RunMode.OFFLINE,
     )
 
-    hilti2022 = DatasetConfig(
-        name="hilti2022",
-        config="../config/Hilti2022.yaml",
+    hilti_2022 = DatasetConfig(
+        name="hilti_2022",
+        config="../config/hilti_2022.yaml",
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/Hilti2022/exp04_construction_upper_level.bag",
             "/mnt/data/home/hsiaochuan/data/Hilti2022/exp07_long_corridor.bag",
@@ -471,7 +471,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [botanic, mcd_viral, new_college, hilti2022, fast_livo2]
+    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
