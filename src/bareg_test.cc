@@ -12,7 +12,6 @@
 #include "lidar_simulator.h"
 #include "pose3.h"
 #include "voxel_map.h"
-using namespace lidar_sim;
 using namespace faster_lio;
 TEST(Bareg, first) {
     LidarConfig cfg;

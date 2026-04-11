@@ -19,8 +19,8 @@ mapping:
   fov_degree:    360
   det_range:     100.0
   extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
-  extrinsic_T: [ -0.010514839241742317,   -0.008989784841758377,   0.037356468638334630 ]
-  extrinsic_R: [  0.99985813160508060000, -0.0002258196228773494, -0.0168423771687589430,
+  extrin_t_il: [ -0.010514839241742317,   -0.008989784841758377,   0.037356468638334630 ]
+  extrin_R_il: [  0.99985813160508060000, -0.0002258196228773494, -0.0168423771687589430,
                   -0.00017111407692153792, -0.9999947058517530000,  0.0032494597148797887,
                   -0.01684302179448474500, -0.0032461167514232880, -0.9998528768488223000]
 
@@ -37,6 +37,7 @@ pcd_save:
   pcd_save_en: true
   interval: 500                 # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+image_save_en: false
 
 feature_extract_enable: false
 point_filter_num: 1

@@ -36,7 +36,7 @@ class PinholeRadialCamera : public CameraBase {
                         double       k3 = 0.0,
                         double       p1 = 0.0,
                         double       p2 = 0.0)
-        : CameraBase(w, h), fx_(fx), cx_(cx), cy_(cy),
+        : CameraBase(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy),
           params_({k1, k2, k3, p1, p2}) {}
 
     ~PinholeRadialCamera() override = default;

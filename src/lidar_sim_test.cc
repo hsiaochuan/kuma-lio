@@ -10,7 +10,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include "lidar_simulator.h"
-using namespace lidar_sim;
+using namespace faster_lio;
 
 TEST(LidarSim, LinearMotion) {
     LidarConfig cfg;

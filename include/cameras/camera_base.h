@@ -65,8 +65,8 @@ class CameraBase {
             return cam2ima(X.hnormalized());
     }
 
-    bool valid(const common::V2D& point_img) const {
-        if (point_img.x() < 0 || point_img.x() >= w() || point_img.y() < 0 || point_img.y() < h()) return false;
+    bool valid(const common::V2D& uv) const {
+        if (uv.x() < 0 || uv.x() >= w() || uv.y() < 0 || uv.y() >= h()) return false;
         return true;
     }
 

@@ -127,6 +127,17 @@ inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double> &v) {
     q.w() = v[3];
     return q;
 }
+template <typename S>
+inline Eigen::Matrix<S, 3, 3> RotationFromArray(const std::vector<double> &v) {
+    if(v.size() != 9 && v.size() != 4)
+        throw std::runtime_error("Invalid rotation matrix");
+    Eigen::Matrix<S, 3, 3> rotation;
+    if (v.size() == 9)
+        rotation = common::MatFromArray<double>(v);
+    else if (v.size() == 4)
+        rotation = common::QuatFromArray<double>(v).toRotationMatrix();
+    return rotation;
+}
 using V2D = Eigen::Vector2d;
 using V3D = Eigen::Vector3d;
 using V4D = Eigen::Vector4d;
@@ -155,6 +166,7 @@ const V3F Zero3f(0, 0, 0);
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
     double lidar_end_time_ = 0;
+    cv::Mat img_;
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
 };

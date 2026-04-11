@@ -1,5 +1,7 @@
 #pragma once
+#include <algorithm>
 #include <boost/filesystem.hpp>
+#include <vector>
 #include "cameras/cameras.h"
 #include "pose3.h"
 using image_t = uint32_t;
@@ -17,6 +19,7 @@ struct Image {
     std::optional<Pose3> cam_from_world_;
     std::string name_;
     double timestamp_;
+    cv::Mat image_data_;
     camera_t CameraId() const {
         CHECK(camera_id_ != kInvalidCameraId);
         return camera_id_;
@@ -42,16 +45,28 @@ struct Image {
     }
 };
 struct Reconstruction {
+
     void LoadFromImages(const std::string& image_dir) {
         boost::filesystem::path image_path_dir(image_dir);
-        image_t image_id = 0;
+        std::vector<boost::filesystem::path> image_paths;
+
         for (boost::filesystem::directory_iterator it(image_path_dir); it != boost::filesystem::directory_iterator();
              ++it) {
             if (!boost::filesystem::is_regular_file(*it)) continue;
             std::string extension = it->path().extension().string();
             if (extension != ".jpg" && extension != ".png") continue;
+            image_paths.push_back(it->path());
+        }
+
+        std::sort(image_paths.begin(), image_paths.end(),
+                  [](const boost::filesystem::path& lhs, const boost::filesystem::path& rhs) {
+                      return lhs.filename().string() < rhs.filename().string();
+                  });
+
+        image_t image_id = 0;
+        for (const auto& image_path : image_paths) {
             images_[image_id] = std::make_shared<Image>(image_id);
-            images_[image_id]->name_ = it->path().string();
+            images_[image_id]->name_ = image_path.string();
             images_[image_id]->camera_id_ = 0;
             image_id++;
         }

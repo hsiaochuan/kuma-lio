@@ -11,12 +11,15 @@
 #include <condition_variable>
 #include <thread>
 
+#include <cameras/cameras.h>
+#include <opencv2/opencv.hpp>
 #include "imu_processing.hpp"
 #include "ivox3d/ivox3d.h"
-#include "options.h"
 #include "pointcloud_preprocess.h"
-#include <opencv2/opencv.hpp>
-#include <cameras/cameras.h>
+#include "pose3.h"
+#include "reconstruction.h"
+
+#include <stamp_pose.h>
 namespace faster_lio {
 
 class LaserMapping {
@@ -49,7 +52,7 @@ class LaserMapping {
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
-    void ImageCallBack(const cv::Mat& img, double timestamp);
+    void ImageCallBack(Image& image);
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
 
@@ -97,10 +100,8 @@ class LaserMapping {
     double map_filter_size_ = 0;
 
     /// params
-    Eigen::Matrix3d extrin_R_il;   // lidar-imu translation
-    Eigen::Vector3d extrin_t_il;      // lidar-imu rotation
-    Eigen::Matrix3d extrin_R_ic;   // camera-imu translation
-    Eigen::Vector3d extrin_t_ic;      // camera-imu rotation
+    Pose3 extrin_il_;
+    Pose3 extrin_ic_;
 
     /// point clouds data
     PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
@@ -143,7 +144,7 @@ class LaserMapping {
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;
     std::deque<Imu> imu_buffer_;
-    std::deque<double> img_time_buffer_;
+    std::deque<Image> image_buffer_;
 
     double last_timestamp_lidar_ = 0;
     double last_timestamp_imu_ = -1.0;
@@ -172,11 +173,13 @@ class LaserMapping {
     bool scan_body_pub_en_ = false;
     bool scan_effect_pub_en_ = false;
     bool pcd_save_en_ = false;
+    bool image_save_en_ = false;
     int pcd_save_interval_ = -1;
     bool path_save_en_ = false;
 
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};  // debug save
     nav_msgs::Path path_;
+    Trajectory trajectory_;
    public:
     std::string output_dir;
 };

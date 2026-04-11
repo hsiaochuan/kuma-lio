@@ -1,5 +1,10 @@
 #pragma once
 #include <Eigen/Eigen>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
 namespace faster_lio {
 struct StampedPose {
     double time;
@@ -82,8 +87,99 @@ class TrajectoryGenerator {
             traj.push_back({t, T});
         }
         return traj;
-    };
-}
+    }
+    static void save_to_tumtxt(const Trajectory& traj, const std::string& filename) {
+        std::ofstream outfile(filename);
+        if (!outfile.is_open()) {
+            throw std::runtime_error("failed to open trajectory file for writing: " + filename);
+        }
+        outfile << std::fixed << std::setprecision(9);
+        for (const auto& stamped_pose : traj) {
+            Eigen::Quaterniond q(stamped_pose.pose.linear());
+            outfile << stamped_pose.time << " "
+                    << stamped_pose.pose.translation().x() << " "
+                    << stamped_pose.pose.translation().y() << " "
+                    << stamped_pose.pose.translation().z() << " "
+                    << q.x() << " "
+                    << q.y() << " "
+                    << q.z() << " "
+                    << q.w() << "\n";
+        }
+        outfile.close();
+    }
+    static void save_to_pcd(const Trajectory& traj, const std::string& filename, double axis_length = 0.1,
+                            int points_per_axis = 20) {
+        pcl::PointCloud<pcl::PointXYZRGB> cloud;
+        cloud.clear();
+
+        // For each pose in trajectory, create coordinate axes represented by points
+        for (const auto& stamped_pose : traj) {
+            const Eigen::Vector3d& pos = stamped_pose.pose.translation();
+            const Eigen::Matrix3d& rot = stamped_pose.pose.linear();
+
+            // Get axis directions (columns of rotation matrix)
+            Eigen::Vector3d x_axis = rot.col(0).normalized();
+            Eigen::Vector3d y_axis = rot.col(1).normalized();
+            Eigen::Vector3d z_axis = rot.col(2).normalized();
+
+            // Add origin point (white)
+            pcl::PointXYZRGB origin;
+            origin.x = pos.x();
+            origin.y = pos.y();
+            origin.z = pos.z();
+            origin.r = 255;
+            origin.g = 255;
+            origin.b = 255;
+            cloud.push_back(origin);
+
+            // Generate points along X-axis (red)
+            for (int i = 1; i <= points_per_axis; ++i) {
+                double t = static_cast<double>(i) / points_per_axis;
+                Eigen::Vector3d pt = pos + x_axis * axis_length * t;
+                pcl::PointXYZRGB point;
+                point.x = pt.x();
+                point.y = pt.y();
+                point.z = pt.z();
+                point.r = 255;
+                point.g = 0;
+                point.b = 0;
+                cloud.push_back(point);
+            }
+
+            // Generate points along Y-axis (green)
+            for (int i = 1; i <= points_per_axis; ++i) {
+                double t = static_cast<double>(i) / points_per_axis;
+                Eigen::Vector3d pt = pos + y_axis * axis_length * t;
+                pcl::PointXYZRGB point;
+                point.x = pt.x();
+                point.y = pt.y();
+                point.z = pt.z();
+                point.r = 0;
+                point.g = 255;
+                point.b = 0;
+                cloud.push_back(point);
+            }
+
+            // Generate points along Z-axis (blue)
+            for (int i = 1; i <= points_per_axis; ++i) {
+                double t = static_cast<double>(i) / points_per_axis;
+                Eigen::Vector3d pt = pos + z_axis * axis_length * t;
+                pcl::PointXYZRGB point;
+                point.x = pt.x();
+                point.y = pt.y();
+                point.z = pt.z();
+                point.r = 0;
+                point.g = 0;
+                point.b = 255;
+                cloud.push_back(point);
+            }
+        }
+
+        // Save to PCD file
+        pcl::io::savePCDFileASCII(filename, cloud);
+    }
+
+};
 
 /** SE(3) pose interpolation: linear translation + SLERP rotation */
 static Eigen::Isometry3d

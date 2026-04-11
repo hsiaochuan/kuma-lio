@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 from pathlib import Path
 from enum import Enum
-
+import shutil
 
 # ──────────────────────────────────────────────
 # Data Structures
@@ -279,6 +279,9 @@ class SLAMTestRunner:
                 Path(bag_file).parent,
                 name + "_faster_lio_result"
             )
+            if os.path.exists(output_dir):
+                print(f"Result dir {output_dir} already exists, remove it")
+                shutil.rmtree(output_dir)
             result = self.run_single(bag_file, config, output_dir, dataset.run_mode)
             result.dataset = dataset.name
             suite.results.append(result)
@@ -439,20 +442,6 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    hilti2021 = DatasetConfig(
-        name="hilti2021",
-        config="../config/Hilti2021.yaml",
-        bag_files=[
-            "/mnt/data/home/hsiaochuan/data/Hilti2021/Basement_1.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2021/Construction_Site_1.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2021/IC_Office_1.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2021/LAB_Survey_2.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2021/uzh_tracking_area_run2.bag",
-            "/mnt/data/home/hsiaochuan/data/New_College/rooster_2020-07-10-09-23-18_0.bag"
-        ],
-        run_mode=RunMode.OFFLINE,
-    )
-
     hilti2022 = DatasetConfig(
         name="hilti2022",
         config="../config/Hilti2022.yaml",
@@ -467,7 +456,22 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
     )
 
-    all_datasets = [botanic, mcd_viral, new_college, hilti2022]
+    fast_livo2 = DatasetConfig(
+        name="fast_livo2",
+        config="../config/fast_livo2.yaml",
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/CBD_Building_01.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Centennial_Garden_01.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Landmark.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Lecture_Center_01.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Main_Building.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Red_Sculpture.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Retail_Street.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/SYSU_01.bag",
+        ],
+        run_mode=RunMode.OFFLINE,
+    )
+    all_datasets = [botanic, mcd_viral, new_college, hilti2022, fast_livo2]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:

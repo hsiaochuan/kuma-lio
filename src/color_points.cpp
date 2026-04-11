@@ -2,20 +2,26 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
+#include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
 #include "gflags/gflags.h"
 #include "glog/logging.h"
-#include "stamp_pose.h"
 #include "reconstruction.h"
-#include <yaml-cpp/yaml.h>
-DEFINE_string(config_fname, "", "config fname contain the pose");
+#include "stamp_pose.h"
+
 DEFINE_string(points_fname, "", "points fname");
 DEFINE_string(images_dir, "", "images dir");
 DEFINE_string(output_dir, "", "otuput dir");
 DEFINE_string(stamp_poses_fname, "", "stamped poses fname");
+DEFINE_string(config_fname, "", "");
 using namespace faster_lio;
 namespace fs = boost::filesystem;
-int main() {
+int main(int argc, char** argv) {
+    gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+    FLAGS_stderrthreshold = google::INFO;
+    FLAGS_colorlogtostderr = true;
+    google::InitGoogleLogging(argv[0]);
     fs::create_directories(FLAGS_output_dir);
     Reconstruction reconstruction;
     PointCloud::Ptr points(new PointCloud);
@@ -26,48 +32,60 @@ int main() {
         LOG(ERROR) << "Empty points file";
         return EXIT_FAILURE;
     }
-
-    // extrin
-    Pose3 extrin_il;
+    LOG(INFO) << "Points size: " << points->size();
+    // camera
+    std::vector<double> param;
     auto yaml = YAML::LoadFile(FLAGS_config_fname);
-    std::vector<double> extrin_R_il_param;
-    std::vector<double> extrin_t_il_param;
-    extrin_R_il_param = yaml["mapping"]["extrinsic_R"].as<std::vector<double>>();
-    extrin_t_il_param = yaml["mapping"]["extrinsic_T"].as<std::vector<double>>();
-    extrin_il.Quat() = common::MatFromArray<double>(extrin_R_il_param);
-    extrin_il.Trans() = common::VecFromArray<double>(extrin_t_il_param);
-
+    std::shared_ptr<CameraBase> camera = std::make_shared<PinholeRadialCamera>();
+    auto pinhole_param = yaml["cam"]["pinhole_param"].as<std::vector<double>>();
+    auto distortion_param = yaml["cam"]["distortion_param"].as<std::vector<double>>();
+    param.insert(param.end(), pinhole_param.begin(), pinhole_param.end());
+    param.insert(param.end(), distortion_param.begin(), distortion_param.end());
+    camera->w_ = yaml["cam"]["resolution"][0].as<unsigned int>();
+    camera->h_ = yaml["cam"]["resolution"][1].as<unsigned int>();
+    camera->updateFromParams(param);
+    LOG(INFO) << "Load camera";
     // load poses
     Trajectory stamped_poses = TrajectoryGenerator::load_from_tumtxt(FLAGS_stamp_poses_fname);
     TrajectoryInterpolator interpolator(stamped_poses);
-
+    LOG(INFO) << "Trajectory size: " << stamped_poses.size();
     // load images dir
     reconstruction.LoadFromImages(FLAGS_images_dir);
-
+    LOG(INFO) << "Load " << reconstruction.images_.size() << " images from " << FLAGS_images_dir;
     // proj the points to image
     for (int i = 0; i < reconstruction.images_.size(); i++) {
-        // output color image
-        cv::Mat output_image;
-
+        cv::Mat output_image = cv::Mat::zeros(camera->h(), camera->w(), CV_64F);
         Image::Ptr image = reconstruction.images_[i];
 
-        auto body_pose = interpolator.query(image->TryReadTimeFromName());
-        image->cam_from_world_ = Pose3(body_pose * extrin_il.GetIsometry3d());
-        Pose3 cam_from_world = image->Pose();
+        Pose3 world_from_cam = stamped_poses[i].pose;
+        Pose3 cam_from_world = world_from_cam.GetInverse();
+        image->camera_ = camera;
+
         PointCloud::Ptr points_cam(new PointCloud);
-        std::string image_name = fs::path(image->name_).stem().string();
         pcl::transformPointCloud(*points, *points_cam, cam_from_world.GetMat4d());
+
         for (int j = 0; j < points_cam->size(); ++j) {
             Eigen::Vector3d point_cam = points_cam->points[j].getVector3fMap().cast<double>();
-            Eigen::Vector2d point_img = image->Camera()->project(point_cam);
-            if (!image->Camera()->valid(point_img)) continue;
-            int u = (int)point_img.x();
-            int v = (int)point_img.y();
+            if (point_cam.z() < 0)
+                continue;
+            Eigen::Vector2d point_img = image->camera_->project(point_cam);
+            for (int u = (int)point_img.x() - 1; u < (int)point_img.x() + 2; u++) {
+                for (int v = (int)point_img.y() - 1; v < (int)point_img.y() + 2; v++) {
+                    Eigen::Vector2d uv(u, v);
+                    if (!image->Camera()->valid(uv)) continue;
 
-            output_image.at<double>(v, u) = points_cam->points[j].intensity;
+                    output_image.at<double>(v, u) = points_cam->points[j].intensity;
+                }
+            }
         }
 
-        std::string image_fname = (fs::path(FLAGS_output_dir) / image->name_).string();
+        std::string image_fname = (fs::path(FLAGS_output_dir) / fs::path(image->name_).filename()).string();
+
+        // cv::normalize(output_image, output_image, 0, 1, cv::NORM_MINMAX);
+        // cv::Mat output_image_8u;
+        // output_image.convertTo(output_image_8u, CV_8U);
+        // cv::applyColorMap(output_image_8u,output_image_8u,cv::COLORMAP_JET);
         cv::imwrite(image_fname, output_image);
+        LOG(INFO) << "Writing result image to " << image_fname;
     }
 }
