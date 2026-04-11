@@ -5,9 +5,7 @@
 #include <string>
 #include <vector>
 
-#include <eigen_conversions/eigen_msg.h>
 #include <nav_msgs/Odometry.h>
-#include <sensor_msgs/Imu.h>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -15,7 +13,7 @@
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <boost/array.hpp>
-#include <unsupported/Eigen/ArpackSupport>
+#include <opencv2/opencv.hpp>
 
 #include "options.h"
 #include "so3_math.h"
