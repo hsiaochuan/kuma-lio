@@ -156,7 +156,6 @@ class LaserMapping {
     int max_iteraions = 4;
     /// statistics and flags ///
     bool if_local_map_init_ = true;
-    int pcd_index_ = 0;
     int effect_feat_num_ = 0;
 
     ///////////////////////// EKF inputs and output ///////////////////////////////////////////////////////
@@ -175,9 +174,12 @@ class LaserMapping {
     bool pcd_save_en_ = false;
     bool image_save_en_ = false;
     int pcd_save_interval_ = -1;
+    double final_map_voxel_size_ = 0.1;
+    int pcd_idx = 0;
     bool path_save_en_ = false;
 
-    PointCloud::Ptr pcl_wait_save_{new PointCloud()};  // debug save
+    PointCloud::Ptr pcl_wait_save_{new PointCloud()};
+    PointCloud::Ptr final_map_{new PointCloud()};
     nav_msgs::Path path_;
     Trajectory trajectory_;
    public:

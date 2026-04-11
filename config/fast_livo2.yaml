@@ -35,6 +35,7 @@ pcd_save:
   pcd_save_en: true
   interval: 500                 # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+  final_map_voxel_size: 0.1
 image_save_en: true
 
 feature_extract_enable: false

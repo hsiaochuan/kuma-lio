@@ -9,10 +9,7 @@
 #include "reconstruction.h"
 #include "stamp_pose.h"
 
-DEFINE_string(points_fname, "", "points fname");
-DEFINE_string(images_dir, "", "images dir");
-DEFINE_string(output_dir, "", "otuput dir");
-DEFINE_string(stamp_poses_fname, "", "stamped poses fname");
+DEFINE_string(slam_out_dir, "","");
 DEFINE_string(config_fname, "", "");
 using namespace faster_lio;
 namespace fs = boost::filesystem;
@@ -22,12 +19,13 @@ int main(int argc, char** argv) {
     FLAGS_stderrthreshold = google::INFO;
     FLAGS_colorlogtostderr = true;
     google::InitGoogleLogging(argv[0]);
-    fs::create_directories(FLAGS_output_dir);
+    std::string output_dir = FLAGS_slam_out_dir + "/color";
+    fs::create_directories(output_dir);
     Reconstruction reconstruction;
     PointCloud::Ptr points(new PointCloud);
 
     // load pcd
-    pcl::io::loadPCDFile(FLAGS_points_fname, *points);
+    pcl::io::loadPCDFile(FLAGS_slam_out_dir + "/final_map.pcd", *points);
     if (points->size() <= 0) {
         LOG(ERROR) << "Empty points file";
         return EXIT_FAILURE;
@@ -46,23 +44,22 @@ int main(int argc, char** argv) {
     camera->updateFromParams(param);
     LOG(INFO) << "Load camera";
     // load poses
-    Trajectory stamped_poses = TrajectoryGenerator::load_from_tumtxt(FLAGS_stamp_poses_fname);
+    Trajectory stamped_poses = TrajectoryGenerator::load_from_tumtxt(FLAGS_slam_out_dir + "/cam_traj_log.txt");
     TrajectoryInterpolator interpolator(stamped_poses);
     LOG(INFO) << "Trajectory size: " << stamped_poses.size();
     // load images dir
-    reconstruction.LoadFromImages(FLAGS_images_dir);
-    LOG(INFO) << "Load " << reconstruction.images_.size() << " images from " << FLAGS_images_dir;
+    reconstruction.LoadFromImages(FLAGS_slam_out_dir + "/images");
+    LOG(INFO) << "Load " << reconstruction.images_.size() << " images";
     // proj the points to image
     for (int i = 0; i < reconstruction.images_.size(); i++) {
         cv::Mat output_image = cv::Mat::zeros(camera->h(), camera->w(), CV_64F);
         Image::Ptr image = reconstruction.images_[i];
 
-        Pose3 world_from_cam = stamped_poses[i].pose;
-        Pose3 cam_from_world = world_from_cam.GetInverse();
+        Pose3 world_from_cam = interpolator.query(image->TryReadTimeFromName());
         image->camera_ = camera;
 
         PointCloud::Ptr points_cam(new PointCloud);
-        pcl::transformPointCloud(*points, *points_cam, cam_from_world.GetMat4d());
+        pcl::transformPointCloud(*points, *points_cam, world_from_cam.GetInverse().GetMat4d());
 
         for (int j = 0; j < points_cam->size(); ++j) {
             Eigen::Vector3d point_cam = points_cam->points[j].getVector3fMap().cast<double>();
@@ -79,7 +76,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        std::string image_fname = (fs::path(FLAGS_output_dir) / fs::path(image->name_).filename()).string();
+        std::string image_fname = (fs::path(output_dir) / fs::path(image->name_).filename()).string();
 
         // cv::normalize(output_image, output_image, 0, 1, cv::NORM_MINMAX);
         // cv::Mat output_image_8u;

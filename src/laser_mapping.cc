@@ -1,7 +1,9 @@
 #include <tf/transform_broadcaster.h>
 #include <yaml-cpp/yaml.h>
 #include <execution>
+#include <iomanip>
 #include <fstream>
+#include <sstream>
 #include <cv_bridge/cv_bridge.h>
 #include "laser_mapping.h"
 
@@ -94,6 +96,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
         image_save_en_ = yaml["image_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
+        final_map_voxel_size_ = yaml["pcd_save"]["final_map_voxel_size"].as<double>();
         extrin_il_.Quat() = common::RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
         extrin_il_.Trans() = common::VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
@@ -792,16 +795,24 @@ void LaserMapping::PublishFrameWorld() {
 
     if (pcd_save_en_) {
         *pcl_wait_save_ += *scan_world;
+        *final_map_ += *scan_world;
         static int scan_wait_num = 0;
         scan_wait_num++;
-        if (!pcl_wait_save_->empty() && pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
-            pcd_index_++;
+        if (pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
             static auto once = fs::create_directories(output_dir + "/maps");
+
+            // sample
             scan_sampler_.setInputCloud(pcl_wait_save_);
             scan_sampler_.filter(*pcl_wait_save_);
-            std::string pcd_save_fname(output_dir + "/maps/map_" + std::to_string(pcd_index_) + ".pcd");
-            LOG(INFO) << "current scan saved to " << pcd_save_fname;
-            pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
+
+            // load pcd
+            std::ostringstream pcd_save_fname_ss;
+            pcd_save_fname_ss << output_dir << "/maps/" << std::setw(6) << std::setfill('0') << pcd_idx
+                              << ".pcd";
+            std::string pcd_save_fname(pcd_save_fname_ss.str());
+            if (!pcl_wait_save_->empty())
+                pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
+            pcd_idx++;
             pcl_wait_save_->clear();
             scan_wait_num = 0;
         }
@@ -895,13 +906,33 @@ void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *con
 }
 
 void LaserMapping::Finish() {
-    if (!pcl_wait_save_->empty() && pcd_save_en_ && pcd_save_interval_ < 0) {
-        std::string pcd_save_fname(output_dir + "/map.pcd");
-        pcl::PCDWriter pcd_writer;
-        LOG(INFO) << "current scan saved to " << pcd_save_fname;
-        pcd_writer.writeBinary(pcd_save_fname, *pcl_wait_save_);
+    if (!final_map_->empty() && pcd_save_en_) {
+        // sample
+        pcl::VoxelGrid<PointType> map_sampler;
+        map_sampler.setLeafSize(final_map_voxel_size_, final_map_voxel_size_, final_map_voxel_size_);
+        map_sampler.setInputCloud(final_map_);
+        map_sampler.filter(*final_map_);
+        // load pcd
+        std::string pcd_save_fname(output_dir + "/final_map.pcd");
+        pcl::io::savePCDFileBinary(pcd_save_fname, *final_map_);
     }
 
+    if (pcd_save_interval_ > 0) {
+        static auto once = fs::create_directories(output_dir + "/maps");
+
+        // sample
+        scan_sampler_.setInputCloud(pcl_wait_save_);
+        scan_sampler_.filter(*pcl_wait_save_);
+
+        // load pcd
+        std::ostringstream pcd_save_fname_ss;
+        pcd_save_fname_ss << output_dir << "/maps/" << std::setw(6) << std::setfill('0') << pcd_idx
+                          << ".pcd";
+        std::string pcd_save_fname(pcd_save_fname_ss.str());
+        if (!pcl_wait_save_->empty())
+            pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
+        pcd_idx++;
+    }
     LOG(INFO) << "finish done";
 }
 }  // namespace faster_lio
