@@ -6,7 +6,7 @@
 #include <sstream>
 #include <cv_bridge/cv_bridge.h>
 #include "laser_mapping.h"
-
+#include <pcl/filters/uniform_sampling.h>
 #include <cameras/pinhole_fisheye_camera.h>
 #include <cameras/pinhole_camera.h>
 #include <cameras/spherial_camera.h>
@@ -908,8 +908,8 @@ void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *con
 void LaserMapping::Finish() {
     if (!final_map_->empty() && pcd_save_en_) {
         // sample
-        pcl::VoxelGrid<PointType> map_sampler;
-        map_sampler.setLeafSize(final_map_voxel_size_, final_map_voxel_size_, final_map_voxel_size_);
+        pcl::UniformSampling<PointType> map_sampler;
+        map_sampler.setRadiusSearch(final_map_voxel_size_);
         map_sampler.setInputCloud(final_map_);
         map_sampler.filter(*final_map_);
         // load pcd
