@@ -214,7 +214,6 @@ class TrajectoryInterpolator {
 };
 
 struct LaserFrame {
-    using PointCloud = pcl::PointCloud<PointType>;
     double timestamp_ = kInvalidTimeStamp;
     Eigen::Isometry3d frame_from_world_;
     PointCloud::Ptr scan_points_;
