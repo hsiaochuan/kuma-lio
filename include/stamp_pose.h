@@ -1,10 +1,11 @@
 #pragma once
+#include <pcl/io/pcd_io.h>
 #include <Eigen/Eigen>
+#include <boost/filesystem.hpp>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <pcl/point_types.h>
-#include <pcl/io/pcd_io.h>
+#include <pcl/common/transforms.h>
 namespace faster_lio {
 struct StampedPose {
     double time;
@@ -88,34 +89,29 @@ class TrajectoryGenerator {
         }
         return traj;
     }
-    static void save_to_tumtxt(const Trajectory& traj, const std::string& filename) {
+    static void save_to_tumtxt(const Trajectory &traj, const std::string &filename) {
         std::ofstream outfile(filename);
         if (!outfile.is_open()) {
             throw std::runtime_error("failed to open trajectory file for writing: " + filename);
         }
         outfile << std::fixed << std::setprecision(9);
-        for (const auto& stamped_pose : traj) {
+        for (const auto &stamped_pose : traj) {
             Eigen::Quaterniond q(stamped_pose.pose.linear());
-            outfile << stamped_pose.time << " "
-                    << stamped_pose.pose.translation().x() << " "
-                    << stamped_pose.pose.translation().y() << " "
-                    << stamped_pose.pose.translation().z() << " "
-                    << q.x() << " "
-                    << q.y() << " "
-                    << q.z() << " "
-                    << q.w() << "\n";
+            outfile << stamped_pose.time << " " << stamped_pose.pose.translation().x() << " "
+                    << stamped_pose.pose.translation().y() << " " << stamped_pose.pose.translation().z() << " " << q.x()
+                    << " " << q.y() << " " << q.z() << " " << q.w() << "\n";
         }
         outfile.close();
     }
-    static void save_to_pcd(const Trajectory& traj, const std::string& filename, double axis_length = 0.1,
+    static void save_to_pcd(const Trajectory &traj, const std::string &filename, double axis_length = 0.1,
                             int points_per_axis = 20) {
         pcl::PointCloud<pcl::PointXYZRGB> cloud;
         cloud.clear();
 
         // For each pose in trajectory, create coordinate axes represented by points
-        for (const auto& stamped_pose : traj) {
-            const Eigen::Vector3d& pos = stamped_pose.pose.translation();
-            const Eigen::Matrix3d& rot = stamped_pose.pose.linear();
+        for (const auto &stamped_pose : traj) {
+            const Eigen::Vector3d &pos = stamped_pose.pose.translation();
+            const Eigen::Matrix3d &rot = stamped_pose.pose.linear();
 
             // Get axis directions (columns of rotation matrix)
             Eigen::Vector3d x_axis = rot.col(0).normalized();
@@ -178,12 +174,10 @@ class TrajectoryGenerator {
         // Save to PCD file
         pcl::io::savePCDFileASCII(filename, cloud);
     }
-
 };
 
 /** SE(3) pose interpolation: linear translation + SLERP rotation */
-static Eigen::Isometry3d
-interpolate_pose(const Eigen::Isometry3d &T0, const Eigen::Isometry3d &T1, double t) {
+static Eigen::Isometry3d interpolate_pose(const Eigen::Isometry3d &T0, const Eigen::Isometry3d &T1, double t) {
     Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
     T.translation() = T0.translation() + t * (T1.translation() - T0.translation());
     T.linear() = Eigen::Quaterniond(T0.linear()).slerp(t, Eigen::Quaterniond(T1.linear())).toRotationMatrix();
@@ -218,4 +212,33 @@ class TrajectoryInterpolator {
    private:
     Trajectory traj_;
 };
+
+struct LiDARFrame {
+    using PointCloud = pcl::PointCloud<PointType>;
+    double timestamp_ = kInvalidTimeStamp;
+    Eigen::Isometry3d frame_from_world_;
+    std::string name_;
+    double GetTimeStamp() {
+        if (timestamp_ == kInvalidTimeStamp) {
+            try {
+                std::string image_stamp_str = boost::filesystem::path(name_).stem().string();
+                timestamp_ = std::stod(image_stamp_str);
+            } catch (const std::exception &e) {
+                throw std::runtime_error("fail to load the timestamp from filename");
+            }
+        } else
+            return timestamp_;
+    }
+};
+inline PointCloud::Ptr MergePoints(const std::vector<LiDARFrame> &lidar_frames) {
+    PointCloud::Ptr merged_points(new PointCloud);
+    for (int i = 0; i < lidar_frames.size(); ++i) {
+        PointCloud::Ptr scan(new PointCloud);
+        pcl::io::loadPCDFile(lidar_frames[i].name_,*scan);
+        PointCloud::Ptr scan_world(new PointCloud);
+        pcl::transformPointCloud(*scan,*scan_world,lidar_frames[i].frame_from_world_.matrix());
+        *merged_points += *scan_world;
+    }
+    return merged_points;
+}
 }  // namespace faster_lio

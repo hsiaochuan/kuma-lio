@@ -459,14 +459,28 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     fast_livo2 = DatasetConfig(
         name="fast_livo2",
         config="../config/fast_livo2.yaml",
+        config_map={
+            "Retail_Street": "../config/fast_livo2.yaml",
+            "CBD_Building_01": "../config/fast_livo2.yaml",
+            "Bright_Screen_Wall": "../config/fast_livo2.yaml",
+
+            "HKU_Landmark": "../config/fast_livo2_1.yaml",
+            "HKU_Centennial_Garden": "../config/fast_livo2_1.yaml",
+            "HKU_Main_Building": "../config/fast_livo2_1.yaml",
+            "HKU_Lecture_Center_01":"../config/fast_livo2_1.yaml",
+
+            "SYSU_01":"../config/fast_livo2_2.yaml",
+        },
         bag_files=[
-            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/CBD_Building_01.bag",
-            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Centennial_Garden_01.bag",
-            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Landmark.bag",
-            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Lecture_Center_01.bag",
-            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Main_Building.bag",
-            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Red_Sculpture.bag",
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Retail_Street.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/CBD_Building_01.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Bright_Screen_Wall.bag",
+
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Landmark.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Centennial_Garden_01.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Main_Building.bag",
+            "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Lecture_Center_01.bag",
+
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/SYSU_01.bag",
         ],
         run_mode=RunMode.OFFLINE,

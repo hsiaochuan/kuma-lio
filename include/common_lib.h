@@ -62,6 +62,7 @@ struct Imu {
     Eigen::Vector3d orientation;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
+constexpr double kInvalidTimeStamp = std::numeric_limits<double>::min();
 }  // namespace faster_lio
 
 // clang-format off
