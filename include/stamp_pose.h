@@ -1,11 +1,11 @@
 #pragma once
+#include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 #include <Eigen/Eigen>
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <pcl/common/transforms.h>
 namespace faster_lio {
 struct StampedPose {
     double time;
@@ -213,10 +213,11 @@ class TrajectoryInterpolator {
     Trajectory traj_;
 };
 
-struct LiDARFrame {
+struct LaserFrame {
     using PointCloud = pcl::PointCloud<PointType>;
     double timestamp_ = kInvalidTimeStamp;
     Eigen::Isometry3d frame_from_world_;
+    PointCloud::Ptr scan_points_;
     std::string name_;
     double GetTimeStamp() {
         if (timestamp_ == kInvalidTimeStamp) {
@@ -229,14 +230,23 @@ struct LiDARFrame {
         } else
             return timestamp_;
     }
+    PointCloud::Ptr GetPoints() {
+        if (scan_points_ == nullptr) {
+            try {
+                pcl::io::loadPCDFile(name_, *scan_points_);
+            } catch (...) {
+                throw std::runtime_error("fail to load the scan from filename");
+            }
+        } else
+            return scan_points_;
+    }
 };
-inline PointCloud::Ptr MergePoints(const std::vector<LiDARFrame> &lidar_frames) {
+inline PointCloud::Ptr MergePoints(std::vector<LaserFrame> &lidar_frames) {
     PointCloud::Ptr merged_points(new PointCloud);
-    for (int i = 0; i < lidar_frames.size(); ++i) {
-        PointCloud::Ptr scan(new PointCloud);
-        pcl::io::loadPCDFile(lidar_frames[i].name_,*scan);
+    for (auto &lidar_frame : lidar_frames) {
+        PointCloud::Ptr scan = lidar_frame.GetPoints();
         PointCloud::Ptr scan_world(new PointCloud);
-        pcl::transformPointCloud(*scan,*scan_world,lidar_frames[i].frame_from_world_.matrix());
+        pcl::transformPointCloud(*scan, *scan_world, lidar_frame.frame_from_world_.matrix());
         *merged_points += *scan_world;
     }
     return merged_points;
