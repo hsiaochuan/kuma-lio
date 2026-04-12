@@ -219,7 +219,11 @@ struct LaserFrame {
     Eigen::Isometry3d frame_from_world_;
     PointCloud::Ptr scan_points_;
     std::string name_;
-    double GetTimeStamp() {
+    explicit LaserFrame(const std::string & name) : name_(name) {
+        TryReadTimestamp();
+        GetPoints();
+    }
+    void TryReadTimestamp() {
         if (timestamp_ == kInvalidTimeStamp) {
             try {
                 std::string image_stamp_str = boost::filesystem::path(name_).stem().string();
@@ -227,8 +231,7 @@ struct LaserFrame {
             } catch (const std::exception &e) {
                 throw std::runtime_error("fail to load the timestamp from filename");
             }
-        } else
-            return timestamp_;
+        }
     }
     PointCloud::Ptr GetPoints() {
         if (scan_points_ == nullptr) {
