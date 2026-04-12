@@ -782,14 +782,18 @@ void LaserMapping::PublishFrameWorld() {
     }
     if (image_save_en_) {
         static auto once = fs::create_directories(output_dir + "/images");
-        std::string img_save_fname(output_dir + "/images/" + std::to_string(measures_.lidar_end_time_) + ".jpg");
+        std::stringstream ss;
+        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+        std::string img_save_fname(output_dir + "/images/" + ss.str() + ".jpg");
         if (!measures_.img_.empty())
             cv::imwrite(img_save_fname, measures_.img_);
     }
 
     if (pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");
-        std::string pcd_save_fname(output_dir + "/scans/" + std::to_string(measures_.lidar_end_time_) + ".pcd");
+        std::stringstream ss;
+        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+        std::string pcd_save_fname(output_dir + "/scans/" + ss.str() + ".pcd");
         pcl::io::savePCDFileBinary(pcd_save_fname, *scan_undistort_);
     }
 

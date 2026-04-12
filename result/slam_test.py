@@ -183,8 +183,8 @@ class SLAMTestRunner:
                  "--config_file", config,
                  "--bag_file", bag_file,
                  "--output_dir", output_dir,
-                 "--start", '8',
-                 '--duration', '28',
+                 "--start", '0',
+                 '--duration', '-1',
                  ],
                 check=True,
             )
