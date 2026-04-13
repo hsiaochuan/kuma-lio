@@ -37,7 +37,7 @@ class TrajectoryGenerator {
         for (double t = 0; t <= duration + 1e-9; t += dt) {
             Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
             T.translation() = pos;
-            traj.push_back({t, T});
+            traj.emplace_back(t, T);
             pos += velocity * dt;
         }
         return traj;
@@ -62,7 +62,7 @@ class TrajectoryGenerator {
             Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
             T.translation() = pos;
             T.linear() = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-            traj.push_back({t, T});
+            traj.emplace_back(t, T);
             theta += w * dt;
         }
         return traj;
@@ -85,7 +85,7 @@ class TrajectoryGenerator {
             Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
             T.translation() = Eigen::Vector3d(x, y, z);
             T.linear() = Eigen::Quaterniond(qw, qx, qy, qz).toRotationMatrix();
-            traj.push_back({t, T});
+            traj.emplace_back(t, T);
         }
         return traj;
     }
@@ -218,15 +218,16 @@ struct LaserFrame {
     Eigen::Isometry3d frame_from_world_;
     PointCloud::Ptr scan_points_;
     std::string name_;
-    explicit LaserFrame(const std::string & name) : name_(name) {
+    explicit LaserFrame(const std::string &name) : name_(name) {
         TryReadTimestamp();
         GetPoints();
     }
-    void TryReadTimestamp() {
+    double TryReadTimestamp() {
         if (timestamp_ == kInvalidTimeStamp) {
             try {
                 std::string image_stamp_str = boost::filesystem::path(name_).stem().string();
                 timestamp_ = std::stod(image_stamp_str);
+                return timestamp_;
             } catch (const std::exception &e) {
                 throw std::runtime_error("fail to load the timestamp from filename");
             }
@@ -235,6 +236,7 @@ struct LaserFrame {
     PointCloud::Ptr GetPoints() {
         if (scan_points_ == nullptr) {
             try {
+                scan_points_.reset(new PointCloud);
                 pcl::io::loadPCDFile(name_, *scan_points_);
             } catch (...) {
                 throw std::runtime_error("fail to load the scan from filename");

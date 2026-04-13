@@ -14,6 +14,7 @@
 #include "voxel_map.h"
 using namespace faster_lio;
 TEST(Bareg, first) {
+    // lidar config
     LidarConfig cfg;
     cfg.num_beams = 16;
     cfg.vfov_min_deg = -15.0;
@@ -39,17 +40,17 @@ TEST(Bareg, first) {
     auto lidar_scans = sim.scan_sequence(start_time, end_time, true);
 
     // get the stamped poses
-    Trajectory lidar_traj;
+    Trajectory lidar_stamped_poses;
     for (double scan_time = start_time; scan_time < end_time; scan_time += 1. / cfg.rotation_hz) {
         auto lidar_pose = sim.query_lidar_pose(scan_time);
-        lidar_traj.push_back(StampedPose(scan_time, lidar_pose));
+        lidar_stamped_poses.emplace_back(scan_time, lidar_pose);
     }
 
     // add noise in lidar traj
-    for (int i = 0; i < lidar_traj.size(); ++i) {
-        Pose3 pose = lidar_traj[i].pose;
+    for (int i = 0; i < lidar_stamped_poses.size(); ++i) {
+        Pose3 pose = lidar_stamped_poses[i].pose;
         pose.AddNoise(0.01, 0.001);
-        lidar_traj[i].pose = pose.GetIsometry3d();
+        lidar_stamped_poses[i].pose = pose.GetIsometry3d();
     }
 
     // convert the scan
@@ -71,16 +72,16 @@ TEST(Bareg, first) {
     faster_lio::VoxelMap map(config);
     for (int i = 0; i < scans.size(); ++i) {
         PointCloud::Ptr scan_world(new PointCloud);
-        pcl::transformPointCloud(scans[i], *scan_world, lidar_traj[i].pose.matrix());
+        pcl::transformPointCloud(scans[i], *scan_world, lidar_stamped_poses[i].pose.matrix());
         map.AddCloud(scan_world);
     }
 
     // add to problem
     std::vector<Pose3> poses;
-    poses.resize(lidar_traj.size());
-    for (int i = 0; i < lidar_traj.size(); ++i) {
-        poses[i].SetTrans(lidar_traj[i].pose.translation());
-        poses[i].SetQuat(Eigen::Quaterniond(lidar_traj[i].pose.linear()));
+    poses.resize(lidar_stamped_poses.size());
+    for (int i = 0; i < lidar_stamped_poses.size(); ++i) {
+        poses[i].SetTrans(lidar_stamped_poses[i].pose.translation());
+        poses[i].SetQuat(Eigen::Quaterniond(lidar_stamped_poses[i].pose.linear()));
     }
     ceres::Problem problem;
     for (int i = 0; i < poses.size(); ++i) {
@@ -134,6 +135,7 @@ TEST(Bareg, first) {
     sampler.setInputCloud(merged);
     sampler.filter(*merged);
     pcl::io::savePCDFileBinary("./before.pcd", *merged);
+    int before_opt_points_size = merged->points.size();
     std::cout << "before points count: " << merged->points.size() << std::endl;
 
     // solve
@@ -152,5 +154,7 @@ TEST(Bareg, first) {
     sampler.setInputCloud(merged);
     sampler.filter(*merged);
     pcl::io::savePCDFileBinary("./after.pcd", *merged);
+    int after_opt_points_size = merged->points.size();
     std::cout << "after points count: " << merged->points.size() << std::endl;
+    EXPECT_GT(before_opt_points_size, after_opt_points_size);
 }
