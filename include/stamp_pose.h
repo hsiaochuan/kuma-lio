@@ -212,47 +212,4 @@ class TrajectoryInterpolator {
    private:
     Trajectory traj_;
 };
-
-struct LaserFrame {
-    double timestamp_ = kInvalidTimeStamp;
-    Eigen::Isometry3d frame_from_world_;
-    PointCloud::Ptr scan_points_;
-    std::string name_;
-    explicit LaserFrame(const std::string &name) : name_(name) {
-        TryReadTimestamp();
-        GetPoints();
-    }
-    double TryReadTimestamp() {
-        if (timestamp_ == kInvalidTimeStamp) {
-            try {
-                std::string image_stamp_str = boost::filesystem::path(name_).stem().string();
-                timestamp_ = std::stod(image_stamp_str);
-                return timestamp_;
-            } catch (const std::exception &e) {
-                throw std::runtime_error("fail to load the timestamp from filename");
-            }
-        }
-    }
-    PointCloud::Ptr GetPoints() {
-        if (scan_points_ == nullptr) {
-            try {
-                scan_points_.reset(new PointCloud);
-                pcl::io::loadPCDFile(name_, *scan_points_);
-            } catch (...) {
-                throw std::runtime_error("fail to load the scan from filename");
-            }
-        } else
-            return scan_points_;
-    }
-};
-inline PointCloud::Ptr MergePoints(std::vector<LaserFrame> &lidar_frames) {
-    PointCloud::Ptr merged_points(new PointCloud);
-    for (auto &lidar_frame : lidar_frames) {
-        PointCloud::Ptr scan = lidar_frame.GetPoints();
-        PointCloud::Ptr scan_world(new PointCloud);
-        pcl::transformPointCloud(*scan, *scan_world, lidar_frame.frame_from_world_.matrix());
-        *merged_points += *scan_world;
-    }
-    return merged_points;
-}
 }  // namespace faster_lio
