@@ -35,15 +35,13 @@ class PinholeCamera : public CameraBase {
 
     CAMERA_MODEL getType() const override { return PINHOLE; }
 
-    // -- Accessors -----------------------------------------------------------
-    const common::M3D &K() const { return K_; }
-    const common::M3D &Kinv() const { return Kinv_; }
+    const common::M3D K() const { return K_; }
+    const common::M3D Kinv() const { return Kinv_; }
     double focal() const { return K_(0, 0) / 2.0 + K_(1, 1) / 2.0; }
     common::V2D principal_point() const { return {K_(0, 2), K_(1, 2)}; }
 
     // -- Coordinate transforms -----------------------------------------------
     common::V2D cam2ima(const common::V2D &p) const override { return focal() * p + principal_point(); }
-
     common::V2D ima2cam(const common::V2D &p) const override { return (p - principal_point()) / focal(); }
 
     // -- Distortion (none) ---------------------------------------------------

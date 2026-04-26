@@ -198,7 +198,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
 
     scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
-    p_imu_->SetExtrinsic(extrin_il_.GetTrans(), extrin_il_.GetMat3d());
+    p_imu_->SetExtrinsic(extrin_il_.Trans(), extrin_il_.Mat3d());
     p_imu_->SetGyrCov(common::V3D(gyr_cov, gyr_cov, gyr_cov));
     p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
     p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));

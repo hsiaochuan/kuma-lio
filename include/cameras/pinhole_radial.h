@@ -37,7 +37,10 @@ class PinholeRadialCamera : public CameraBase {
                         double       p1 = 0.0,
                         double       p2 = 0.0)
         : CameraBase(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy),
-          params_({k1, k2, k3, p1, p2}) {}
+          params_({k1, k2, k3, p1, p2}) {
+        K_ << fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0;
+        Kinv_ = K_.inverse();
+    }
 
     ~PinholeRadialCamera() override = default;
 
@@ -48,8 +51,10 @@ class PinholeRadialCamera : public CameraBase {
     CAMERA_MODEL getType() const override { return PINHOLE_RADIAL; }
 
     // -- Accessors -----------------------------------------------------------
-    double      focal()          const { return fx_ * 0.5 + fy_ * 0.5; }
-    common::V2D principal_point() const { return {cx_, cy_}; }
+    const common::M3D K() const { return K_; }
+    const common::M3D Kinv() const { return Kinv_; }
+    double focal() const { return K_(0, 0) / 2.0 + K_(1, 1) / 2.0; }
+    common::V2D principal_point() const { return {K_(0, 2), K_(1, 2)}; }
 
     // -- Coordinate transforms -----------------------------------------------
     common::V2D cam2ima(const common::V2D& p) const override {
@@ -103,6 +108,9 @@ class PinholeRadialCamera : public CameraBase {
     }
 
    private:
+    Eigen::Matrix3d K_;
+    Eigen::Matrix3d Kinv_;
+
     double fx_;   ///< Focal length (pixels)
     double fy_;
     double cx_;  ///< Principal-point x

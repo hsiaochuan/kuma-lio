@@ -17,7 +17,7 @@ enum CAMERA_MODEL {
     PINHOLE_FISHEYE = 2,  ///< Pinhole + fisheye polynomial (K1,K2,K3,K4)
     SPHERICAL = 3,        ///< Full spherical / equirectangular
 };
-CAMERA_MODEL ToCameraModel(const std::string& camera_model) {
+inline CAMERA_MODEL ToCameraModel(const std::string& camera_model) {
     if (camera_model == "pinhole") {
         return PINHOLE;
     } else if (camera_model == "pinhole_radial") {
@@ -60,9 +60,9 @@ class CameraBase {
      *        SphericalCamera overrides this entirely.
      */
     virtual common::V2D project(const common::V3D& X, bool ignore_distortion = false) const {
-        if (have_disto() && !ignore_distortion) return cam2ima(add_disto(X.hnormalized()));
-        else
-            return cam2ima(X.hnormalized());
+        if (have_disto() && !ignore_distortion)
+            return cam2ima(add_disto(X.hnormalized()));
+        return cam2ima(X.hnormalized());
     }
 
     bool valid(const common::V2D& uv) const {

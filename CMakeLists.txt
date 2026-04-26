@@ -51,8 +51,11 @@ add_executable(run_mapping_offline app/run_mapping_offline.cc)
 target_link_libraries(run_mapping_offline
         ${PROJECT_NAME} gflags
         )
-add_executable(color_points src/color_points.cpp)
-target_link_libraries(color_points
+add_executable(lidar_camera_calibration
+        lidar_camera_calibration/lidar_camera_calib.cpp
+        lidar_camera_calibration/lidar_camera_calib_impl.cpp
+        lidar_camera_calibration/lidar_processor.cpp)
+target_link_libraries(lidar_camera_calibration
         ${PROJECT_NAME} gflags
 )
 
