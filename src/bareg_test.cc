@@ -48,7 +48,7 @@ TEST(Bareg, first) {
 
     // add noise in lidar traj
     for (int i = 0; i < lidar_stamped_poses.size(); ++i) {
-        Pose3 pose = lidar_stamped_poses[i].pose;
+        Pose3 pose(lidar_stamped_poses[i].pose);
         pose.AddNoise(0.01, 0.001);
         lidar_stamped_poses[i].pose = pose.GetIsometry3d();
     }
@@ -127,7 +127,7 @@ TEST(Bareg, first) {
     PointCloud::Ptr merged(new PointCloud);
     for (int i = 0; i < poses.size(); ++i) {
         PointCloud::Ptr scan_world(new PointCloud);
-        pcl::transformPointCloud(scans[i], *scan_world, poses[i].GetMat4d());
+        pcl::transformPointCloud(scans[i], *scan_world, poses[i].Mat4d());
         *merged += *scan_world;
     }
     pcl::VoxelGrid<PointType> sampler;
@@ -148,7 +148,7 @@ TEST(Bareg, first) {
     merged->clear();
     for (int i = 0; i < poses.size(); ++i) {
         PointCloud::Ptr scan_world(new PointCloud);
-        pcl::transformPointCloud(scans[i], *scan_world, poses[i].GetMat4d());
+        pcl::transformPointCloud(scans[i], *scan_world, poses[i].Mat4d());
         *merged += *scan_world;
     }
     sampler.setInputCloud(merged);

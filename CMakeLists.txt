@@ -58,6 +58,11 @@ add_executable(lidar_camera_calibration
 target_link_libraries(lidar_camera_calibration
         ${PROJECT_NAME} gflags
 )
+add_executable(points_jet ./src/points_jet.cpp)
+target_link_libraries(points_jet ${PROJECT_NAME} gflags)
+
+add_executable(points_merge ./src/points_merge.cpp)
+target_link_libraries(points_merge ${PROJECT_NAME} gflags)
 
 find_package(GTest REQUIRED)
 enable_testing()
