@@ -97,7 +97,9 @@ class TrajectoryGenerator {
         outfile << std::fixed << std::setprecision(9);
         for (const auto &stamped_pose : traj) {
             Eigen::Quaterniond q(stamped_pose.pose.linear());
-            outfile << stamped_pose.time << " " << stamped_pose.pose.translation().x() << " "
+            std::stringstream ss;
+            ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << stamped_pose.time;
+            outfile << ss.str() << " " << stamped_pose.pose.translation().x() << " "
                     << stamped_pose.pose.translation().y() << " " << stamped_pose.pose.translation().z() << " " << q.x()
                     << " " << q.y() << " " << q.z() << " " << q.w() << "\n";
         }

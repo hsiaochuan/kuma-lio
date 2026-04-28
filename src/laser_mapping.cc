@@ -425,7 +425,7 @@ void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) 
     static int img_count = 0;
     if (img_count % image_skip_ == 0) {
         cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        Image image(img_count);
+        Image image;
         image.timestamp_ = msg_in->header.stamp.toSec();
         image.image_data_ = img;
         ImageCallBack(image);
@@ -459,7 +459,7 @@ void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::C
     static int img_count = 0;
     if (img_count % image_skip_ == 0) {
         cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        Image image(img_count);
+        Image image;
         image.timestamp_ = msg_in->header.stamp.toSec();
         image.image_data_ = img;
         ImageCallBack(image);

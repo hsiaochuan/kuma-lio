@@ -17,7 +17,7 @@
 #include "ivox3d/ivox3d.h"
 #include "pointcloud_preprocess.h"
 #include "pose3.h"
-#include "reconstruction.h"
+#include "types.h"
 
 #include <stamp_pose.h>
 namespace faster_lio {

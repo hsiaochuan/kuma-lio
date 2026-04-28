@@ -40,6 +40,7 @@ target_link_libraries(${PROJECT_NAME}
         tbb
         glog
         yaml-cpp
+        sqlite3
         )
 
 include_directories(${PROJECT_NAME} PRIVATE ${PYTHON_INCLUDE_DIRS})
@@ -64,6 +65,8 @@ target_link_libraries(points_jet ${PROJECT_NAME} gflags)
 add_executable(points_merge ./src/points_merge.cpp)
 target_link_libraries(points_merge ${PROJECT_NAME} gflags)
 
+add_executable(lvba ./src/lvba.cpp)
+target_link_libraries(lvba ${PROJECT_NAME} gflags)
 find_package(GTest REQUIRED)
 enable_testing()
 add_executable(camera_test src/camera_test.cpp)
