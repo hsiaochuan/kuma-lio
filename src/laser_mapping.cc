@@ -97,8 +97,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         image_save_en_ = yaml["image_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
         final_map_voxel_size_ = yaml["pcd_save"]["final_map_voxel_size"].as<double>();
-        extrin_il_.Quat() = common::RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
-        extrin_il_.Trans() = common::VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
+        extrin_il_.q_ = common::RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
+        extrin_il_.t_ = common::VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
         ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
 
@@ -138,12 +138,12 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
             }
             if (yaml["cam"]["extrin_R_cl"].IsDefined()) {
                 Pose3 extrin_cl;
-                extrin_cl.Quat() = common::RotationFromArray<double>(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
-                extrin_cl.Trans() = common::VecFromArray<double>(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
+                extrin_cl.q_ = common::RotationFromArray<double>(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
+                extrin_cl.t_ = common::VecFromArray<double>(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
                 extrin_ic_ = extrin_il_ * extrin_cl.GetInverse();
             } else if (yaml["cam"]["extrin_R_ic"].IsDefined()) {
-                extrin_ic_.Quat() = common::RotationFromArray<double>(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
-                extrin_ic_.Trans() = common::VecFromArray<double>(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
+                extrin_ic_.q_ = common::RotationFromArray<double>(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
+                extrin_ic_.t_ = common::VecFromArray<double>(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
             } else
                 throw std::runtime_error("cam extrinsic does not exist");
         } catch (...) {

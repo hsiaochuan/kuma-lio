@@ -100,8 +100,8 @@ class LaserMapping {
     double map_filter_size_ = 0;
 
     /// params
-    Pose3 extrin_il_;
-    Pose3 extrin_ic_;
+    Pose3 extrin_il_ = Pose3::Identity();
+    Pose3 extrin_ic_ = Pose3::Identity();
 
     /// point clouds data
     PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
