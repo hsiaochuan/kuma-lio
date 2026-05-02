@@ -50,7 +50,7 @@ TEST(Bareg, first) {
     for (int i = 0; i < lidar_stamped_poses.size(); ++i) {
         Pose3 pose(lidar_stamped_poses[i].pose);
         pose.AddNoise(0.01, 0.001);
-        lidar_stamped_poses[i].pose = pose.GetIsometry3d();
+        lidar_stamped_poses[i].pose = pose.Isometry3d();
     }
 
     // convert the scan

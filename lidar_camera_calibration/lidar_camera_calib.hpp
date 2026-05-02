@@ -48,7 +48,7 @@ class Calibration {
 
     void CalcDirection(const std::vector<Eigen::Vector2d> &points, Eigen::Vector2d &direction);
 
-    std::shared_ptr<faster_lio::CameraBase> camera_;
+    std::shared_ptr<faster_lio::CamModel> camera_;
     cv::Mat init_extrinsic_;
 
 

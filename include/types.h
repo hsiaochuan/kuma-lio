@@ -13,6 +13,31 @@ const image_t kInvalidImageId = std::numeric_limits<image_t>::max();
 const image_pair_t kInvalidImagePairId = std::numeric_limits<image_pair_t>::max();
 const point2D_t kInvalidPoint2DIdx = std::numeric_limits<point2D_t>::max();
 const point3D_t kInvalidPoint3DId = std::numeric_limits<point3D_t>::max();
+const size_t kMaxNumImages =
+    static_cast<size_t>(std::numeric_limits<int32_t>::max());
+inline bool SwapImagePair(const image_t image_id1, const image_t image_id2) {
+    return image_id1 > image_id2;
+}
+inline image_pair_t ImagePairToPairId(const image_t image_id1,
+                                         const image_t image_id2) {
+    CHECK_LT(image_id1, kMaxNumImages);
+    CHECK_LT(image_id2, kMaxNumImages);
+    if (SwapImagePair(image_id1, image_id2)) {
+        return static_cast<image_pair_t>(kMaxNumImages) * image_id2 + image_id1;
+    } else {
+        return static_cast<image_pair_t>(kMaxNumImages) * image_id1 + image_id2;
+    }
+}
+
+inline std::pair<image_t, image_t> PairIdToImagePair(
+    const image_pair_t pair_id) {
+    const image_t image_id2 = static_cast<image_t>(pair_id % kMaxNumImages);
+    const image_t image_id1 =
+        static_cast<image_t>((pair_id - image_id2) / kMaxNumImages);
+    CHECK_LT(image_id1, kMaxNumImages);
+    CHECK_LT(image_id2, kMaxNumImages);
+    return std::make_pair(image_id1, image_id2);
+}
 
 struct FeatureKeypoint {
     FeatureKeypoint();
@@ -109,27 +134,39 @@ struct TwoViewGeometry {
     // Median triangulation angle.
     double tri_angle = -1;
 };
-
+struct Point2D {
+    Eigen::Vector2d xy = Eigen::Vector2d::Zero();
+    Eigen::Vector2d xy_undistort = Eigen::Vector2d::Zero();
+    double z_prior = std::numeric_limits<double>::quiet_NaN();
+    point3D_t point3D_id = kInvalidPoint3DId;
+};
 struct Image {
     using Ptr = std::shared_ptr<Image>;
     image_t image_id_ = kInvalidImageId;
     camera_t camera_id_ = kInvalidCameraId;
-    CameraBase::Ptr camera_ = nullptr;
-    std::optional<Pose3> cam_from_world_;
-    std::string name_;
-    double timestamp_;
+    Pose3 cam_from_world_ = Pose3::InValid();
+    std::string name_ = std::string();
+    double timestamp_ = std::numeric_limits<double>::quiet_NaN();
     cv::Mat image_data_;
+    std::vector<Point2D> points2D_;
     camera_t CameraId() const {
         CHECK(camera_id_ != kInvalidCameraId);
         return camera_id_;
     }
-    CameraBase::Ptr Camera() {
-        CHECK_NOTNULL(camera_);
-        return camera_;
+
+    std::string Name() const {
+        CHECK(!name_.empty());
+        return name_;
     }
-    Pose3 Pose() const {
-        CHECK(cam_from_world_.has_value());
-        return *cam_from_world_;
+
+    double Timestamp() const {
+        CHECK(std::isfinite(timestamp_));
+        return timestamp_;
+    }
+
+    Pose3 CameraFromWorld() const {
+        CHECK(cam_from_world_.IsValid());
+        return cam_from_world_;
     }
 
     double TryReadTimeFromName() {
@@ -142,4 +179,33 @@ struct Image {
         }
         return image_stamp;
     }
+};
+struct Observation {
+    Observation() = default;
+    Observation(const image_t &image_id, const point2D_t& point2D_idx): image_id(image_id), point2D_idx(point2D_idx) {}
+    // The image in which the track element is observed.
+    image_t image_id;
+    // The point in the image that the track element is observed.
+    point2D_t point2D_idx;
+    bool operator==(const Observation& other) const {
+        return (image_id == other.image_id && point2D_idx == other.point2D_idx);
+    }
+};
+inline size_t ObservationToId(const Observation& obs) {
+    return static_cast<size_t>(obs.image_id) << 32 | static_cast<size_t>(obs.point2D_idx);
+}
+inline Observation IdToObservation(size_t id) {
+    return Observation(static_cast<image_t>(id >> 32), static_cast<point2D_t>(id & 0xffffffff));
+}
+namespace std {
+template <>
+struct hash<Observation> {
+    size_t operator()(const Observation& obs) const {
+        return ObservationToId(obs);
+    }
+};
+}
+struct Point3D {
+    Eigen::Vector3d xyz = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+    std::vector<Observation> track;
 };

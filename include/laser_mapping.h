@@ -124,7 +124,7 @@ class LaserMapping {
     double camera_time_offset_ = 0.;
     int image_skip_ = 3;
 
-    std::shared_ptr<CameraBase> camera_;
+    std::shared_ptr<CamModel> camera_;
 
     /// ros pub and sub stuffs
     ros::Subscriber sub_pcl_;

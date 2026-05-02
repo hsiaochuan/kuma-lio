@@ -25,16 +25,13 @@ namespace faster_lio {
  *
  * Parameters: none (empty vector).
  */
-class SphericalCamera : public CameraBase {
+class SphericalCamera : public CamModel {
    public:
     explicit SphericalCamera(unsigned int w = 0, unsigned int h = 0)
-        : CameraBase(w, h) {}
+        : CamModel(w, h) {
+    }
 
     ~SphericalCamera() override = default;
-
-    std::unique_ptr<CameraBase> clone() const override {
-        return std::make_unique<SphericalCamera>(*this);
-    }
 
     CAMERA_MODEL getType() const override { return SPHERICAL; }
 
@@ -63,7 +60,6 @@ class SphericalCamera : public CameraBase {
     common::V2D add_disto   (const common::V2D& p) const override { return p; }
     common::V2D remove_disto(const common::V2D& p) const override { return p; }
     common::V2D get_ud_pixel(const common::V2D& p) const override { return p; }
-    common::V2D get_d_pixel (const common::V2D& p) const override { return p; }
 
     // -- Parameters ----------------------------------------------------------
     std::vector<double> getParams() const override { return {}; }

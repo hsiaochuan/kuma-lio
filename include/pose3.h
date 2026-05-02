@@ -5,40 +5,35 @@ namespace faster_lio {
 
 struct Pose3 {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
-    Pose3() noexcept
-        : q_(Eigen::Quaterniond::Identity()), t_(Eigen::Vector3d::Zero()) {}
-
-    explicit Pose3(const Eigen::Matrix3d& rot, const Eigen::Vector3d& t)
-        : q_(rot), t_(t) {
-        q_.normalize();
+    static Pose3 Identity() {
+        return Pose3(Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero());
+    }
+    static Pose3 InValid() {
+        Pose3 invalid_pose;
+        invalid_pose.t_ = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+        invalid_pose.q_ = Eigen::Quaterniond(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+                                            std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN());
+        return invalid_pose;
+    }
+    bool IsValid() const {
+        return !t_.hasNaN() && !q_.coeffs().hasNaN();
+    }
+    Pose3() {
+        t_ = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+        q_ = Eigen::Quaterniond(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+                                std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN());
     }
 
-    explicit Pose3(const Eigen::Quaterniond& q, const Eigen::Vector3d& t)
-        : q_(q), t_(t) {
-        q_.normalize();
-    }
-
-    explicit Pose3(const Eigen::Isometry3d& iso)
-        : q_(iso.linear()), t_(iso.translation()) {
-        q_.normalize();
-    }
-
-    explicit Pose3(const Eigen::Matrix4d& mat44)
-        : q_(mat44.block<3, 3>(0, 0)), t_(mat44.block<3, 1>(0, 3)) {
+    explicit Pose3(const Eigen::Matrix3d& rot, const Eigen::Vector3d& t) : q_(rot), t_(t) { q_.normalize(); }
+    explicit Pose3(const Eigen::Quaterniond& q, const Eigen::Vector3d& t) : q_(q), t_(t) { q_.normalize(); }
+    explicit Pose3(const Eigen::Isometry3d& iso) : q_(iso.linear()), t_(iso.translation()) { q_.normalize(); }
+    explicit Pose3(const Eigen::Matrix4d& mat44) : q_(mat44.block<3, 3>(0, 0)), t_(mat44.block<3, 1>(0, 3)) {
         q_.normalize();
     }
 
     Pose3 GetInverse() const {
         const Eigen::Quaterniond q_inv = q_.conjugate();
         return Pose3(q_inv, -(q_inv * t_));
-    }
-
-    Eigen::Isometry3d GetIsometry3d() const {
-        Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
-        iso.linear() = q_.toRotationMatrix();
-        iso.translation() = t_;
-        return iso;
     }
 
     Pose3& operator*=(const Pose3& other) {
@@ -57,9 +52,7 @@ struct Pose3 {
         return out;
     }
 
-    Eigen::Vector3d operator*(const Eigen::Vector3d& vec3) const {
-        return q_ * vec3 + t_;
-    }
+    Eigen::Vector3d operator*(const Eigen::Vector3d& vec3) const { return q_ * vec3 + t_; }
 
     Eigen::Vector3d Trans() const { return t_; }
     Eigen::Quaterniond Quat() const { return q_; }
@@ -69,6 +62,18 @@ struct Pose3 {
         mat4x4.block<3, 3>(0, 0) = q_.toRotationMatrix();
         mat4x4.block<3, 1>(0, 3) = t_;
         return mat4x4;
+    }
+    Eigen::Matrix<double, 3, 4> Mat34() const {
+        Eigen::Matrix<double, 3, 4> mat34;
+        mat34.block<3, 3>(0, 0) = q_.toRotationMatrix();
+        mat34.block<3, 1>(0, 3) = t_;
+        return mat34;
+    }
+    Eigen::Isometry3d Isometry3d() const {
+        Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
+        iso.linear() = q_.toRotationMatrix();
+        iso.translation() = t_;
+        return iso;
     }
 
     double* QuatData() { return q_.coeffs().data(); }
@@ -80,7 +85,6 @@ struct Pose3 {
     }
 
     void SetTrans(const Eigen::Vector3d& t) noexcept { t_ = t; }
-
 
     static Pose3 Interpolate(const Pose3& a, const Pose3& b, double ratio) {
         ratio = std::clamp(ratio, 0.0, 1.0);
@@ -109,7 +113,6 @@ struct Pose3 {
         q_.normalize();
     }
 
-private:
     Eigen::Quaterniond q_;
     Eigen::Vector3d t_;
 };

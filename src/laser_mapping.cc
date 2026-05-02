@@ -857,7 +857,7 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
 
     Trajectory cam_traj;
     for (auto stamp_pose : trajectory_) {
-        stamp_pose.pose = stamp_pose.pose * extrin_ic_.GetIsometry3d();
+        stamp_pose.pose = stamp_pose.pose * extrin_ic_.Isometry3d();
         cam_traj.emplace_back(stamp_pose);
     }
     std::string cam_traj_file = fs::path(traj_file).parent_path().string() + "/cam_traj_log.txt";

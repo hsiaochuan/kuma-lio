@@ -23,7 +23,7 @@ namespace faster_lio {
  *
  * Parameters: [ f, cx, cy, K1, K2, K3, P1, P2 ]
  */
-class PinholeRadialCamera : public CameraBase {
+class PinholeRadialCamera : public CamModel {
    public:
     PinholeRadialCamera(unsigned int w  = 0,
                         unsigned int h  = 0,
@@ -36,7 +36,7 @@ class PinholeRadialCamera : public CameraBase {
                         double       k3 = 0.0,
                         double       p1 = 0.0,
                         double       p2 = 0.0)
-        : CameraBase(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy),
+        : CamModel(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy),
           params_({k1, k2, k3, p1, p2}) {
         K_ << fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0;
         Kinv_ = K_.inverse();
@@ -44,9 +44,6 @@ class PinholeRadialCamera : public CameraBase {
 
     ~PinholeRadialCamera() override = default;
 
-    std::unique_ptr<CameraBase> clone() const override {
-        return std::make_unique<PinholeRadialCamera>(*this);
-    }
 
     CAMERA_MODEL getType() const override { return PINHOLE_RADIAL; }
 
@@ -87,9 +84,6 @@ class PinholeRadialCamera : public CameraBase {
 
     common::V2D get_ud_pixel(const common::V2D& p) const override {
         return cam2ima(remove_disto(ima2cam(p)));
-    }
-    common::V2D get_d_pixel(const common::V2D& p) const override {
-        return cam2ima(add_disto(ima2cam(p)));
     }
 
     // -- Parameters ----------------------------------------------------------

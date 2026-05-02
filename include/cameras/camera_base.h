@@ -31,22 +31,32 @@ inline CAMERA_MODEL ToCameraModel(const std::string& camera_model) {
         return PINHOLE;
     }
 }
+inline std::string CameraModelToString(CAMERA_MODEL camera_model) {
+    switch (camera_model) {
+        case PINHOLE:
+            return "pinhole";
+        case PINHOLE_RADIAL:
+            return "pinhole_radial";
+        case PINHOLE_FISHEYE:
+            return "pinhole_fisheye";
+        case SPHERICAL:
+            return "spherical";
+        default:
+            throw std::runtime_error("Unknown camera type");
+    }
+}
 /**
  * @brief Pure abstract base class for all camera models.
  *
  * Every concrete camera derives directly from this class (flat hierarchy).
  */
-class CameraBase {
+class CamModel {
    public:
-    using Ptr = std::shared_ptr<CameraBase>;
-    explicit CameraBase(unsigned int w = 0, unsigned int h = 0) : w_(w), h_(h) {}
-    virtual ~CameraBase() = default;
-
-    // -- Identity ------------------------------------------------------------
+    using Ptr = std::shared_ptr<CamModel>;
+    explicit CamModel(unsigned int w = 0, unsigned int h = 0) : w_(w), h_(h) {}
+    virtual ~CamModel() = default;
     virtual CAMERA_MODEL getType() const = 0;
 
-    /// Polymorphic deep copy
-    virtual std::unique_ptr<CameraBase> clone() const = 0;
 
     // -- Image dimensions ----------------------------------------------------
     unsigned int w() const { return w_; }
@@ -54,21 +64,17 @@ class CameraBase {
 
     // -- Projection ----------------------------------------------------------
 
-    /**
-     * @brief Project a 3-D point (camera frame) onto the image plane.
-     *        Default: cam2ima( add_disto( X.hnormalized() ) )
-     *        SphericalCamera overrides this entirely.
-     */
-    virtual common::V2D project(const common::V3D& X, bool ignore_distortion = false) const {
-        if (have_disto() && !ignore_distortion)
+    virtual common::V2D project(const common::V3D& X, bool ignore_distort = false) const {
+        if (have_disto() && !ignore_distort)
             return cam2ima(add_disto(X.hnormalized()));
         return cam2ima(X.hnormalized());
     }
 
-    bool valid(const common::V2D& uv) const {
+    bool valid(const Eigen::Vector2i & uv) const {
         if (uv.x() < 0 || uv.x() >= w() || uv.y() < 0 || uv.y() >= h()) return false;
         return true;
     }
+    bool positive_z(const common::V3D& X) const { return X.z() > 0; }
 
     /// Residual: observed pixel minus projected pixel
     common::V2D residual(const common::V3D& X, const common::V2D& x, bool ignore_distortion = false) const {
@@ -84,7 +90,7 @@ class CameraBase {
     virtual common::V2D add_disto(const common::V2D& p) const = 0;
     virtual common::V2D remove_disto(const common::V2D& p) const = 0;
     virtual common::V2D get_ud_pixel(const common::V2D& p) const = 0;
-    virtual common::V2D get_d_pixel(const common::V2D& p) const = 0;
+
 
     // -- Parameters (pure virtual) -------------------------------------------
     virtual std::vector<double> getParams() const = 0;

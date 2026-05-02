@@ -228,7 +228,7 @@ class SLAMTestRunner:
                    output_dir: str, run_mode: RunMode) -> TestResult:
         name = Path(bag_file).stem
         os.makedirs(os.path.join(output_dir, "maps"), exist_ok=True)
-
+        shutil.copy(config, os.path.join(output_dir, "config.yaml"))
         result = TestResult(
             dataset="",
             bag_name=name,

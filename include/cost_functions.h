@@ -58,5 +58,26 @@ struct PointPlaneCostFunctor {
     Eigen::Vector3d point;
     double weight;
 };
+
+struct PointOnPlaneCostFunctor {
+   public:
+    PointOnPlaneCostFunctor(const Eigen::Vector3d& normal, const Eigen::Vector3d& center, const double& weight)
+        : normal_(normal), center_(center), weight(weight) {}
+    template <typename T>
+    bool operator()(const T* const xyz, T* res) const {
+        ConstEigenVector3Map<T> p(xyz);
+        res[0] = T(weight) * normal_.cast<T>().dot(p - center_.cast<T>());
+        return true;
+    }
+    static ceres::CostFunction* Create(const Eigen::Vector3d& normal, const Eigen::Vector3d& center, const double& weight) {
+        return new ceres::AutoDiffCostFunction<PointOnPlaneCostFunctor, 1, 3>(
+            new PointOnPlaneCostFunctor(normal, center, weight));
+    }
+
+   private:
+    Eigen::Vector3d normal_;
+    Eigen::Vector3d center_;
+    double weight;
+};
 }  // namespace faster_lio
 #endif  // FASTER_LIO_COST_FUNCTIONS_H
