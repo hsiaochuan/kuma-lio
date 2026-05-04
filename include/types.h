@@ -1,25 +1,21 @@
 #pragma once
-#include "cameras/cameras.h"
 #include <boost/filesystem.hpp>
+#include "cameras/cameras.h"
 namespace fs = boost::filesystem;
 using namespace faster_lio;
 typedef uint32_t camera_t;
 typedef uint32_t image_t;
 typedef uint64_t image_pair_t;
-typedef uint32_t point2D_t;
-typedef uint64_t point3D_t;
+typedef uint32_t point2d_t;
+typedef uint64_t landmark_t;
 const camera_t kInvalidCameraId = std::numeric_limits<camera_t>::max();
 const image_t kInvalidImageId = std::numeric_limits<image_t>::max();
 const image_pair_t kInvalidImagePairId = std::numeric_limits<image_pair_t>::max();
-const point2D_t kInvalidPoint2DIdx = std::numeric_limits<point2D_t>::max();
-const point3D_t kInvalidPoint3DId = std::numeric_limits<point3D_t>::max();
-const size_t kMaxNumImages =
-    static_cast<size_t>(std::numeric_limits<int32_t>::max());
-inline bool SwapImagePair(const image_t image_id1, const image_t image_id2) {
-    return image_id1 > image_id2;
-}
-inline image_pair_t ImagePairToPairId(const image_t image_id1,
-                                         const image_t image_id2) {
+const point2d_t kInvalidPoint2DIdx = std::numeric_limits<point2d_t>::max();
+const landmark_t kInvalidPoint3DId = std::numeric_limits<landmark_t>::max();
+const size_t kMaxNumImages = static_cast<size_t>(std::numeric_limits<int32_t>::max());
+inline bool SwapImagePair(const image_t image_id1, const image_t image_id2) { return image_id1 > image_id2; }
+inline image_pair_t ImagePairToPairId(const image_t image_id1, const image_t image_id2) {
     CHECK_LT(image_id1, kMaxNumImages);
     CHECK_LT(image_id2, kMaxNumImages);
     if (SwapImagePair(image_id1, image_id2)) {
@@ -29,11 +25,9 @@ inline image_pair_t ImagePairToPairId(const image_t image_id1,
     }
 }
 
-inline std::pair<image_t, image_t> PairIdToImagePair(
-    const image_pair_t pair_id) {
+inline std::pair<image_t, image_t> PairIdToImagePair(const image_pair_t pair_id) {
     const image_t image_id2 = static_cast<image_t>(pair_id % kMaxNumImages);
-    const image_t image_id1 =
-        static_cast<image_t>((pair_id - image_id2) / kMaxNumImages);
+    const image_t image_id1 = static_cast<image_t>((pair_id - image_id2) / kMaxNumImages);
     CHECK_LT(image_id1, kMaxNumImages);
     CHECK_LT(image_id2, kMaxNumImages);
     return std::make_pair(image_id1, image_id2);
@@ -80,14 +74,14 @@ typedef Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Fe
 
 struct FeatureMatch {
     FeatureMatch() : point2D_idx1(kInvalidPoint2DIdx), point2D_idx2(kInvalidPoint2DIdx) {}
-    FeatureMatch(const point2D_t point2D_idx1, const point2D_t point2D_idx2)
+    FeatureMatch(const point2d_t point2D_idx1, const point2d_t point2D_idx2)
         : point2D_idx1(point2D_idx1), point2D_idx2(point2D_idx2) {}
 
     // Feature index in first image.
-    point2D_t point2D_idx1 = kInvalidPoint2DIdx;
+    point2d_t point2D_idx1 = kInvalidPoint2DIdx;
 
     // Feature index in second image.
-    point2D_t point2D_idx2 = kInvalidPoint2DIdx;
+    point2d_t point2D_idx2 = kInvalidPoint2DIdx;
 };
 
 typedef std::vector<FeatureMatch> FeatureMatches;
@@ -134,12 +128,7 @@ struct TwoViewGeometry {
     // Median triangulation angle.
     double tri_angle = -1;
 };
-struct Point2D {
-    Eigen::Vector2d xy = Eigen::Vector2d::Zero();
-    Eigen::Vector2d xy_undistort = Eigen::Vector2d::Zero();
-    double z_prior = std::numeric_limits<double>::quiet_NaN();
-    point3D_t point3D_id = kInvalidPoint3DId;
-};
+
 struct Image {
     using Ptr = std::shared_ptr<Image>;
     image_t image_id_ = kInvalidImageId;
@@ -148,7 +137,9 @@ struct Image {
     std::string name_ = std::string();
     double timestamp_ = std::numeric_limits<double>::quiet_NaN();
     cv::Mat image_data_;
-    std::vector<Point2D> points2D_;
+
+    std::vector<Eigen::Vector2d> points_;
+    std::vector<landmark_t> landmark_ids_;
     camera_t CameraId() const {
         CHECK(camera_id_ != kInvalidCameraId);
         return camera_id_;
@@ -182,30 +173,28 @@ struct Image {
 };
 struct Observation {
     Observation() = default;
-    Observation(const image_t &image_id, const point2D_t& point2D_idx): image_id(image_id), point2D_idx(point2D_idx) {}
+    Observation(const image_t& image_id, const point2d_t& point2d_id) : image_id(image_id), point2d_id(point2d_id) {}
     // The image in which the track element is observed.
     image_t image_id;
     // The point in the image that the track element is observed.
-    point2D_t point2D_idx;
+    point2d_t point2d_id;
     bool operator==(const Observation& other) const {
-        return (image_id == other.image_id && point2D_idx == other.point2D_idx);
+        return (image_id == other.image_id && point2d_id == other.point2d_id);
     }
 };
 inline size_t ObservationToId(const Observation& obs) {
-    return static_cast<size_t>(obs.image_id) << 32 | static_cast<size_t>(obs.point2D_idx);
+    return static_cast<size_t>(obs.image_id) << 32 | static_cast<size_t>(obs.point2d_id);
 }
 inline Observation IdToObservation(size_t id) {
-    return Observation(static_cast<image_t>(id >> 32), static_cast<point2D_t>(id & 0xffffffff));
+    return Observation(static_cast<image_t>(id >> 32), static_cast<point2d_t>(id & 0xffffffff));
 }
 namespace std {
 template <>
 struct hash<Observation> {
-    size_t operator()(const Observation& obs) const {
-        return ObservationToId(obs);
-    }
+    size_t operator()(const Observation& obs) const { return ObservationToId(obs); }
 };
-}
-struct Point3D {
+}  // namespace std
+struct Landmark {
     Eigen::Vector3d xyz = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
     std::vector<Observation> track;
 };

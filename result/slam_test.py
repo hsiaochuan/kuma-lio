@@ -15,6 +15,8 @@ from typing import List, Dict, Tuple
 from pathlib import Path
 from enum import Enum
 import shutil
+import colmap
+
 
 # ──────────────────────────────────────────────
 # Data Structures
@@ -46,7 +48,6 @@ class DatasetConfig:
     config: str  # single config (BotanicGarden)
     config_map: Dict[str, str] = field(default_factory=dict)  # keyword → config (MCD_VIRAL)
     run_mode: RunMode = RunMode.OFFLINE
-    enabled: bool = True
 
     def resolve_config(self, bag_name: str) -> str:
         """Select configuration file based on bag name"""
@@ -58,15 +59,10 @@ class DatasetConfig:
 
 @dataclass
 class TestResult:
-    """Single bag test result"""
-    dataset: str
     bag_name: str
     bag_file: str
-    config_file: str
     points_count: int = 0
-    success: bool = True
     duration_sec: float = 0.0
-    output_dir: str = ""
 
 
 @dataclass
@@ -78,7 +74,6 @@ class SuiteResult:
     start_time: str
     end_time: str = ""
     results: List[TestResult] = field(default_factory=list)
-    build_success: bool = True
 
 
 # ──────────────────────────────────────────────
@@ -140,6 +135,10 @@ class SLAMTestRunner:
             self,
             offline_app: str = "../build/run_mapping_offline",
             online_app: str = "../build/run_mapping_online",
+            points_post_app: str = "../build/points_jet",
+            lvba_app: str = "../build/lvba",
+            points_color_app: str = "../build/points_color",
+
             build_dir: str = "../build",
             build_jobs: int = 4,
             output_root: str = "./test_results",
@@ -148,6 +147,10 @@ class SLAMTestRunner:
     ):
         self.offline_app = offline_app
         self.online_app = online_app
+        self.points_post_app = points_post_app
+        self.lvba_app = lvba_app
+        self.points_color_app = points_color_app
+
         self.build_dir = build_dir
         self.build_jobs = build_jobs
         self.output_root = output_root
@@ -193,6 +196,28 @@ class SLAMTestRunner:
             print(f"  run_mapping_offline exited with code {e.returncode}")
             return False
 
+    def run_post_process(self, output_dir: str):
+        subprocess.run([
+            self.points_post_app,
+            '--input', os.path.join(output_dir, "final.pcd"),
+            '--output', os.path.join(output_dir, "final_post.pcd"),
+        ], check=True)
+    def run_points_color(self, output_dir: str):
+        subprocess.run([
+            self.points_color_app,
+            '--lidar_points_fname', os.path.join(output_dir, "final_post.pcd"),
+            '--color_points_fname', os.path.join(output_dir, "final_post_color.pcd"),
+            '--images_dir', os.path.join(output_dir, "images"),
+            '--colmap_result', os.path.join(output_dir, "colmap_result"),
+        ], check=True)
+    def run_lvba(self, output_dir: str):
+        subprocess.run([
+            self.lvba_app,
+            '--cam_trajectory', os.path.join(output_dir, "cam_traj_log.txt"),
+            '--lidar_points_fname', os.path.join(output_dir, "final.pcd"),
+            '--database', os.path.join(output_dir, "database.db"),
+            '--colmap_output', os.path.join(output_dir, "colmap_result"),
+        ])
     def _run_online(self, bag_file: str, config: str, output_dir: str) -> bool:
         roscore = rviz = online_proc = None
         try:
@@ -224,37 +249,37 @@ class SLAMTestRunner:
                 if proc:
                     proc.terminate()
 
-    def run_single(self, bag_file: str, config: str,
+    def run_single(self,
+                   bag_file: str,
+                   config: str,
                    output_dir: str, run_mode: RunMode) -> TestResult:
         name = Path(bag_file).stem
-        os.makedirs(os.path.join(output_dir, "maps"), exist_ok=True)
-        shutil.copy(config, os.path.join(output_dir, "config.yaml"))
         result = TestResult(
-            dataset="",
             bag_name=name,
             bag_file=bag_file,
-            config_file=config,
-            output_dir=output_dir,
         )
-
         print(f"{name}  [{run_mode}]")
+
+        # copy config
+        shutil.copy(config, os.path.join(output_dir, "config.yaml"))
+
+        # pipeline
         start_time = time.time()
-
         if run_mode == RunMode.OFFLINE:
-            ok = self._run_offline(bag_file, config, output_dir)
+            self._run_offline(bag_file, config, output_dir)
         else:
-            ok = self._run_online(bag_file, config, output_dir)
+            self._run_online(bag_file, config, output_dir)
+        self.run_post_process(output_dir)
+        if os.path.exists(os.path.join(output_dir, "images")):
+            colmap.run_colmap(output_dir, extract_match=True, mapping=False)
+            self.run_lvba(output_dir)
+            self.run_points_color(output_dir)
+        end_time = time.time()
 
-        result.duration_sec = round(time.time() - start_time, 1)
-        result.success = ok
 
-        maps_dir = os.path.join(output_dir, "maps")
-        result.points_count = count_points_in_dir(maps_dir)
+        result.duration_sec = round(end_time - start_time, 1)
+        result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
 
-        status = "OK" if ok else "Fail"
-        print(
-            f"{status} points={result.points_count:,}  time={result.duration_sec}s"
-        )
         return result
 
     # ── Dataset run ────────────────────────────
@@ -282,6 +307,7 @@ class SLAMTestRunner:
             if os.path.exists(output_dir):
                 print(f"Result dir {output_dir} already exists, remove it")
                 shutil.rmtree(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
             result = self.run_single(bag_file, config, output_dir, dataset.run_mode)
             result.dataset = dataset.name
             suite.results.append(result)
@@ -303,7 +329,6 @@ class SLAMTestRunner:
             f.write(f"GIT_COMMIT  = \"{suite.git_commit}\"\n")
             f.write(f"START_TIME  = {suite.start_time}\n")
             f.write(f"END_TIME    = {suite.end_time}\n")
-            f.write(f"BUILD_OK    = {suite.build_success}\n\n")
             f.write("-" * 65 + "\n")
             for r in suite.results:
                 f.write(
@@ -321,50 +346,13 @@ class SLAMTestRunner:
             print("Build failed, aborting tests")
             return []
 
-        suites = []
-        for ds in datasets:
-            if not ds.enabled:
-                print(f"  Skipping dataset: {ds.name}")
-                continue
-            suite_result = self.run_dataset(ds)
-            suite_result.build_success = build_ok
+        suite_results = []
+        for dataset in datasets:
+            suite_result = self.run_dataset(dataset)
             self.write_txt_report(suite_result)
-            suites.append(suite_result)
+            suite_results.append(suite_result)
 
-        return suites
-
-
-# ──────────────────────────────────────────────
-# YAML Configuration Loading
-# ──────────────────────────────────────────────
-
-def load_config(config_path: str) -> Tuple[SLAMTestRunner, List[DatasetConfig]]:
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
-
-    runner_cfg = cfg.get("runner", {})
-    runner = SLAMTestRunner(
-        offline_app=runner_cfg.get("offline_app", "../build/run_mapping_offline"),
-        online_app=runner_cfg.get("online_app", "../build/run_mapping_online"),
-        build_dir=runner_cfg.get("build_dir", "../build"),
-        build_jobs=runner_cfg.get("build_jobs", 4),
-        output_root=runner_cfg.get("output_root", "./test_results"),
-        rviz_config=runner_cfg.get("rviz_config", "../rviz_cfg/loam_livox.rviz"),
-        online_wait=runner_cfg.get("online_wait", 5),
-    )
-
-    datasets = []
-    for ds_cfg in cfg.get("datasets", []):
-        datasets.append(DatasetConfig(
-            name=ds_cfg["name"],
-            bag_files=ds_cfg["bag_files"],
-            config=ds_cfg.get("config", ""),
-            config_map=ds_cfg.get("config_map", {}),
-            run_mode=RunMode(ds_cfg.get("run_mode", "offline")),
-            enabled=ds_cfg.get("enabled", True),
-        ))
-
-    return runner, datasets
+        return suite_results
 
 
 # ──────────────────────────────────────────────
@@ -373,7 +361,8 @@ def load_config(config_path: str) -> Tuple[SLAMTestRunner, List[DatasetConfig]]:
 
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
-    parser.add_argument("--datasets", nargs="+", default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
+    parser.add_argument("--datasets", nargs="+",
+                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
                         help="Run only specified datasets (by name)")
     args = parser.parse_args()
 

@@ -11,14 +11,13 @@
 #include <condition_variable>
 #include <thread>
 
+#include "global_optimizor.h"
 #include <cameras/cameras.h>
-#include <opencv2/opencv.hpp>
 #include "imu_processing.hpp"
 #include "ivox3d/ivox3d.h"
 #include "pointcloud_preprocess.h"
 #include "pose3.h"
 #include "types.h"
-
 #include <stamp_pose.h>
 namespace faster_lio {
 
@@ -63,19 +62,13 @@ class LaserMapping {
     void ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data);
 
     ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
-    void PublishPath(const ros::Publisher pub_path);
-    void PublishOdometry(const ros::Publisher &pub_odom_aft_mapped);
-    void PublishFrameWorld();
-    void PublishFrameBody(const ros::Publisher &pub_laser_cloud_body);
-    void PublishFrameEffectWorld(const ros::Publisher &pub_laser_cloud_effect_world);
+    void PublishPath();
+    void PublishOdometry();
+    void PublishFrameWorld() const;
+    void PublishFrameEffectWorld();
     void Savetrajectory(const std::string &traj_file);
 
     void Finish();
-
-   private:
-    template <typename T>
-    void SetPosestamp(T &out);
-
     void PointBodyToWorld(PointType const *pi, PointType *const po);
     void PointBodyToWorld(const common::V3F &pi, PointType *const po);
     void PointBodyLidarToIMU(PointType const *const pi, PointType *const po);
@@ -93,6 +86,7 @@ class LaserMapping {
     std::shared_ptr<IVoxType> ivox_ = nullptr;                    // localmap in ivox
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
     std::shared_ptr<ImuProcess> p_imu_ = nullptr;                 // imu process
+    std::shared_ptr<GlobalOptimizor> mapper = nullptr;
 
     /// local map related
     float det_range_ = 300.0f;
@@ -131,7 +125,6 @@ class LaserMapping {
     ros::Subscriber sub_imu_;
     ros::Subscriber sub_img_;
     ros::Publisher pub_laser_cloud_world_;
-    ros::Publisher pub_laser_cloud_body_;
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
@@ -149,12 +142,10 @@ class LaserMapping {
     double last_timestamp_lidar_ = 0;
     double last_timestamp_imu_ = -1.0;
     double last_timestamp_camera_ = 0.0;
-    /// options
     double scan_interval_ = 0.1;
     double lidar_end_time_ = 0;
     float esti_plane_thr = 0.1;
     int max_iteraions = 4;
-    /// statistics and flags ///
     bool if_local_map_init_ = true;
     int effect_feat_num_ = 0;
 
@@ -165,21 +156,13 @@ class LaserMapping {
     bool extrinsic_est_en_ = true;
 
     /////////////////////////  debug show / save /////////////////////////////////////////////////////////
-    bool run_in_offline_ = false;
-    bool path_pub_en_ = true;
-    bool scan_pub_en_ = false;
-    bool dense_pub_en_ = false;
-    bool scan_body_pub_en_ = false;
-    bool scan_effect_pub_en_ = false;
     bool pcd_save_en_ = false;
     bool image_save_en_ = false;
     int pcd_save_interval_ = -1;
-    double final_map_voxel_size_ = 0.1;
     int pcd_idx = 0;
     bool path_save_en_ = false;
 
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
-    PointCloud::Ptr final_map_{new PointCloud()};
     nav_msgs::Path path_;
     Trajectory trajectory_;
    public:

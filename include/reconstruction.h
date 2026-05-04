@@ -2,6 +2,7 @@
 #include <sqlite3.h>
 #include <algorithm>
 #include <boost/filesystem.hpp>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -37,7 +38,7 @@ inline int SQLite3CallHelper(int result_code, const std::string& filename, int l
 struct Database {
     typedef Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> FeatureKeypointsBlob;
     typedef Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> FeatureDescriptorsBlob;
-    typedef Eigen::Matrix<point2D_t, Eigen::Dynamic, 2, Eigen::RowMajor> FeatureMatchesBlob;
+    typedef Eigen::Matrix<point2d_t, Eigen::Dynamic, 2, Eigen::RowMajor> FeatureMatchesBlob;
 
     sqlite3* database_ = nullptr;
     std::vector<sqlite3_stmt*> sql_stmts_;
@@ -443,11 +444,10 @@ struct Reconstruction {
             images_[image.image_id_] = std::make_shared<struct Image>(image);
             Image::Ptr img = images_[image.image_id_];
             FeatureKeypoints keypoints = db.ReadKeypoints(image.image_id_);
-            img->points2D_.resize(keypoints.size());
-            img->camera_id_ = 0;
+            img->points_.resize(keypoints.size());
             for (size_t i = 0; i < keypoints.size(); ++i) {
-                img->points2D_[i].xy.x() = keypoints[i].x;
-                img->points2D_[i].xy.y() = keypoints[i].y;
+                img->points_[i].x() = keypoints[i].x;
+                img->points_[i].y() = keypoints[i].y;
             }
             all_keypoints_count += keypoints.size();
         }
@@ -484,8 +484,8 @@ struct Reconstruction {
         std::string line;
         std::string item;
 
-        std::vector<Eigen::Vector2d> points2D;
-        std::vector<point3D_t> point3D_ids;
+        std::vector<Eigen::Vector2d> points;
+        std::vector<landmark_t> landmark_ids;
 
         while (std::getline(stream, line)) {
             StringTrim(&line);
@@ -544,8 +544,8 @@ struct Reconstruction {
             StringTrim(&line);
             std::stringstream line_stream2(line);
 
-            points2D.clear();
-            point3D_ids.clear();
+            points.clear();
+            landmark_ids.clear();
 
             if (!line.empty()) {
                 while (!line_stream2.eof()) {
@@ -557,30 +557,117 @@ struct Reconstruction {
                     std::getline(line_stream2, item, ' ');
                     point.y() = std::stold(item);
 
-                    points2D.push_back(point);
+                    points.push_back(point);
 
                     std::getline(line_stream2, item, ' ');
                     if (item == "-1") {
-                        point3D_ids.push_back(kInvalidPoint3DId);
+                        landmark_ids.push_back(kInvalidPoint3DId);
                     } else {
-                        point3D_ids.push_back(std::stoll(item));
+                        landmark_ids.push_back(std::stoll(item));
                     }
                 }
             }
 
-            image->points2D_.resize(points2D.size());
-            for (int i = 0; i < points2D.size(); ++i) {
-                image->points2D_[i].xy = points2D[i];
-            }
-
-            for (point2D_t point2D_idx = 0; point2D_idx < image->points2D_.size(); ++point2D_idx) {
-                if (point3D_ids[point2D_idx] != kInvalidPoint3DId) {
-                    image->points2D_.at(point2D_idx).point3D_id = point3D_ids[point2D_idx];
-                }
-            }
+            image->points_ = points;
+            image->landmark_ids_ = landmark_ids;
 
             images_[image_id] = image;
         }  // for image
+    }
+
+    void ReadCamerasText(std::istream& stream) {
+        CHECK(stream.good());
+
+        std::string line;
+        while (std::getline(stream, line)) {
+            StringTrim(&line);
+            if (line.empty() || line[0] == '#') {
+                continue;
+            }
+
+            std::stringstream ss(line);
+            unsigned long cam_id_ul = 0;
+            std::string model;
+            size_t width = 0, height = 0;
+            if (!(ss >> cam_id_ul)) {
+                continue;
+            }
+            if (!(ss >> model)) {
+                continue;
+            }
+            if (!(ss >> width)) {
+                continue;
+            }
+            if (!(ss >> height)) {
+                continue;
+            }
+
+            std::vector<double> params;
+            double p = 0.0;
+            while (ss >> p) {
+                params.push_back(p);
+            }
+
+            camera_t cam_id = static_cast<camera_t>(cam_id_ul);
+
+            // Construct camera according to model name (COLMAP naming)
+            CamModel::Ptr cam_ptr = nullptr;
+            if (model == "SIMPLE_PINHOLE") {
+                if (params.size() >= 3) {
+                    double f = params[0];
+                    double cx = params[1];
+                    double cy = params[2];
+                    cam_ptr = std::make_shared<PinholeCamera>(width, height, f, f, cx, cy);
+                }
+            } else if (model == "PINHOLE") {
+                if (params.size() >= 4) {
+                    double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
+                    cam_ptr = std::make_shared<PinholeCamera>(width, height, fx, fy, cx, cy);
+                }
+            } else if (model == "SIMPLE_RADIAL") {
+                if (params.size() >= 4) {
+                    double f = params[0], cx = params[1], cy = params[2], k = params[3];
+                    cam_ptr = std::make_shared<PinholeRadialCamera>(width, height, f, f, cx, cy, k, 0.0, 0.0, 0.0, 0.0);
+                }
+            } else if (model == "RADIAL") {
+                if (params.size() >= 5) {
+                    double f = params[0], cx = params[1], cy = params[2], k1 = params[3], k2 = params[4];
+                    cam_ptr = std::make_shared<PinholeRadialCamera>(width, height, f, f, cx, cy, k1, k2, 0.0, 0.0, 0.0);
+                }
+            } else if (model == "OPENCV") {
+                if (params.size() >= 8) {
+                    double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
+                    double k1 = params[4], k2 = params[5], p1 = params[6], p2 = params[7];
+                    double k3 = 0.0;
+                    cam_ptr = std::make_shared<PinholeRadialCamera>(width, height, fx, fy, cx, cy, k1, k2, k3, p1, p2);
+                }
+            } else if (model == "OPENCV_FISHEYE") {
+                if (params.size() >= 8) {
+                    double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
+                    double k1 = params[4], k2 = params[5], k3 = params[6], k4 = params[7];
+                    cam_ptr = std::make_shared<PinholeFisheyeCamera>(width, height, fx, fy, cx, cy, k1, k2, k3, k4);
+                }
+            } else if (model == "FULL_OPENCV") {
+                if (params.size() >= 9) {
+                    double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
+                    double k1 = params[4], k2 = params[5], p1 = params[6], p2 = params[7], k3 = params[8];
+                    cam_ptr = std::make_shared<PinholeRadialCamera>(width, height, fx, fy, cx, cy, k1, k2, k3, p1, p2);
+                }
+            } else {
+                // Fallback: try to use first 4 or 3 params
+                if (params.size() >= 4) {
+                    double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
+                    cam_ptr = std::make_shared<PinholeCamera>(width, height, fx, fy, cx, cy);
+                } else if (params.size() >= 3) {
+                    double f = params[0], cx = params[1], cy = params[2];
+                    cam_ptr = std::make_shared<PinholeCamera>(width, height, f, f, cx, cy);
+                }
+            }
+
+            if (cam_ptr) {
+                cameras_[cam_id] = cam_ptr;
+            }
+        }
     }
 
     void ReadPoints3DText(std::istream& stream) {
@@ -600,9 +687,9 @@ struct Reconstruction {
 
             // ID
             std::getline(line_stream, item, ' ');
-            const point3D_t point3D_id = std::stoll(item);
+            const landmark_t point3D_id = std::stoll(item);
 
-            struct Point3D point3D;
+            struct Landmark point3D;
 
             // XYZ
             std::getline(line_stream, item, ' ');
@@ -640,15 +727,168 @@ struct Reconstruction {
                 track_el.image_id = std::stoul(item);
 
                 std::getline(line_stream, item, ' ');
-                track_el.point2D_idx = std::stoul(item);
+                track_el.point2d_id = std::stoul(item);
 
                 point3D.track.push_back(track_el);
             }
 
             point3D.track.shrink_to_fit();
 
-            points3D_[point3D_id] = point3D;
+            landmarks_[point3D_id] = point3D;
         }
+    }
+    void WriteCamerasText(std::ostream& stream) {
+        CHECK(stream.good());
+
+        stream.precision(17);
+        stream << "# Camera list with one line of data per camera:" << std::endl;
+        stream << "#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]" << std::endl;
+
+        constexpr double kEps = 1e-12;
+
+        for (const auto& [camera_id, camera] : cameras_) {
+            if (!camera) {
+                continue;
+            }
+
+            std::string model;
+            std::vector<double> params;
+
+            const CAMERA_MODEL type = camera->getType();
+            if (type == PINHOLE) {
+                model = "PINHOLE";
+                params = camera->getParams();
+            } else if (type == PINHOLE_RADIAL) {
+                const std::vector<double> raw = camera->getParams();
+                if (raw.size() >= 9) {
+                    const double k3 = raw[6];
+                    const double p1 = raw[7];
+                    const double p2 = raw[8];
+                    if (std::abs(k3) <= kEps) {
+                        model = "OPENCV";
+                        params = {raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], p1, p2};
+                    } else {
+                        model = "FULL_OPENCV";
+                        params = {raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], p1, p2, k3};
+                    }
+                }
+            } else if (type == PINHOLE_FISHEYE) {
+                model = "OPENCV_FISHEYE";
+                params = camera->getParams();
+            } else if (type == SPHERICAL) {
+                model = "SPHERICAL";
+            } else {
+                LOG(WARNING) << "Unsupported camera type for writing: " << static_cast<int>(type);
+                continue;
+            }
+
+            if (model.empty()) {
+                LOG(WARNING) << "Skipping camera " << camera_id << " due to missing parameters.";
+                continue;
+            }
+
+            stream << camera_id << " " << model << " " << camera->w() << " " << camera->h();
+            for (const double value : params) {
+                stream << " " << value;
+            }
+            stream << std::endl;
+        }
+    }
+    void WriteImagesText(std::ostream& stream) {
+        CHECK(stream.good());
+
+        // Ensure that we don't loose any precision by storing in text.
+        stream.precision(17);
+
+        stream << "# Image list with two lines of data per image:" << std::endl;
+        stream << "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, "
+                  "NAME"
+               << std::endl;
+        stream << "#   POINTS2D[] as (X, Y, POINT3D_ID)" << std::endl;
+
+        std::ostringstream line;
+        line.precision(17);
+
+        for (const auto& [image_id, image] : images_) {
+            line.str("");
+            line.clear();
+
+            line << image_id << " ";
+
+            const Pose3& cam_from_world = image->CameraFromWorld();
+            line << cam_from_world.q_.w() << " ";
+            line << cam_from_world.q_.x() << " ";
+            line << cam_from_world.q_.y() << " ";
+            line << cam_from_world.q_.z() << " ";
+            line << cam_from_world.t_.x() << " ";
+            line << cam_from_world.t_.y() << " ";
+            line << cam_from_world.t_.z() << " ";
+
+            line << image->CameraId() << " ";
+
+            line << image->Name();
+
+            stream << line.str() << std::endl;
+
+            line.str("");
+            line.clear();
+
+            for (point2d_t i = 0; i < image->points_.size(); ++i) {
+                line << image->points_[i].x() << " ";
+                line << image->points_[i].y() << " ";
+                if (image->landmark_ids_[i] != kInvalidPoint3DId) {
+                    line << image->landmark_ids_[i] << " ";
+                } else {
+                    line << -1 << " ";
+                }
+            }
+            if (image->points_.size() > 0) {
+                line.seekp(-1, std::ios_base::end);
+            }
+            stream << line.str() << std::endl;
+        }
+    }
+    void WritePoints3DText(std::ostream& stream) {
+        CHECK(stream.good());
+
+        // Ensure that we don't loose any precision by storing in text.
+        stream.precision(17);
+
+        stream << "# 3D point list with one line of data per point:" << std::endl;
+        stream << "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, "
+                  "TRACK[] as (IMAGE_ID, POINT2D_IDX)"
+               << std::endl;
+
+        for (const auto& [point_id, point3D] : landmarks_) {
+            stream << point_id << " ";
+            stream << point3D.xyz(0) << " ";
+            stream << point3D.xyz(1) << " ";
+            stream << point3D.xyz(2) << " ";
+            stream << static_cast<int>(255) << " ";
+            stream << static_cast<int>(255) << " ";
+            stream << static_cast<int>(255) << " ";
+            stream << 0.0 << " ";
+
+            std::ostringstream line;
+            line.precision(17);
+
+            for (const auto& track_el : point3D.track) {
+                line << track_el.image_id << " ";
+                line << track_el.point2d_id << " ";
+            }
+
+            std::string line_string = line.str();
+            line_string = line_string.substr(0, line_string.size() - 1);
+
+            stream << line_string << std::endl;
+        }
+    }
+    void WriteCOLMAPText(const std::string& colmap_result_path) {
+        std::ofstream colmap_result_file(colmap_result_path);
+        CHECK(colmap_result_file.is_open());
+        WriteCamerasText(colmap_result_file);
+        WriteImagesText(colmap_result_file);
+        WritePoints3DText(colmap_result_file);
     }
     void LoadFromCOLMAPResult(const std::string& colmap_result_path) {
         if (!fs::is_regular_file(colmap_result_path + "/cameras.txt") ||
@@ -658,113 +898,32 @@ struct Reconstruction {
             return;
         }
 
-        std::ifstream fin(colmap_result_path + "/cameras.txt");
-        if (fin) {
-            std::string line;
-            while (std::getline(fin, line)) {
-                // trim
-                if (line.empty() || line[0] == '#') continue;
-                std::stringstream ss(line);
-                unsigned long cam_id_ul = 0;
-                std::string model;
-                size_t width = 0, height = 0;
-                if (!(ss >> cam_id_ul)) continue;
-                if (!(ss >> model)) continue;
-                if (!(ss >> width)) continue;
-                if (!(ss >> height)) continue;
-
-                std::vector<double> params;
-                double p;
-                while (ss >> p) params.push_back(p);
-
-                camera_t cam_id = static_cast<camera_t>(cam_id_ul);
-
-                // construct camera according to model name (COLMAP naming)
-                CamModel::Ptr cam_ptr = nullptr;
-                if (model == "SIMPLE_PINHOLE") {
-                    if (params.size() >= 3) {
-                        double f = params[0];
-                        double cx = params[1];
-                        double cy = params[2];
-                        cam_ptr = std::make_shared<PinholeCamera>(width, height, f, f, cx, cy);
-                    }
-                } else if (model == "PINHOLE") {
-                    if (params.size() >= 4) {
-                        double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
-                        cam_ptr = std::make_shared<PinholeCamera>(width, height, fx, fy, cx, cy);
-                    }
-                } else if (model == "SIMPLE_RADIAL") {
-                    if (params.size() >= 4) {
-                        double f = params[0], cx = params[1], cy = params[2], k = params[3];
-                        cam_ptr =
-                            std::make_shared<PinholeRadialCamera>(width, height, f, f, cx, cy, k, 0.0, 0.0, 0.0, 0.0);
-                    }
-                } else if (model == "RADIAL") {
-                    if (params.size() >= 5) {
-                        double f = params[0], cx = params[1], cy = params[2], k1 = params[3], k2 = params[4];
-                        cam_ptr =
-                            std::make_shared<PinholeRadialCamera>(width, height, f, f, cx, cy, k1, k2, 0.0, 0.0, 0.0);
-                    }
-                } else if (model == "OPENCV") {
-                    if (params.size() >= 8) {
-                        double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
-                        double k1 = params[4], k2 = params[5], p1 = params[6], p2 = params[7];
-                        double k3 = 0.0;
-                        cam_ptr =
-                            std::make_shared<PinholeRadialCamera>(width, height, fx, fy, cx, cy, k1, k2, k3, p1, p2);
-                    }
-                } else if (model == "OPENCV_FISHEYE") {
-                    if (params.size() >= 8) {
-                        double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
-                        double k1 = params[4], k2 = params[5], k3 = params[6], k4 = params[7];
-                        cam_ptr = std::make_shared<PinholeFisheyeCamera>(width, height, fx, fy, cx, cy, k1, k2, k3, k4);
-                    }
-                } else if (model == "FULL_OPENCV") {
-                    if (params.size() >= 9) {
-                        double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
-                        double k1 = params[4], k2 = params[5], p1 = params[6], p2 = params[7], k3 = params[8];
-                        cam_ptr =
-                            std::make_shared<PinholeRadialCamera>(width, height, fx, fy, cx, cy, k1, k2, k3, p1, p2);
-                    }
-                } else {
-                    // fallback: try to use first 4 or 3 params
-                    if (params.size() >= 4) {
-                        double fx = params[0], fy = params[1], cx = params[2], cy = params[3];
-                        cam_ptr = std::make_shared<PinholeCamera>(width, height, fx, fy, cx, cy);
-                    } else if (params.size() >= 3) {
-                        double f = params[0], cx = params[1], cy = params[2];
-                        cam_ptr = std::make_shared<PinholeCamera>(width, height, f, f, cx, cy);
-                    }
-                }
-
-                if (cam_ptr) cameras_[cam_id] = cam_ptr;
-            }
-        }
-
+        std::ifstream cameras_fin(colmap_result_path + "/cameras.txt");
+        ReadCamerasText(cameras_fin);
         std::ifstream images_fin(colmap_result_path + "/images.txt");
         ReadImagesText(images_fin);
         std::ifstream points3D_fin(colmap_result_path + "/points3D.txt");
         ReadPoints3DText(points3D_fin);
 
         double track_len_sum = 0;
-        for (const auto [id, point3d] : points3D_) {
+        for (const auto [id, point3d] : landmarks_) {
             track_len_sum += point3d.track.size();
         }
-        std::cout << "Read " << cameras_.size() << " cameras, " << images_.size() << " images, " << points3D_.size()
+        std::cout << "Read " << cameras_.size() << " cameras, " << images_.size() << " images, " << landmarks_.size()
                   << " points3D." << std::endl;
-        std::cout << "Average track length: " << track_len_sum / points3D_.size() << std::endl;
+        std::cout << "Average track length: " << track_len_sum / landmarks_.size() << std::endl;
     }
 
     int FilterOutlier(const double max_reproj_error) {
-       int filter_count = 0;
-        for (auto& [id, point3D] : points3D_) {
+        int filter_count = 0;
+        for (auto& [id, point3D] : landmarks_) {
             for (int j = 0; j < point3D.track.size(); ++j) {
                 Image::Ptr img = images_[point3D.track[j].image_id];
 
                 CamModel::Ptr cameara = cameras_[img->CameraId()];
-                Point2D& point2D = img->points2D_[point3D.track[j].point2D_idx];
+                Eigen::Vector2d xy = img->points_[point3D.track[j].point2d_id];
                 Eigen::Vector3d point_cam = img->CameraFromWorld() * point3D.xyz;
-                double err = (cameara->project(point_cam) - point2D.xy).norm();
+                double err = (cameara->project(point_cam) - xy).norm();
                 if (err > max_reproj_error) {
                     point3D.track.erase(point3D.track.begin() + j);
                     --j;
@@ -772,9 +931,9 @@ struct Reconstruction {
             }  // for obs
         }  // for points
 
-        for (auto it = points3D_.begin(); it != points3D_.end();) {
+        for (auto it = landmarks_.begin(); it != landmarks_.end();) {
             if (it->second.track.size() < 2) {
-                it = points3D_.erase(it);
+                it = landmarks_.erase(it);
                 ++filter_count;
             } else {
                 ++it;
@@ -785,22 +944,22 @@ struct Reconstruction {
 
     double MeanTrackLength() {
         double track_len_sum = 0;
-        for (const auto [id, point3d] : points3D_) {
+        for (const auto [id, point3d] : landmarks_) {
             track_len_sum += point3d.track.size();
         }
-        return track_len_sum / points3D_.size();
+        return track_len_sum / landmarks_.size();
     }
     double CalcMeanError() {
         double error_count = 0;
         double error_sum = 0;
-        for (auto& [id, point3D] : points3D_) {
+        for (auto& [id, point3D] : landmarks_) {
             for (int j = 0; j < point3D.track.size(); ++j) {
-                Image::Ptr img = image(point3D.track[j].image_id);
-                CamModel::Ptr cameara = camera(img->CameraId());
-                Point2D& point2D = img->points2D_[point3D.track[j].point2D_idx];
+                Image::Ptr img = GetImage(point3D.track[j].image_id);
+                CamModel::Ptr cameara = GetCamera(img->CameraId());
+                Eigen::Vector2d xy = img->points_[point3D.track[j].point2d_id];
                 if (!point3D.xyz.hasNaN()) {
                     Eigen::Vector3d point_cam = img->CameraFromWorld() * point3D.xyz;
-                    double err = (cameara->project(point_cam) - point2D.xy).norm();
+                    double err = (cameara->project(point_cam) - xy).norm();
                     error_sum += err;
                     ++error_count;
                 }
@@ -809,68 +968,24 @@ struct Reconstruction {
         return error_sum / error_count;
     }
 
-    bool TriangulateNViewAlgebraic(const Eigen::Matrix<double, 3, Eigen::Dynamic>& points,
-                                   const std::vector<Pose3>& poses, Eigen::Vector4d& X) {
-        assert(poses.size() == points.cols());
-
-        Eigen::Matrix4d AtA = Eigen::Matrix4d::Zero();
-        for (Eigen::Matrix<double, 3, Eigen::Dynamic>::Index i = 0; i < points.cols(); ++i) {
-            const Eigen::Vector3d point_norm = points.col(i).normalized();
-            const Eigen::Matrix<double, 3, 4> cost =
-                poses[i].Mat34() - point_norm * point_norm.transpose() * poses[i].Mat34();
-            AtA += cost.transpose() * cost;
-        }
-
-        Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> eigen_solver(AtA);
-        X = eigen_solver.eigenvectors().col(0);
-        return eigen_solver.info() == Eigen::Success;
-    }
-
-    bool TriangulatePoint(const point3D_t& point_3d_id) {
-        Point3D point3D = points3D_[point_3d_id];
-        // prepare the data
-        std::vector<Pose3> poses;
-        Eigen::Matrix<double, 3, Eigen::Dynamic> points_2d;
-        Eigen::Vector4d X;
-
-        poses.resize(point3D.track.size());
-        points_2d.resize(3, point3D.track.size());
-        for (int i = 0; i < point3D.track.size(); ++i) {
-            Observation track_el = point3D.track[i];
-            Image::Ptr img = image(track_el.image_id);
-            if (img->cam_from_world_.IsValid()) {
-                std::cout << "Image " << track_el.image_id << " has no camera pose." << std::endl;
-                return false;
-            }
-            poses[i] = img->cam_from_world_;
-            CamModel::Ptr camera = cameras_[img->camera_id_];
-            Eigen::Vector2d img_p = img->points2D_[track_el.point2D_idx].xy;
-            points_2d.col(i) = camera->ima2cam(camera->get_ud_pixel(img_p)).homogeneous();
-        }
-        if (TriangulateNViewAlgebraic(points_2d, poses, X)) {
-            points3D_[point_3d_id].xyz = X.head<3>();
-            return true;
-        }
-        return false;
-    }
     std::unordered_map<camera_t, CamModel::Ptr> cameras_;
     std::unordered_map<camera_t, Image::Ptr> images_;
-    std::unordered_map<point3D_t, Point3D> points3D_;
+    std::unordered_map<landmark_t, Landmark> landmarks_;
     std::unordered_map<image_pair_t, TwoViewGeometry> two_view_geometries_;
 
-    CamModel::Ptr& camera(camera_t camera_id) { return cameras_[camera_id]; }
-    Image::Ptr& image(image_t image_id) { return images_[image_id]; }
-    Point3D& point3D(point3D_t point3D_id) { return points3D_[point3D_id]; }
-    TwoViewGeometry& two_view_geometry(image_pair_t image_pair_id) { return two_view_geometries_[image_pair_id]; }
+    CamModel::Ptr& GetCamera(camera_t camera_id) { return cameras_[camera_id]; }
+    Image::Ptr& GetImage(image_t image_id) { return images_[image_id]; }
+    Landmark& GetLandMark(landmark_t point3D_id) { return landmarks_[point3D_id]; }
+    TwoViewGeometry& GetTwoViewGeometry(image_pair_t image_pair_id) { return two_view_geometries_[image_pair_id]; }
 };
 
 namespace std {
 template <>
 struct hash<Eigen::Vector2i> {
-    size_t operator()(const Eigen::Vector2i &s) const {
+    size_t operator()(const Eigen::Vector2i& s) const {
         using std::hash;
         using std::size_t;
         return ((hash<int64_t>()(s.x()) ^ (hash<int64_t>()(s.y()) << 1)) >> 1);
     }
 };
-}
+}  // namespace std

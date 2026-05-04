@@ -3,10 +3,11 @@ import os
 from typing import List
 import yaml
 
-seq_dirs = ["/mnt/data/home/hsiaochuan/data/FAST-LIVO2/CBD_Building_01_faster_lio_result",]
+seq_dirs = ["/mnt/data/home/hsiaochuan/data/FAST-LIVO2/CBD_Building_01_faster_lio_result", ]
 COLMAP_EXE = "colmap"
 
-def ReadCameraModel(yaml_file: str)->str:
+
+def ReadCameraModel(yaml_file: str) -> str:
     """Extract camera model from YAML config and map to COLMAP model name.
 
     Based on COLMAP models.h:
@@ -30,7 +31,8 @@ def ReadCameraModel(yaml_file: str)->str:
 
     return model_mapping.get(model_name, "OPENCV")
 
-def ReadCameraParams(yaml_file: str)->str:
+
+def ReadCameraParams(yaml_file: str) -> str:
     model_name = ReadCameraModel(yaml_file)
     with open(yaml_file, "r") as f:
         config = yaml.safe_load(f)
@@ -58,9 +60,23 @@ def ReadCameraParams(yaml_file: str)->str:
         print("Warning: Unknown camera model: ", model_name)
         params = [fx, fy, cx, cy]
 
-
     # join as comma-separated string without spaces
     return ','.join([str(x) for x in params])
+def tum_to_image_list_file(tum_file: str, images_dir: str, output_path: str) -> None:
+    with open(tum_file, "r") as f:
+        lines = f.readlines()
+    image_paths = []
+    for line in lines:
+        if line.strip() == "" or line.startswith("#"):
+            continue
+        timestamp = line.split()[0]
+        img_path = os.path.join(images_dir, timestamp + ".jpg")
+        if os.path.exists(img_path):
+            image_paths.append(img_path)
+        else:
+            print(f"Warning: Image file {img_path} does not exist.")
+
+    write_image_list(image_paths, output_path)
 def sample_images(img_dir: str, sample_interval: int) -> List[str]:
     sample_result = []
     img_files = os.listdir(img_dir)
@@ -68,47 +84,68 @@ def sample_images(img_dir: str, sample_interval: int) -> List[str]:
     for i in range(0, len(img_files), sample_interval):
         sample_result.append(os.path.join(img_dir, img_files[i]))
     return sample_result
-for seq in seq_dirs:
-    img_dir = os.path.join(seq, "images")
-    database_fname = os.path.join(seq, "database.db")
-    config_fname = os.path.join(seq, "config.yaml")
-    # sample images
-    sub_images = sample_images(img_dir, 5)
-    with open(os.path.join(seq, "images.txt"), "w") as f:
-        for img in sub_images:
+
+
+def write_image_list(image_paths: List[str], output_path: str) -> None:
+    with open(output_path, "w") as f:
+        for img in image_paths:
             f.write(img + "\n")
-    subprocess.run([
-        COLMAP_EXE, "feature_extractor",
-        '--database_path', database_fname,
-        '--image_path', img_dir,
-        '--image_list_path', os.path.join(seq, "images.txt"),
-        '--ImageReader.single_camera', '1',
-        '--ImageReader.camera_model', ReadCameraModel(config_fname),
-        '--ImageReader.camera_params', ReadCameraParams(config_fname),
-    ])
 
-    subprocess.run([
-        COLMAP_EXE, 'exhaustive_matcher',
-        '--database_path', database_fname,
-        '--SiftMatching.guided_matching', '1',
-    ])
 
-    os.makedirs(os.path.join(seq, "sparse"), exist_ok=True)
-    subprocess.run([
-        COLMAP_EXE, 'mapper',
-        '--database_path', database_fname,
-        '--image_path', img_dir,
-        '--output_path', os.path.join(seq, "sparse"),
-    ])
+def run_colmap(seq_dir: str,
+               extract_match: bool = True,
+               mapping: bool = True) -> None:
+    img_dir = os.path.join(seq_dir, "images")
+    database_fname = os.path.join(seq_dir, "database.db")
+    config_fname = os.path.join(seq_dir, "config.yaml")
+    image_list_path = os.path.join(seq_dir, "images.txt")
 
-    subprocess.run([
-        COLMAP_EXE, 'model_converter',
-        '--output_type', 'TXT',
-        '--input_path', os.path.join(seq, "sparse/0"),
-        '--output_path', os.path.join(seq, "sparse/0"),
-    ])
+    tum_to_image_list_file(os.path.join(seq_dir, "/global/init.txt"), img_dir, image_list_path)
 
-    subprocess.run([
-        COLMAP_EXE, "model_analyzer",
-        "--path", os.path.join(seq, "sparse/0"),
-    ])
+    if extract_match:
+        subprocess.run([
+            COLMAP_EXE, "feature_extractor",
+            "--database_path", database_fname,
+            "--image_path", img_dir,
+            "--image_list_path", image_list_path,
+            "--ImageReader.single_camera", "1",
+            "--ImageReader.camera_model", ReadCameraModel(config_fname),
+            "--ImageReader.camera_params", ReadCameraParams(config_fname),
+        ], check=True)
+
+        subprocess.run([
+            COLMAP_EXE, "exhaustive_matcher",
+            "--database_path", database_fname,
+            "--SiftMatching.guided_matching", "1",
+        ], check=True)
+
+    if mapping:
+        sparse_dir = os.path.join(seq_dir, "sparse")
+        sparse_model_dir = os.path.join(sparse_dir, "0")
+        os.makedirs(sparse_dir, exist_ok=True)
+        subprocess.run([
+            COLMAP_EXE, "mapper",
+            "--database_path", database_fname,
+            "--image_path", img_dir,
+            "--output_path", sparse_dir,
+        ], check=True)
+
+        subprocess.run([
+            COLMAP_EXE, "model_converter",
+            "--output_type", "TXT",
+            "--input_path", sparse_model_dir,
+            "--output_path", sparse_model_dir,
+        ], check=True)
+
+        subprocess.run([
+            COLMAP_EXE, "model_analyzer",
+            "--path", sparse_model_dir,
+        ], check=True)
+
+def main() -> None:
+    for seq in seq_dirs:
+        run_colmap(seq)
+
+
+if __name__ == "__main__":
+    main()

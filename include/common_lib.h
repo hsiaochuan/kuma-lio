@@ -15,9 +15,12 @@
 #include <boost/array.hpp>
 #include <opencv2/opencv.hpp>
 
+#include <pcl/io/pcd_io.h>
+#include <boost/filesystem.hpp>
 #include "options.h"
+#include "pose3.h"
 #include "so3_math.h"
-
+#include <glog/logging.h>
 namespace faster_lio {
 class VOXEL_LOCATION {
    public:
@@ -30,12 +33,9 @@ class VOXEL_LOCATION {
         z = static_cast<int64_t>(std::floor(p(2) / v));
     }
 
-    explicit VOXEL_LOCATION(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0)
-        : x(vx), y(vy), z(vz) {}
+    explicit VOXEL_LOCATION(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0) : x(vx), y(vy), z(vz) {}
 
-    bool operator==(const VOXEL_LOCATION &other) const {
-        return (x == other.x && y == other.y && z == other.z);
-    }
+    bool operator==(const VOXEL_LOCATION &other) const { return (x == other.x && y == other.y && z == other.z); }
 
     bool operator<(const VOXEL_LOCATION &b) const {
         if (x < b.x) return true;
@@ -62,7 +62,6 @@ struct Imu {
     Eigen::Vector3d orientation;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
-constexpr double kInvalidTimeStamp = std::numeric_limits<double>::min();
 }  // namespace faster_lio
 
 // clang-format off
@@ -85,7 +84,7 @@ struct hash<faster_lio::VOXEL_LOCATION> {
         return size_t(((s.x) * 73856093) ^ ((s.y) * 471943) ^ ((s.z) * 83492791)) % 10000000;
     }
 };
-}
+}  // namespace std
 using PointType = faster_lio::Point;
 using PointCloud = pcl::PointCloud<faster_lio::Point>;
 using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
@@ -128,11 +127,9 @@ inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double> &v) {
 }
 template <typename S>
 inline Eigen::Matrix<S, 3, 3> RotationFromArray(const std::vector<double> &v) {
-    if(v.size() != 9 && v.size() != 4)
-        throw std::runtime_error("Invalid rotation matrix");
+    if (v.size() != 9 && v.size() != 4) throw std::runtime_error("Invalid rotation matrix");
     Eigen::Matrix<S, 3, 3> rotation;
-    if (v.size() == 9)
-        rotation = common::MatFromArray<double>(v);
+    if (v.size() == 9) rotation = common::MatFromArray<double>(v);
     else if (v.size() == 4)
         rotation = common::QuatFromArray<double>(v).toRotationMatrix();
     return rotation;
@@ -274,4 +271,48 @@ inline bool esti_plane(Eigen::Matrix<T, 4, 1> &pca_result, const PointVector &po
 }
 
 }  // namespace faster_lio::common
+
+namespace faster_lio {
+using scan_t = uint32_t;
+struct ScanFrame {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    using Ptr = std::shared_ptr<ScanFrame>;
+
+    ScanFrame(const scan_t& scan_id) : scan_id(scan_id){}
+    double GetTimestamp() const {
+        CHECK(!std::isnan(timestamp));
+        return timestamp;
+    }
+    double TryGetTimeFromName() {
+        double image_stamp = 0.0;
+        try {
+            std::string image_stamp_str = boost::filesystem::path(cloud_fname).stem().string();
+            image_stamp = std::stod(image_stamp_str);
+        } catch (const std::exception &e) {
+            throw std::runtime_error("fail to load the image timestamp from filename");
+        }
+        return image_stamp;
+    }
+    Pose3 GetWorldFromBody() const {
+        CHECK(world_from_body.IsValid());
+        return world_from_body;
+    }
+    PointCloud::Ptr GetScan() {
+        if (scan) {
+            return scan;
+        }
+        CHECK(!cloud_fname.empty());
+        scan.reset(new PointCloud);
+        pcl::io::loadPCDFile(cloud_fname, *scan);
+        CHECK(!scan->empty());
+        return scan;
+    }
+
+    scan_t scan_id = std::numeric_limits<scan_t>::max();
+    std::string cloud_fname = std::string();
+    Pose3 world_from_body = Pose3::InValid();
+    double timestamp = std::numeric_limits<double>::quiet_NaN();
+    PointCloud::Ptr scan = nullptr;
+};
+}  // namespace faster_lio
 #endif

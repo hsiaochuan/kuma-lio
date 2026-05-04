@@ -104,5 +104,20 @@ inline Eigen::Quaternion<typename Derived::Scalar> ExpQuat(const Eigen::MatrixBa
 
     return Eigen::Quaternion<Scalar>(real, img * omega.x(), img * omega.y(), img * omega.z()).normalized();
 }
+
+
+inline Eigen::Vector3d EulerZYX(const Eigen::Matrix3d& rot) {
+    Eigen::Vector3d result;
+    result.x() = std::atan2(rot(1, 0), rot(0, 0));
+    result.y() = std::asin(-rot(2, 0));
+    result.z() = std::atan2(rot(2, 1), rot(2, 2));
+    return result;
+}
+inline Eigen::Matrix3d EulerZYXToRot(const Eigen::Vector3d& euler) {
+    Eigen::Matrix3d z_rot = Eigen::AngleAxisd(euler(0), Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    Eigen::Matrix3d y_rot = Eigen::AngleAxisd(euler(1), Eigen::Vector3d::UnitY()).toRotationMatrix();
+    Eigen::Matrix3d x_rot = Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX()).toRotationMatrix();
+    return z_rot * y_rot * x_rot;
+}
 }  // namespace faster_lio
 #endif

@@ -18,7 +18,6 @@ namespace po = boost::program_options;
 int main(int argc, char** argv) {
     std::string cam_trajectory_fname;
     std::string colmap_output_dir;
-    std::string config_fname;
     std::string databse_fname;
     std::string lidar_points_fname;
     po::options_description desc("Jet smoothing options");
@@ -26,7 +25,6 @@ int main(int argc, char** argv) {
         // clang-format off
     ("cam_trajectory,c",po::value<std::string>(&cam_trajectory_fname)->required(),"Camera trajectory file (TUM format)")
     ("lidar_points_fname,l", po::value<std::string>(&lidar_points_fname)->required(), "LiDAR points map")
-    ("config,f", po::value<std::string>(&config_fname), "Configuration file (YAML format)")
     ("database,d", po::value<std::string>(&databse_fname)->required(), "Colmap database file")
     ("colmap_output,o", po::value<std::string>(&colmap_output_dir),"Colmap output directory (if specified, the program will load the reconstruction from the colmap output "
         "instead of the database)");
@@ -44,14 +42,6 @@ int main(int argc, char** argv) {
     Reconstruction recon;
     recon.LoadFromDatabase(databse_fname);
 
-    // undistort the points
-    for (auto& [image_id, image] : recon.images_) {
-        CamModel::Ptr camera = recon.camera(image->CameraId());
-        for (int i = 0; i < image->points2D_.size(); ++i) {
-            Eigen::Vector2d& point2d = image->points2D_[i].xy;
-            image->points2D_[i].xy_undistort = camera->get_ud_pixel(point2d);
-        }
-    }
     // load camera poses
     for (auto& [image_id, image] : recon.images_) {
         Eigen::Isometry3d cam_pose = cam_interpolator.query(image->TryReadTimeFromName());
@@ -99,13 +89,13 @@ int main(int argc, char** argv) {
     for (auto& [track_id, obs_ids] : track_map) {
         if (problematic_track_id.count(track_id) > 0) continue;
         if (obs_ids.size() < 2) continue;
-        recon.points3D_[track_id] = Point3D();
+        recon.landmarks_[track_id] = Landmark();
         for (auto obs_id : obs_ids) {
-            recon.points3D_[track_id].track.emplace_back(IdToObservation(obs_id));
+            recon.landmarks_[track_id].track.emplace_back(IdToObservation(obs_id));
         }
     }
 
-    std::cout << "Total track count: " << recon.points3D_.size() << std::endl;
+    std::cout << "Total track count: " << recon.landmarks_.size() << std::endl;
     std::cout << "Average track length: " << recon.MeanTrackLength() << std::endl;
 
     // load lidar points
@@ -128,113 +118,23 @@ int main(int argc, char** argv) {
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
     tree->setInputCloud(points_xyz);
 
-    // get the depth prior of 2d points
-    for (auto& [image_id, image] : recon.images_) {
-        CamModel::Ptr camera = recon.cameras_[image->CameraId()];
-        Eigen::MatrixXd z_img;
-        z_img.resize(camera->h(), camera->w());
-        z_img.fill(std::numeric_limits<double>::infinity());
-        for (int i = 0; i < points_xyz->size(); ++i) {
-            Eigen::Vector3d point_cam = image->cam_from_world_ * points_xyz->at(i).getVector3fMap().cast<double>();
-            if (!camera->positive_z(point_cam)) continue;
-            Eigen::Vector2d point_undistort = camera->cam2ima(point_cam.hnormalized());
-            Eigen::Vector2i uv = point_undistort.cast<int>();
-            std::vector<Eigen::Vector2i> uv_list;
-            uv_list.emplace_back(uv.x() + 1, uv.y());
-            uv_list.emplace_back(uv.x(), uv.y() + 1);
-            uv_list.emplace_back(uv.x() - 1, uv.y());
-            uv_list.emplace_back(uv.x(), uv.y() - 1);
-            for (auto& uv_i : uv_list) {
-                if (!camera->valid(uv_i)) continue;
-                if (z_img(uv_i.y(), uv_i.x()) > point_cam.z()) {
-                    z_img(uv_i.y(), uv_i.x()) = point_cam.z();
-                }
-            }
-        }  // for points
-
-        for (int i = 0; i < image->points2D_.size(); ++i) {
-            Eigen::Vector2i uv = image->points2D_[i].xy.cast<int>();
-            if (std::isfinite(z_img(uv.y(), uv.x()))) {
-                image->points2D_[i].z_prior = z_img(uv.y(), uv.x());
-            }
-        }
-    }  // for img
-
-    // fusion to get the points of 3d
-    for (auto& [point_id, point3d] : recon.points3D_) {
-        std::vector<Observation>& track_elems = point3d.track;
-
-        // unproject points
-        std::vector<Eigen::Vector3d> unprj_points;
-        for (auto& track_elem : track_elems) {
-            Image::Ptr image = recon.image(track_elem.image_id);
-            CamModel::Ptr camera = recon.camera(image->CameraId());
-            Point2D& point2d = image->points2D_[track_elem.point2D_idx];
-
-            if (std::isfinite(point2d.z_prior)) {
-                Eigen::Vector3d point_cam = camera->ima2cam(point2d.xy_undistort).homogeneous();
-                point_cam *= point2d.z_prior;
-                Eigen::Vector3d point_world = image->cam_from_world_.GetInverse() * point_cam;
-                unprj_points.push_back(point_world);
-            }
-        }
-
-        // remove the outlier
-        std::vector<double> mean_distances;
-        mean_distances.resize(unprj_points.size());
-        for (int i = 0; i < unprj_points.size(); ++i) {
-            double mean_distance = 0;
-            for (int j = 0; j < unprj_points.size(); ++j) {
-                if (i == j) continue;
-                double distance = (unprj_points[i] - unprj_points[j]).norm();
-                mean_distance += distance;
-            }
-            mean_distances[i] = mean_distance / (unprj_points.size() - 1);
-        }
-        double mean_of_mean_dists =
-            std::accumulate(mean_distances.begin(), mean_distances.end(), 0.0) / mean_distances.size();
-        double variance = 0.0;
-        for (double mean_distance : mean_distances) {
-            variance += (mean_distance - mean_of_mean_dists) * (mean_distance - mean_of_mean_dists);
-        }
-        variance /= mean_distances.size();
-        double stddev = std::sqrt(variance);
-        double thr = mean_of_mean_dists + stddev;
-
-        for (int i = 0; i < unprj_points.size(); ++i) {
-            if (mean_distances[i] > thr) {
-                unprj_points.erase(unprj_points.begin() + i);
-                i--;
-            }
-        }
-
-        Eigen::Vector3d mean_point = Eigen::Vector3d::Zero();
-        for (auto& point : unprj_points) {
-            mean_point += point;
-        }
-        mean_point /= unprj_points.size();
-        if (unprj_points.size() > 0) {
-            point3d.xyz = mean_point;
-        }
-    }
-
     // filter the fail 3d point
-    for (auto iter = recon.points3D_.begin(); iter != recon.points3D_.end();) {
+    for (auto iter = recon.landmarks_.begin(); iter != recon.landmarks_.end();) {
         if (iter->second.xyz.hasNaN()) {
-            iter = recon.points3D_.erase(iter);
+            iter = recon.landmarks_.erase(iter);
         } else {
             ++iter;
         }
     }
 
     std::cout << "----------------------" << "Fusion" << "----------------------" << std::endl;
-    std::cout << "Total track count: " << recon.points3D_.size() << std::endl;
+    std::cout << "Total track count: " << recon.landmarks_.size() << std::endl;
     std::cout << "Average track length: " << recon.MeanTrackLength() << std::endl;
     std::cout << "Mean reprojected error: " << recon.CalcMeanError() << std::endl;
 
     recon.FilterOutlier(8.0);
     std::cout << "----------------------" << "FIlter" << "----------------------" << std::endl;
-    std::cout << "Total track count: " << recon.points3D_.size() << std::endl;
+    std::cout << "Total track count: " << recon.landmarks_.size() << std::endl;
     std::cout << "Average track length: " << recon.MeanTrackLength() << std::endl;
     std::cout << "Mean reprojected error: " << recon.CalcMeanError() << std::endl;
     // bundle adjustment
@@ -254,12 +154,12 @@ int main(int argc, char** argv) {
     int max_ba_iter = 1;
     for (int it = 0; it < max_ba_iter; ++it) {
         int search_count = 0;
-        for (auto& [point_id, point3d] : recon.points3D_) {
+        for (auto& [lm_id, landmark] : recon.landmarks_) {
             // search
             std::vector<int> nn_idx;
             std::vector<float> nn_dist;
             pcl::PointXYZ search_point;
-            search_point.getVector3fMap() = point3d.xyz.cast<float>();
+            search_point.getVector3fMap() = landmark.xyz.cast<float>();
             tree->radiusSearch(search_point, max_search_radius, nn_idx, nn_dist);
             if (nn_idx.size() > 0) {
                 pcl::PointXYZ nearest_point = points_xyz->points[nn_idx[0]];
@@ -269,14 +169,14 @@ int main(int argc, char** argv) {
                 ceres::CostFunction* ppl_cost =
                     PointOnPlaneCostFunctor::Create(nearest_normal.getNormalVector3fMap().cast<double>(),
                                                     nearest_point.getVector3fMap().cast<double>(), 1.0);
-                problem.AddResidualBlock(ppl_cost, nullptr, point3d.xyz.data());
+                problem.AddResidualBlock(ppl_cost, nullptr, landmark.xyz.data());
                 search_count++;
             }
 
-            for (int j = 0; j < point3d.track.size(); ++j) {
-                Observation& track_elem = point3d.track[j];
+            for (int j = 0; j < landmark.track.size(); ++j) {
+                Observation& track_elem = landmark.track[j];
                 Image::Ptr img = recon.images_[track_elem.image_id];
-                Eigen::Vector2d& point2d = img->points2D_[track_elem.point2D_idx].xy;
+                Eigen::Vector2d& point2d = img->points_[track_elem.point2d_id];
                 std::shared_ptr<CamModel> camera = recon.cameras_[img->CameraId()];
                 ceres::CostFunction* cost_function;
                 if (camera->getType() == CAMERA_MODEL::PINHOLE) {
@@ -291,7 +191,7 @@ int main(int argc, char** argv) {
                 // reproj
                 problem.AddResidualBlock(cost_function, nullptr, camera_params[img->CameraId()].data(),
                                          img->cam_from_world_.QuatData(), img->cam_from_world_.PosData(),
-                                         point3d.xyz.data());
+                                         landmark.xyz.data());
 
             }  // for track element
         }  // for point
@@ -306,5 +206,6 @@ int main(int argc, char** argv) {
         std::cout << "Iteration " << it << " reprojected error: " << recon.CalcMeanError() << std::endl;
     }  // for ba iter
 
+    recon.WriteCOLMAPText(colmap_output_dir);
     return 0;
 }

@@ -7,10 +7,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include "laser_mapping.h"
 #include <pcl/filters/uniform_sampling.h>
-#include <cameras/pinhole_fisheye_camera.h>
-#include <cameras/pinhole_camera.h>
-#include <cameras/spherial_camera.h>
-#include <cameras/pinhole_radial.h>
+#include "cameras/cameras.h"
 #include "utils.h"
 namespace fs = boost::filesystem;
 namespace faster_lio {
@@ -21,10 +18,12 @@ bool LaserMapping::InitROS(ros::NodeHandle &nh, const std::string & config_fname
         return false;
     SubAndPubToROS(nh);
 
-
-    run_in_offline_ = false;
-    // localmap init (after LoadParams)
     ivox_ = std::make_shared<IVoxType>(ivox_options_);
+    mapper = std::make_shared<GlobalOptimizor>();
+    GlobalOptimizor::Options global_options;
+    global_options.LoadFromYaml(config_fname);
+    mapper->options_ = global_options;
+    mapper->output_dir = output_dir;
 
     // esekf init
     std::vector<double> epsi(23, 0.001);
@@ -41,9 +40,13 @@ bool LaserMapping::InitWithoutROS(const std::string &config_yaml) {
     if (!LoadParamsFromYAML(config_yaml)) {
         return false;
     }
-    run_in_offline_ = true;
-    // localmap init (after LoadParams)
+
     ivox_ = std::make_shared<IVoxType>(ivox_options_);
+    mapper = std::make_shared<GlobalOptimizor>();
+    GlobalOptimizor::Options global_options;
+    global_options.LoadFromYaml(config_yaml);
+    mapper->options_ = global_options;
+    mapper->output_dir = output_dir;
 
     // esekf init
     std::vector<double> epsi(23, 0.001);
@@ -69,11 +72,6 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
 
     auto yaml = YAML::LoadFile(yaml_file);
     try {
-        path_pub_en_ = yaml["publish"]["path_publish_en"].as<bool>();
-        scan_pub_en_ = yaml["publish"]["scan_publish_en"].as<bool>();
-        dense_pub_en_ = yaml["publish"]["dense_publish_en"].as<bool>();
-        scan_body_pub_en_ = yaml["publish"]["scan_bodyframe_pub_en"].as<bool>();
-        scan_effect_pub_en_ = yaml["publish"]["scan_effect_pub_en"].as<bool>();
         tf_imu_frame_ = yaml["publish"]["tf_imu_frame"].as<std::string>("body");
         tf_world_frame_ = yaml["publish"]["tf_world_frame"].as<std::string>("camera_init");
         path_save_en_ = yaml["path_save_en"].as<bool>();
@@ -96,7 +94,6 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
         image_save_en_ = yaml["image_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
-        final_map_voxel_size_ = yaml["pcd_save"]["final_map_voxel_size"].as<double>();
         extrin_il_.q_ = common::RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
         extrin_il_.t_ = common::VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
@@ -226,7 +223,6 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     path_.header.frame_id = tf_world_frame_;
 
     pub_laser_cloud_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
-    pub_laser_cloud_body_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000);
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_effect_world", 100000);
     pub_odom_aft_mapped_ = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
@@ -293,34 +289,80 @@ void LaserMapping::Run() {
         "IEKF Solve and Update");
 
     // update local map
-    Timer::Evaluate([&, this]() { MapIncremental(); }, "    Incremental Mapping");
+    Timer::Evaluate([&, this]() {
+        MapIncremental();
+        static scan_t scan_id = 0;
+
+        ScanFrame::Ptr scan(new ScanFrame(scan_id));
+        std::stringstream ss;
+        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+        std::string pcd_save_fname(output_dir + "/scans/" + ss.str() + ".pcd");
+        scan->cloud_fname = pcd_save_fname;
+        scan->world_from_body = Pose3(state_point_.rot, state_point_.pos);
+        scan->timestamp = measures_.lidar_end_time_;
+
+        mapper->AddScan(scan);
+        scan_id++;
+    }, "    Incremental Mapping");
 
     LOG(INFO) << "[ mapping ]: In num: " << scan_undistort_->points.size() << " downsamp " << cur_pts
               << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << effect_feat_num_;
 
     // publish or save map pcd
-    if (run_in_offline_) {
-        if (pcd_save_en_) {
-            PublishFrameWorld();
-        }
-        if (path_save_en_) {
-            PublishPath(pub_path_);
-        }
-    } else {
-        if (pub_odom_aft_mapped_) {
-            PublishOdometry(pub_odom_aft_mapped_);
-        }
-        if (path_pub_en_ || path_save_en_) {
-            PublishPath(pub_path_);
-        }
-        if (scan_pub_en_ || pcd_save_en_) {
-            PublishFrameWorld();
-        }
-        if (scan_pub_en_ && scan_body_pub_en_) {
-            PublishFrameBody(pub_laser_cloud_body_);
-        }
-        if (scan_pub_en_ && scan_effect_pub_en_) {
-            PublishFrameEffectWorld(pub_laser_cloud_effect_world_);
+    if (pub_laser_cloud_world_) {
+        PublishFrameWorld();
+    }
+    if (pub_path_) {
+        PublishPath();
+    }
+    if (pub_odom_aft_mapped_) {
+        PublishOdometry();
+    }
+    if (pub_laser_cloud_effect_world_) {
+        PublishFrameEffectWorld();
+    }
+
+    Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
+    trajectory_.emplace_back(lidar_end_time_,body_pose.Isometry3d());
+
+    if (image_save_en_) {
+        static auto once = fs::create_directories(output_dir + "/images");
+        std::stringstream ss;
+        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+        std::string img_save_fname(output_dir + "/images/" + ss.str() + ".jpg");
+        if (!measures_.img_.empty())
+            cv::imwrite(img_save_fname, measures_.img_);
+    }
+
+    if (pcd_save_en_) {
+        static auto once = fs::create_directories(output_dir + "/scans");
+        std::stringstream ss;
+        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+        std::string pcd_save_fname(output_dir + "/scans/" + ss.str() + ".pcd");
+        pcl::io::savePCDFileBinary(pcd_save_fname, *scan_undistort_);
+    }
+
+    if (pcd_save_en_) {
+        *pcl_wait_save_ += *scan_down_world_;
+        static int scan_wait_num = 0;
+        scan_wait_num++;
+        if (pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
+            static auto once = fs::create_directories(output_dir + "/maps");
+
+            // sample
+            scan_sampler_.setInputCloud(pcl_wait_save_);
+            scan_sampler_.filter(*pcl_wait_save_);
+
+            // load pcd
+            std::ostringstream pcd_save_fname_ss;
+            pcd_save_fname_ss << output_dir << "/maps/" << std::setw(6) << std::setfill('0') << pcd_idx
+                              << ".pcd";
+            std::string pcd_save_fname(pcd_save_fname_ss.str());
+            if (!pcl_wait_save_->empty())
+                pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
+            pcd_idx++;
+            pcl_wait_save_->clear();
+            scan_wait_num = 0;
         }
     }
 }
@@ -706,32 +748,36 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
 /////////////////////////////////////  debug save / show /////////////////////////////////////////////////////
 
-void LaserMapping::PublishPath(const ros::Publisher pub_path) {
+void LaserMapping::PublishPath() {
     geometry_msgs::PoseStamped msg_body_pose;
-    SetPosestamp(msg_body_pose);
+    msg_body_pose.pose.position.x = state_point_.pos(0);
+    msg_body_pose.pose.position.y = state_point_.pos(1);
+    msg_body_pose.pose.position.z = state_point_.pos(2);
+    msg_body_pose.pose.orientation.x = state_point_.rot.coeffs()[0];
+    msg_body_pose.pose.orientation.y = state_point_.rot.coeffs()[1];
+    msg_body_pose.pose.orientation.z = state_point_.rot.coeffs()[2];
+    msg_body_pose.pose.orientation.w = state_point_.rot.coeffs()[3];
     msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time_);
     msg_body_pose.header.frame_id = tf_world_frame_;
 
     /*** if path is too large, the rvis will crash ***/
     path_.poses.push_back(msg_body_pose);
-    if (!run_in_offline_) {
-        pub_path.publish(path_);
-    }
-    Eigen::Isometry3d body_pose;
-    body_pose.linear() = Eigen::Quaterniond(msg_body_pose.pose.orientation.w, msg_body_pose.pose.orientation.x, msg_body_pose.pose.orientation.y,
-                                      msg_body_pose.pose.orientation.z).toRotationMatrix();
-    body_pose.translation() = Eigen::Vector3d(msg_body_pose.pose.position.x,msg_body_pose.pose.position.y,msg_body_pose.pose.position.z);
-    trajectory_.emplace_back(lidar_end_time_,body_pose);
-
+    pub_path_.publish(path_);
 }
 
-void LaserMapping::PublishOdometry(const ros::Publisher &pub_odom_aft_mapped) {
+void LaserMapping::PublishOdometry() {
     nav_msgs::Odometry odom_aft_mapped;
     odom_aft_mapped.header.frame_id = tf_world_frame_;
     odom_aft_mapped.child_frame_id = tf_imu_frame_;
     odom_aft_mapped.header.stamp = ros::Time().fromSec(lidar_end_time_);  // ros::Time().fromSec(lidar_end_time_);
-    SetPosestamp(odom_aft_mapped.pose);
-    pub_odom_aft_mapped.publish(odom_aft_mapped);
+    odom_aft_mapped.pose.pose.position.x = state_point_.pos(0);
+    odom_aft_mapped.pose.pose.position.y = state_point_.pos(1);
+    odom_aft_mapped.pose.pose.position.z = state_point_.pos(2);
+    odom_aft_mapped.pose.pose.orientation.x = state_point_.rot.coeffs()[0];
+    odom_aft_mapped.pose.pose.orientation.y = state_point_.rot.coeffs()[1];
+    odom_aft_mapped.pose.pose.orientation.z = state_point_.rot.coeffs()[2];
+    odom_aft_mapped.pose.pose.orientation.w = state_point_.rot.coeffs()[3];
+    pub_odom_aft_mapped_.publish(odom_aft_mapped);
     auto P = kf_.get_P();
     for (int i = 0; i < 6; i++) {
         int k = i < 3 ? i + 3 : i - 3;
@@ -756,100 +802,28 @@ void LaserMapping::PublishOdometry(const ros::Publisher &pub_odom_aft_mapped) {
     br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped.header.stamp, tf_world_frame_, tf_imu_frame_));
 }
 
-void LaserMapping::PublishFrameWorld() {
-    if (!(run_in_offline_ == false && scan_pub_en_) && !pcd_save_en_) {
-        return;
-    }
-
+void LaserMapping::PublishFrameWorld() const {
     PointCloud::Ptr scan_world;
-    if (dense_pub_en_) {
-        PointCloud::Ptr scan_full(scan_undistort_);
-        int size = scan_full->points.size();
-        scan_world.reset(new PointCloud(size, 1));
-        for (int i = 0; i < size; i++) {
-            PointBodyToWorld(&scan_full->points[i], &scan_world->points[i]);
-        }
-    } else {
-        scan_world = scan_down_world_;
-    }
+    scan_world = scan_down_world_;
 
-    if (run_in_offline_ == false && scan_pub_en_) {
-        sensor_msgs::PointCloud2 scan_msg;
-        pcl::toROSMsg(*scan_world, scan_msg);
-        scan_msg.header.stamp = ros::Time().fromSec(lidar_end_time_);
-        scan_msg.header.frame_id = tf_world_frame_;
-        pub_laser_cloud_world_.publish(scan_msg);
-    }
-    if (image_save_en_) {
-        static auto once = fs::create_directories(output_dir + "/images");
-        std::stringstream ss;
-        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
-        std::string img_save_fname(output_dir + "/images/" + ss.str() + ".jpg");
-        if (!measures_.img_.empty())
-            cv::imwrite(img_save_fname, measures_.img_);
-    }
-
-    if (pcd_save_en_) {
-        static auto once = fs::create_directories(output_dir + "/scans");
-        std::stringstream ss;
-        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
-        std::string pcd_save_fname(output_dir + "/scans/" + ss.str() + ".pcd");
-        pcl::io::savePCDFileBinary(pcd_save_fname, *scan_undistort_);
-    }
-
-    if (pcd_save_en_) {
-        *pcl_wait_save_ += *scan_world;
-        *final_map_ += *scan_world;
-        static int scan_wait_num = 0;
-        scan_wait_num++;
-        if (pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
-            static auto once = fs::create_directories(output_dir + "/maps");
-
-            // sample
-            scan_sampler_.setInputCloud(pcl_wait_save_);
-            scan_sampler_.filter(*pcl_wait_save_);
-
-            // load pcd
-            std::ostringstream pcd_save_fname_ss;
-            pcd_save_fname_ss << output_dir << "/maps/" << std::setw(6) << std::setfill('0') << pcd_idx
-                              << ".pcd";
-            std::string pcd_save_fname(pcd_save_fname_ss.str());
-            if (!pcl_wait_save_->empty())
-                pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
-            pcd_idx++;
-            pcl_wait_save_->clear();
-            scan_wait_num = 0;
-        }
-    }
+    sensor_msgs::PointCloud2 scan_msg;
+    pcl::toROSMsg(*scan_world, scan_msg);
+    scan_msg.header.stamp = ros::Time().fromSec(lidar_end_time_);
+    scan_msg.header.frame_id = tf_world_frame_;
+    pub_laser_cloud_world_.publish(scan_msg);
 }
 
-void LaserMapping::PublishFrameBody(const ros::Publisher &pub_laser_cloud_body) {
-    int size = scan_undistort_->points.size();
-    PointCloud::Ptr laser_cloud_imu_body(new PointCloud(size, 1));
-
-    for (int i = 0; i < size; i++) {
-        PointBodyLidarToIMU(&scan_undistort_->points[i], &laser_cloud_imu_body->points[i]);
-    }
-
-    sensor_msgs::PointCloud2 laserCloudmsg;
-    pcl::toROSMsg(*laser_cloud_imu_body, laserCloudmsg);
-    laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time_);
-    laserCloudmsg.header.frame_id = "body";
-    pub_laser_cloud_body.publish(laserCloudmsg);
-}
-
-void LaserMapping::PublishFrameEffectWorld(const ros::Publisher &pub_laser_cloud_effect_world) {
-    int size = corr_pts_.size();
-    PointCloud::Ptr laser_cloud(new PointCloud(size, 1));
-
-    for (int i = 0; i < size; i++) {
+void LaserMapping::PublishFrameEffectWorld() {
+    PointCloud::Ptr laser_cloud(new PointCloud);
+    laser_cloud->resize(corr_pts_.size());
+    for (int i = 0; i < corr_pts_.size(); i++) {
         PointBodyToWorld(corr_pts_[i].head<3>(), &laser_cloud->points[i]);
     }
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time_);
     laserCloudmsg.header.frame_id = tf_world_frame_;
-    pub_laser_cloud_effect_world.publish(laserCloudmsg);
+    pub_laser_cloud_effect_world_.publish(laserCloudmsg);
 }
 
 void LaserMapping::Savetrajectory(const std::string &traj_file) {
@@ -863,18 +837,6 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
     std::string cam_traj_file = fs::path(traj_file).parent_path().string() + "/cam_traj_log.txt";
     TrajectoryGenerator::save_to_tumtxt(cam_traj,cam_traj_file);
     TrajectoryGenerator::save_to_pcd(cam_traj,fs::path(traj_file).parent_path().string() + "/cam_traj_log.ply");
-}
-
-///////////////////////////  private method /////////////////////////////////////////////////////////////////////
-template <typename T>
-void LaserMapping::SetPosestamp(T &out) {
-    out.pose.position.x = state_point_.pos(0);
-    out.pose.position.y = state_point_.pos(1);
-    out.pose.position.z = state_point_.pos(2);
-    out.pose.orientation.x = state_point_.rot.coeffs()[0];
-    out.pose.orientation.y = state_point_.rot.coeffs()[1];
-    out.pose.orientation.z = state_point_.rot.coeffs()[2];
-    out.pose.orientation.w = state_point_.rot.coeffs()[3];
 }
 
 void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
@@ -910,17 +872,6 @@ void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *con
 }
 
 void LaserMapping::Finish() {
-    if (!final_map_->empty() && pcd_save_en_) {
-        // sample
-        pcl::UniformSampling<PointType> map_sampler;
-        map_sampler.setRadiusSearch(final_map_voxel_size_);
-        map_sampler.setInputCloud(final_map_);
-        map_sampler.filter(*final_map_);
-        // load pcd
-        std::string pcd_save_fname(output_dir + "/final_map.pcd");
-        pcl::io::savePCDFileBinary(pcd_save_fname, *final_map_);
-    }
-
     if (pcd_save_interval_ > 0) {
         static auto once = fs::create_directories(output_dir + "/maps");
 
@@ -937,6 +888,33 @@ void LaserMapping::Finish() {
             pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
         pcd_idx++;
     }
-    LOG(INFO) << "finish done";
+
+    mapper->ScanFilter();
+    boost::filesystem::create_directories(output_dir + "/global/");
+    auto loops = mapper->DetectLoopClosure();
+    mapper->SaveLoopToPcd(output_dir + "/global/loops.pcd");
+    if (!loops.empty()) {
+        mapper->PoseGraphOptimize();
+        TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/global/pgo.txt");
+        mapper->ExportMap(output_dir + "/global/pgo.pcd");
+    }
+    if (mapper->options_.ba_enable) {
+        for (int i = 0; i < mapper->options_.ba_iters; ++i) {
+            mapper->BundleAdjustment();
+        }
+    }
+
+    // export the poses in body frame
+    mapper->ExportMap(output_dir + "/final.pcd");
+    Trajectory kf_poses = mapper->ExportStampedPoses();
+    TrajectoryGenerator::save_to_tumtxt(kf_poses, output_dir + "/final.txt");
+
+    // export the poses in camera frame
+    Trajectory kf_cam_poses;
+    for (auto stamp_pose : kf_poses) {
+        stamp_pose.pose = stamp_pose.pose * extrin_ic_.Isometry3d();
+        kf_cam_poses.emplace_back(stamp_pose);
+    }
+    TrajectoryGenerator::save_to_tumtxt(kf_cam_poses, output_dir + "/cam_final.txt");
 }
 }  // namespace faster_lio

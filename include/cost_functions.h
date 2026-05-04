@@ -6,11 +6,19 @@
 #define FASTER_LIO_COST_FUNCTIONS_H
 #include <ceres/ceres.h>
 #include <ceres/rotation.h>
+#include "pose3.h"
+
 namespace faster_lio {
 template <typename T>
 using ConstEigenVector3Map = Eigen::Map<const Eigen::Matrix<T, 3, 1>>;
 template <typename T>
 using ConstEigenQuaternionMap = Eigen::Map<const Eigen::Quaternion<T>>;
+template <typename T>
+inline void EigenQuaternionLog(const T* eigen_quaternion, T* angle_axis) {
+    // the qw in Eigen is the last one, the qw in ceres is the first one
+    const T quaternion[4] = {eigen_quaternion[3], eigen_quaternion[0], eigen_quaternion[1], eigen_quaternion[2]};
+    ceres::QuaternionToAngleAxis(quaternion, angle_axis);
+}
 
 struct TwoVectorRotationCostFunctor {
    public:
@@ -69,7 +77,8 @@ struct PointOnPlaneCostFunctor {
         res[0] = T(weight) * normal_.cast<T>().dot(p - center_.cast<T>());
         return true;
     }
-    static ceres::CostFunction* Create(const Eigen::Vector3d& normal, const Eigen::Vector3d& center, const double& weight) {
+    static ceres::CostFunction* Create(const Eigen::Vector3d& normal, const Eigen::Vector3d& center,
+                                       const double& weight) {
         return new ceres::AutoDiffCostFunction<PointOnPlaneCostFunctor, 1, 3>(
             new PointOnPlaneCostFunctor(normal, center, weight));
     }
@@ -78,6 +87,41 @@ struct PointOnPlaneCostFunctor {
     Eigen::Vector3d normal_;
     Eigen::Vector3d center_;
     double weight;
+};
+struct RelativePoseCostFunctor {
+   public:
+    explicit RelativePoseCostFunctor(const Pose3& rel_pose, const double& pos_weight, const double& rot_weight)
+        : rel_pose_inv(rel_pose.GetInverse()), pos_weight(pos_weight), rot_weight(rot_weight) {}
+
+    template <typename T>
+    bool operator()(const T* const q_world_i, const T* const t_world_i, const T* const q_world_j,
+                    const T* const t_world_j, T* residuals_ptr) const {
+        ConstEigenQuaternionMap<T> qi(q_world_i);
+        ConstEigenVector3Map<T> ti(t_world_i);
+        ConstEigenQuaternionMap<T> qj(q_world_j);
+        ConstEigenVector3Map<T> tj(t_world_j);
+
+        // r error
+        const Eigen::Quaternion<T> R_error = rel_pose_inv.Quat().cast<T>() * qi.conjugate() * qj;
+        EigenQuaternionLog(R_error.coeffs().data(), residuals_ptr);
+        Eigen::Map<Eigen::Matrix<T, 3, 1>> r_error(residuals_ptr);
+        r_error = r_error * T(rot_weight);
+        // t error
+        // Rji * (Ri.t * tj - Ri.t * ti) + tji
+        Eigen::Map<Eigen::Matrix<T, 3, 1>> t_error(residuals_ptr + 3);
+        t_error = (rel_pose_inv.Quat().cast<T>() * (qi.conjugate() * (tj - ti)) + rel_pose_inv.Trans().cast<T>()) *
+                  T(pos_weight);
+        return true;
+    }
+    static ceres::CostFunction* Create(const Pose3& T_ij, const double& pos_weight, const double& rot_weight) {
+        return new ceres::AutoDiffCostFunction<RelativePoseCostFunctor, 6, 4, 3, 4, 3>(
+            new RelativePoseCostFunctor(T_ij, pos_weight, rot_weight));
+    }
+
+   private:
+    const Pose3 rel_pose_inv;
+    double pos_weight;
+    double rot_weight;
 };
 }  // namespace faster_lio
 #endif  // FASTER_LIO_COST_FUNCTIONS_H

@@ -22,20 +22,13 @@ mapping:
   extrin_t_il: [0.04165, 0.02326, -0.0284]
   extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
-publish:
-  path_publish_en: false
-  scan_publish_en: true       # false: close all the point cloud output
-  scan_effect_pub_en: true    # true: publish the pointscloud of effect point
-  dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
-  scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
-
 path_save_en: true                 # 保存轨迹，用于精度计算和比较
 
 pcd_save:
   pcd_save_en: true
   interval: 500                 # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
-  final_map_voxel_size: 0.1
+
 image_save_en: true
 
 feature_extract_enable: false
@@ -63,3 +56,19 @@ cam:
   extrin_R_cl: [ 0.00610193,-0.999863,-0.0154172,
                   -0.00615449,0.0153796,-0.999863,
                   0.999962,0.00619598,-0.0060598 ]
+
+global:
+  lc_enable: true
+  loop_weight: 1.0
+
+  ba_enable: true
+  ba_iters: 3
+
+  keyframe_dist_threshold: 0.5
+  keyframe_angle_threshold: 5.0
+  keyframe_time_threshold: 2.0
+
+  output_all_loop_reigster_result: false
+  lc_detect_dist_thr: 5.0
+  lc_detect_temporal_dist_thr: 30
+  sub_map_interval: 5

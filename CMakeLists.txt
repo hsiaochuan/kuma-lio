@@ -67,6 +67,13 @@ target_link_libraries(points_merge ${PROJECT_NAME} gflags)
 
 add_executable(lvba ./src/lvba.cpp)
 target_link_libraries(lvba ${PROJECT_NAME} gflags)
+
+add_executable(points_color ./src/points_color.cpp)
+target_link_libraries(points_color ${PROJECT_NAME} gflags)
+
+add_executable(offline_global_mapping ./src/offline_global_mapping.cpp)
+target_link_libraries(offline_global_mapping ${PROJECT_NAME} gflags)
+
 find_package(GTest REQUIRED)
 enable_testing()
 add_executable(camera_test src/camera_test.cpp)
