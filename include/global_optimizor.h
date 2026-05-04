@@ -161,7 +161,8 @@ class GlobalOptimizor {
             auto scan_id = static_cast<scan_t>(pt.intensity);
             keyscans_.erase(scan_id);
         }
-        std::cout << "keyframe count: " << keyscans_.size() << std::endl;
+
+        std::cout << "Total scans: " << scans_.size() << ", keyscans: " << keyscans_.size() << std::endl;
     }
     void BundleAdjustment() {
         // convert the points

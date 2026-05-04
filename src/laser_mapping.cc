@@ -908,6 +908,7 @@ void LaserMapping::Finish() {
     }
 
     // export the poses in body frame
+    std::cout << "Exporting final map and trajectory..." << std::endl;
     mapper->ExportMap(output_dir + "/final.pcd");
     Trajectory kf_poses = mapper->ExportStampedPoses();
     TrajectoryGenerator::save_to_tumtxt(kf_poses, output_dir + "/final.txt");

@@ -269,7 +269,7 @@ class SLAMTestRunner:
             self._run_offline(bag_file, config, output_dir)
         else:
             self._run_online(bag_file, config, output_dir)
-        self.run_post_process(output_dir)
+        # self.run_post_process(output_dir)
         if os.path.exists(os.path.join(output_dir, "images")):
             colmap.run_colmap(output_dir, extract_match=True, mapping=False)
             self.run_lvba(output_dir)
