@@ -43,10 +43,10 @@ ivox_nearby_type: 18             # 6, 18, 26
 esti_plane_threshold: 0.1        # default=0.1
 
 global:
-  lc_enable: true
+  lc_enable: false
   loop_weight: 1.0
 
-  ba_enable: true
+  ba_enable: false
   ba_iters: 3
 
   keyframe_dist_threshold: 0.5

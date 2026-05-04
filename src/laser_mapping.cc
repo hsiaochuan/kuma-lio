@@ -891,8 +891,11 @@ void LaserMapping::Finish() {
 
     mapper->ScanFilter();
     boost::filesystem::create_directories(output_dir + "/global/");
-    auto loops = mapper->DetectLoopClosure();
-    mapper->SaveLoopToPcd(output_dir + "/global/loops.pcd");
+    std::unordered_map<ScanPair, PairData> loops;
+    if (mapper->options_.lc_enable) {
+        loops = mapper->DetectLoopClosure();
+        mapper->SaveLoopToPcd(output_dir + "/global/loops.pcd");
+    }
     if (!loops.empty()) {
         mapper->PoseGraphOptimize();
         TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/global/pgo.txt");

@@ -58,10 +58,10 @@ cam:
                   0.999962,0.00619598,-0.0060598 ]
 
 global:
-  lc_enable: true
+  lc_enable: false
   loop_weight: 1.0
 
-  ba_enable: true
+  ba_enable: false
   ba_iters: 3
 
   keyframe_dist_threshold: 0.5
