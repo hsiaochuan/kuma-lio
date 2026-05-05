@@ -184,9 +184,14 @@ void RunSingleTargetOptimization(Calibration &calibra, SingleTargetState &state,
             for (const auto &val : vpnp_list) {
                 auto cam = std::dynamic_pointer_cast<faster_lio::PinholeRadialCamera>(calibra.camera_);
                 Eigen::Vector4d distort_param;
-                std::vector<double> param = cam->getParams();
+                std::vector<double> param = cam->get_params();
                 distort_param << param[4], param[5], param[7], param[8];
-                ceres::CostFunction *cost_function = VpnpCalib::Create(val, cam->K(), distort_param);
+                Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
+                K(0,0) = cam->fx_;
+                K(1,1) = cam->fy_;
+                K(0,2) = cam->cx_;
+                K(1,2) = cam->cy_;
+                ceres::CostFunction *cost_function = VpnpCalib::Create(val, K, distort_param);
                 problem.AddResidualBlock(cost_function, nullptr, ext, ext + 4);
             }
 

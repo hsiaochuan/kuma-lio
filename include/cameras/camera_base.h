@@ -55,8 +55,7 @@ class CamModel {
     using Ptr = std::shared_ptr<CamModel>;
     explicit CamModel(unsigned int w = 0, unsigned int h = 0) : w_(w), h_(h) {}
     virtual ~CamModel() = default;
-    virtual CAMERA_MODEL getType() const = 0;
-
+    virtual CAMERA_MODEL get_type() const = 0;
 
     // -- Image dimensions ----------------------------------------------------
     unsigned int w() const { return w_; }
@@ -64,37 +63,24 @@ class CamModel {
 
     // -- Projection ----------------------------------------------------------
 
-    virtual common::V2D project(const common::V3D& X, bool ignore_distort = false) const {
-        if (have_disto() && !ignore_distort)
-            return cam2ima(add_disto(X.hnormalized()));
-        return cam2ima(X.hnormalized());
-    }
-
-    bool valid(const Eigen::Vector2i & uv) const {
+    bool valid(const Eigen::Vector2i& uv) const {
         if (uv.x() < 0 || uv.x() >= w() || uv.y() < 0 || uv.y() >= h()) return false;
         return true;
     }
-    bool positive_z(const common::V3D& X) const { return X.z() > 0; }
+    bool positive_z(const Vec3& X) const { return X.z() > 0; }
 
-    /// Residual: observed pixel minus projected pixel
-    common::V2D residual(const common::V3D& X, const common::V2D& x, bool ignore_distortion = false) const {
-        return x - project(X, ignore_distortion);
-    }
+    virtual Vec2 cam2ima(const Vec2& p) const = 0;
+    virtual Vec2 ima2cam(const Vec2& p) const = 0;
 
-    // -- Coordinate transforms (pure virtual) --------------------------------
-    virtual common::V2D cam2ima(const common::V2D& p) const = 0;
-    virtual common::V2D ima2cam(const common::V2D& p) const = 0;
+    virtual Vec2 add_disto(const Vec2& p) const = 0;
+    virtual Vec2 remove_disto(const Vec2& p) const = 0;
+    virtual Vec2 get_ud_pixel(const Vec2& p) const = 0;
 
-    // -- Distortion (pure virtual) -------------------------------------------
-    virtual bool have_disto() const = 0;
-    virtual common::V2D add_disto(const common::V2D& p) const = 0;
-    virtual common::V2D remove_disto(const common::V2D& p) const = 0;
-    virtual common::V2D get_ud_pixel(const common::V2D& p) const = 0;
+    virtual Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const = 0;
+    virtual Vec2 project(const Vec3& X) const = 0;
 
-
-    // -- Parameters (pure virtual) -------------------------------------------
-    virtual std::vector<double> getParams() const = 0;
-    virtual bool updateFromParams(const std::vector<double>&) = 0;
+    virtual std::vector<double> get_params() const = 0;
+    virtual bool update_params(const std::vector<double>&) = 0;
 
     unsigned int w_;
     unsigned int h_;

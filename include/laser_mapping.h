@@ -19,6 +19,8 @@
 #include "pose3.h"
 #include "types.h"
 #include <stamp_pose.h>
+
+#include "Sfm_Data.h"
 namespace faster_lio {
 
 class LaserMapping {
@@ -39,11 +41,8 @@ class LaserMapping {
         LOG(INFO) << "laser mapping deconstruct";
     }
 
-    /// init with ros
-    bool InitROS(ros::NodeHandle &nh, const std::string & config_fname);
-
     /// init without ros
-    bool InitWithoutROS(const std::string &config_yaml);
+    bool Init(const std::string &config_fname);
 
     void Run();
 
@@ -70,7 +69,7 @@ class LaserMapping {
 
     void Finish();
     void PointBodyToWorld(PointType const *pi, PointType *const po);
-    void PointBodyToWorld(const common::V3F &pi, PointType *const po);
+    void PointBodyToWorld(const Vec3f &pi, PointType *const po);
     void PointBodyLidarToIMU(PointType const *const pi, PointType *const po);
 
     void MapIncremental();
@@ -102,12 +101,12 @@ class LaserMapping {
     PointCloud::Ptr scan_down_body_{new PointCloud()};   // downsampled scan in body
     PointCloud::Ptr scan_down_world_{new PointCloud()};  // downsampled scan in world
     std::vector<PointVector> nearest_points_;            // nearest points of current scan
-    common::VV4F corr_pts_;                              // inlier pts
-    common::VV4F corr_norm_;                             // inlier plane norms
+    std::vector<Vec4f> corr_pts_;                              // inlier pts
+    std::vector<Vec4f> corr_norm_;                             // inlier plane norms
     pcl::VoxelGrid<PointType> scan_sampler_;             // voxel filter for current scan
     std::vector<float> residuals_;                       // point-to-plane residuals
     std::vector<char> point_selected_surf_;              // selected points
-    common::VV4F plane_coef_;                            // plane coeffs
+    std::vector<Vec4f> plane_coef_;                            // plane coeffs
 
     /// topics
     std::string lidar_topic_;
@@ -150,7 +149,7 @@ class LaserMapping {
     int effect_feat_num_ = 0;
 
     ///////////////////////// EKF inputs and output ///////////////////////////////////////////////////////
-    common::MeasureGroup measures_;                    // sync IMU and lidar scan
+    MeasureGroup measures_;                    // sync IMU and lidar scan
     esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;  // esekf
     state_ikfom state_point_;                          // ekf current state
     bool extrinsic_est_en_ = true;
@@ -165,6 +164,7 @@ class LaserMapping {
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
     nav_msgs::Path path_;
     Trajectory trajectory_;
+    Sfm_Data sfm_data_;
    public:
     std::string output_dir;
 };

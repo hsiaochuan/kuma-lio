@@ -144,6 +144,11 @@ class SLAMTestRunner:
             output_root: str = "./test_results",
             rviz_config: str = "../rviz_cfg/loam_livox.rviz",
             online_wait: int = 5,
+
+            if_delete_result_dir: bool = False,
+            if_slam: bool = True,
+            if_lvba: bool = True,
+            if_postprocess: bool = False,
     ):
         self.offline_app = offline_app
         self.online_app = online_app
@@ -159,6 +164,11 @@ class SLAMTestRunner:
 
         ts = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         self.run_ts = ts
+
+        self.if_delete_result_dir = if_delete_result_dir
+        self.if_slam = if_slam
+        self.if_lvba = if_lvba
+        self.if_postprocess = if_postprocess
 
     # ── Build ──────────────────────────────────
 
@@ -213,11 +223,11 @@ class SLAMTestRunner:
     def run_lvba(self, output_dir: str):
         subprocess.run([
             self.lvba_app,
-            '--cam_trajectory', os.path.join(output_dir, "cam_traj_log.txt"),
+            '--cam_trajectory', os.path.join(output_dir, "cam_final.txt"),
             '--lidar_points_fname', os.path.join(output_dir, "final.pcd"),
             '--database', os.path.join(output_dir, "database.db"),
             '--colmap_output', os.path.join(output_dir, "colmap_result"),
-        ])
+        ], check=True)
     def _run_online(self, bag_file: str, config: str, output_dir: str) -> bool:
         roscore = rviz = online_proc = None
         try:
@@ -265,15 +275,17 @@ class SLAMTestRunner:
 
         # pipeline
         start_time = time.time()
-        if run_mode == RunMode.OFFLINE:
-            self._run_offline(bag_file, config, output_dir)
-        else:
-            self._run_online(bag_file, config, output_dir)
-        # self.run_post_process(output_dir)
-        if os.path.exists(os.path.join(output_dir, "images")):
-            colmap.run_colmap(output_dir, extract_match=True, mapping=False)
-            self.run_lvba(output_dir)
-            self.run_points_color(output_dir)
+        if self.if_slam:
+            if run_mode == RunMode.OFFLINE:
+                self._run_offline(bag_file, config, output_dir)
+            else:
+                self._run_online(bag_file, config, output_dir)
+        if self.if_postprocess:
+            self.run_post_process(output_dir)
+        if os.path.exists(os.path.join(output_dir, "images")) and self.if_lvba:
+            colmap.run_colmap(output_dir, extract_match=True, mapping=False, triangulate=True)
+            # self.run_lvba(output_dir)
+            # self.run_points_color(output_dir)
         end_time = time.time()
 
 
@@ -304,7 +316,7 @@ class SLAMTestRunner:
                 Path(bag_file).parent,
                 name + "_faster_lio_result"
             )
-            if os.path.exists(output_dir):
+            if os.path.exists(output_dir) and self.if_delete_result_dir:
                 print(f"Result dir {output_dir} already exists, remove it")
                 shutil.rmtree(output_dir)
             os.makedirs(output_dir, exist_ok=True)
@@ -364,10 +376,18 @@ def main():
     parser.add_argument("--datasets", nargs="+",
                         default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
                         help="Run only specified datasets (by name)")
+    parser.add_argument("--if_delete_result_dir", action="store_true", default=False, help="Delete result dir if exists")
+    parser.add_argument("--if_slam", action="store_true", default=False, help="Run SLAM")
+    parser.add_argument("--if_lvba", action="store_true", default=True, help="Run LVBA")
+    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
     args = parser.parse_args()
 
     data_name_list = args.datasets
     runner = SLAMTestRunner()
+    runner.if_delete_result_dir = args.if_delete_result_dir
+    runner.if_slam = args.if_slam
+    runner.if_lvba = args.if_lvba
+    runner.if_postprocess = args.if_postprocess
     datasets = DatasetsList(data_name_list)
     print(f"Selected datasets: {[d.name for d in datasets]}")
     runner.run_all(datasets)

@@ -19,48 +19,40 @@ class PinholeCamera : public CamModel {
    public:
     PinholeCamera(unsigned int w = 0, unsigned int h = 0, double fx = 0.0, double fy = 0.0, double cx = 0.0,
                   double cy = 0.0)
-        : CamModel(w, h) {
-        K_ << fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0;
-        Kinv_ = K_.inverse();
-    }
-
-    PinholeCamera(unsigned int w, unsigned int h, const common::M3D &K) : CamModel(w, h), K_(K) {
-        K_(0, 0) = K_(1, 1) = (K(0, 0) + K(1, 1)) / 2.0;
-        Kinv_ = K_.inverse();
-    }
+        : CamModel(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy) {}
 
     ~PinholeCamera() override = default;
 
-    CAMERA_MODEL getType() const override { return PINHOLE; }
+    CAMERA_MODEL get_type() const override { return PINHOLE; }
 
-    const common::M3D K() const { return K_; }
-    const common::M3D Kinv() const { return Kinv_; }
-    double focal() const { return K_(0, 0) / 2.0 + K_(1, 1) / 2.0; }
-    common::V2D principal_point() const { return {K_(0, 2), K_(1, 2)}; }
+    double focal() const { return fx_ * 0.5 + fy_ * 0.5; }
+    Vec2 principal_point() const { return {cx_, cy_}; }
 
-    // -- Coordinate transforms -----------------------------------------------
-    common::V2D cam2ima(const common::V2D &p) const override { return focal() * p + principal_point(); }
-    common::V2D ima2cam(const common::V2D &p) const override { return (p - principal_point()) / focal(); }
+    Vec2 cam2ima(const Vec2 &p) const override { return focal() * p + principal_point(); }
+    Vec2 ima2cam(const Vec2 &p) const override { return (p - principal_point()) / focal(); }
 
-    // -- Distortion (none) ---------------------------------------------------
-    bool have_disto() const override { return false; }
-    common::V2D add_disto(const common::V2D &p) const override { return p; }
-    common::V2D remove_disto(const common::V2D &p) const override { return p; }
-    common::V2D get_ud_pixel(const common::V2D &p) const override { return p; }
+    Vec2 add_disto(const Vec2 &p) const override { return p; }
+    Vec2 remove_disto(const Vec2 &p) const override { return p; }
+    Vec2 get_ud_pixel(const Vec2 &p) const override { return p; }
 
+    Vec2 project(const Vec3 &X) const override { return cam2ima(add_disto(X.hnormalized())); }
+    Eigen::Vector3d bearing(const Eigen::Vector2d &ima_point) const override {
+        return ima2cam(get_ud_pixel(ima_point)).homogeneous().normalized();
+    }
 
     // -- Parameters ----------------------------------------------------------
-    std::vector<double> getParams() const override { return {K_(0, 0), K_(1, 1), K_(0, 2), K_(1, 2)}; }
+    std::vector<double> get_params() const override { return {fx_, fy_, cx_, cy_}; }
 
-    bool updateFromParams(const std::vector<double> &params) override {
-        if (params.size() != 4) return false;
+    bool update_params(const std::vector<double> &params) override {
+        CHECK(params.size() == 4) << "PinholeCamera requires 4 parameters: [fx, fy, cx, cy]";
         *this = PinholeCamera(w_, h_, params[0], params[1], params[2], params[3]);
         return true;
     }
 
-   private:
-    common::M3D K_;
-    common::M3D Kinv_;
+    double fx_;
+    double fy_;
+    double cx_;
+    double cy_;
 };
 }  // namespace faster_lio
 

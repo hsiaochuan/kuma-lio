@@ -25,102 +25,66 @@ namespace faster_lio {
  */
 class PinholeRadialCamera : public CamModel {
    public:
-    PinholeRadialCamera(unsigned int w  = 0,
-                        unsigned int h  = 0,
-                        double       fx  = 0.0,
-                        double       fy  = 0.0,
-                        double       cx = 0.0,
-                        double       cy = 0.0,
-                        double       k1 = 0.0,
-                        double       k2 = 0.0,
-                        double       k3 = 0.0,
-                        double       p1 = 0.0,
-                        double       p2 = 0.0)
-        : CamModel(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy),
-          params_({k1, k2, k3, p1, p2}) {
-        K_ << fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0;
-        Kinv_ = K_.inverse();
-    }
+    PinholeRadialCamera(unsigned int w = 0, unsigned int h = 0, double fx = 0.0, double fy = 0.0, double cx = 0.0,
+                        double cy = 0.0, double k1 = 0.0, double k2 = 0.0, double k3 = 0.0, double p1 = 0.0,
+                        double p2 = 0.0)
+        : CamModel(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy), k1_(k1), k2_(k2), k3_(k3), p1_(p1), p2_(p2) {}
 
     ~PinholeRadialCamera() override = default;
 
+    CAMERA_MODEL get_type() const override { return PINHOLE_RADIAL; }
 
-    CAMERA_MODEL getType() const override { return PINHOLE_RADIAL; }
-
-    // -- Accessors -----------------------------------------------------------
-    const common::M3D K() const { return K_; }
-    const common::M3D Kinv() const { return Kinv_; }
-    double focal() const { return K_(0, 0) / 2.0 + K_(1, 1) / 2.0; }
-    common::V2D principal_point() const { return {K_(0, 2), K_(1, 2)}; }
+    double focal() const { return fx_ * 0.5 + fy_ * 0.5; }
+    Vec2 principal_point() const { return {cx_, cy_}; }
 
     // -- Coordinate transforms -----------------------------------------------
-    common::V2D cam2ima(const common::V2D& p) const override {
-        return focal() * p + common::V2D{cx_, cy_};
-    }
-    common::V2D ima2cam(const common::V2D& p) const override {
-        return (p - common::V2D{cx_, cy_}) / focal();
-    }
+    Vec2 cam2ima(const Vec2& p) const override { return focal() * p + Vec2{cx_, cy_}; }
+    Vec2 ima2cam(const Vec2& p) const override { return (p - Vec2{cx_, cy_}) / focal(); }
 
-    // -- Distortion ----------------------------------------------------------
-    bool have_disto() const override { return true; }
-
-    common::V2D add_disto(const common::V2D& p) const override {
-        return p + distoFunction(params_, p);
-    }
-
-    /**
-     * @brief Iterative undistortion (Heikkilä 2000).
-     */
-    common::V2D remove_disto(const common::V2D& p) const override {
+    Vec2 add_disto(const Vec2& p) const override { return p + distoFunction(k1_, k2_, k3_, p1_, p2_, p); }
+    Vec2 remove_disto(const Vec2& p) const override {
         constexpr double kEps = 1e-10;
-        common::V2D p_u = p;
-        common::V2D d   = distoFunction(params_, p_u);
+        Vec2 p_u = p;
+        Vec2 d = distoFunction(k1_, k2_, k3_, p1_, p2_, p_u);
         while ((p_u + d - p).template lpNorm<1>() > kEps) {
             p_u = p - d;
-            d   = distoFunction(params_, p_u);
+            d = distoFunction(k1_, k2_, k3_, p1_, p2_, p_u);
         }
         return p_u;
     }
+    Vec2 get_ud_pixel(const Vec2& p) const override { return cam2ima(remove_disto(ima2cam(p))); }
 
-    common::V2D get_ud_pixel(const common::V2D& p) const override {
-        return cam2ima(remove_disto(ima2cam(p)));
+    Vec2 project(const Vec3& X) const override { return cam2ima(add_disto(X.hnormalized())); }
+    Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const override {
+        return ima2cam(get_ud_pixel(ima_point)).homogeneous().normalized();
     }
-
-    // -- Parameters ----------------------------------------------------------
-    std::vector<double> getParams() const override {
-        return {fx_, fy_, cx_, cy_,
-                params_[0], params_[1], params_[2],   // K1, K2, K3
-                params_[3], params_[4]};               // P1, P2
-    }
-    bool updateFromParams(const std::vector<double>& params) override {
-        if (params.size() != 9) return false;
-        *this = PinholeRadialCamera(w_, h_,
-                                    params[0], params[1], params[2], params[3],
-                                    params[4], params[5],params[6],
+    std::vector<double> get_params() const override { return {fx_, fy_, cx_, cy_, k1_, k2_, k3_, p1_, p2_}; }
+    bool update_params(const std::vector<double>& params) override {
+        CHECK(params.size() == 9) << "Expected 9 parameters for PinholeRadialCamera, got " << params.size();
+        *this = PinholeRadialCamera(w_, h_, params[0], params[1], params[2], params[3], params[4], params[5], params[6],
                                     params[7], params[8]);
         return true;
     }
 
-   private:
-    Eigen::Matrix3d K_;
-    Eigen::Matrix3d Kinv_;
-
-    double fx_;   ///< Focal length (pixels)
+    double fx_;
     double fy_;
-    double cx_;  ///< Principal-point x
-    double cy_;  ///< Principal-point y
-    std::vector<double> params_;  ///< [K1, K2, K3, T1, T2]
+    double cx_;
+    double cy_;
 
-    static common::V2D distoFunction(const std::vector<double>& params,
-                                     const common::V2D& p) {
-        const double k1 = params[0], k2 = params[1], k3 = params[2];
-        const double p1 = params[3], p2 = params[4];
-        const double r2     = p(0) * p(0) + p(1) * p(1);
-        const double r4     = r2 * r2;
-        const double r6     = r4 * r2;
+    double k1_;
+    double k2_;
+    double k3_;
+    double p1_;
+    double p2_;
+
+    static Vec2 distoFunction(const double& k1, const double& k2, const double& k3, const double& p1, const double& p2,
+                              const Vec2& p) {
+        const double r2 = p(0) * p(0) + p(1) * p(1);
+        const double r4 = r2 * r2;
+        const double r6 = r4 * r2;
         const double k_diff = k1 * r2 + k2 * r4 + k3 * r6;
-        const double tx     = p2 * (r2 + 2.0 * p(0) * p(0)) + 2.0 * p1 * p(0) * p(1);
-        const double ty     = p1 * (r2 + 2.0 * p(1) * p(1)) + 2.0 * p2 * p(0) * p(1);
+        const double tx = p2 * (r2 + 2.0 * p(0) * p(0)) + 2.0 * p1 * p(0) * p(1);
+        const double ty = p1 * (r2 + 2.0 * p(1) * p(1)) + 2.0 * p2 * p(0) * p(1);
         return {p(0) * k_diff + tx, p(1) * k_diff + ty};
     }
 };

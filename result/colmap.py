@@ -13,7 +13,6 @@ def ReadCameraModel(yaml_file: str) -> str:
     Based on COLMAP models.h:
     - RADIAL: f, cx, cy, k1, k2
     - OPENCV: fx, fy, cx, cy, k1, k2, p1, p2
-    - FULL_OPENCV: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6
     """
     with open(yaml_file, "r") as f:
         config = yaml.safe_load(f)
@@ -26,7 +25,6 @@ def ReadCameraModel(yaml_file: str) -> str:
         "pinhole": "PINHOLE",
         "pinhole_radial": "OPENCV",
         "pinhole_fisheye": "OPENCV_FISHEYE",
-        "spherical": "OPENCV"
     }
 
     return model_mapping.get(model_name, "OPENCV")
@@ -62,6 +60,8 @@ def ReadCameraParams(yaml_file: str) -> str:
 
     # join as comma-separated string without spaces
     return ','.join([str(x) for x in params])
+
+
 def tum_to_image_list_file(tum_file: str, images_dir: str, output_path: str) -> None:
     with open(tum_file, "r") as f:
         lines = f.readlines()
@@ -77,14 +77,6 @@ def tum_to_image_list_file(tum_file: str, images_dir: str, output_path: str) -> 
             print(f"Warning: Image file {img_path} does not exist.")
 
     write_image_list(image_paths, output_path)
-def sample_images(img_dir: str, sample_interval: int) -> List[str]:
-    sample_result = []
-    img_files = os.listdir(img_dir)
-    img_files.sort()
-    for i in range(0, len(img_files), sample_interval):
-        sample_result.append(os.path.join(img_dir, img_files[i]))
-    return sample_result
-
 
 def write_image_list(image_paths: List[str], output_path: str) -> None:
     with open(output_path, "w") as f:
@@ -92,15 +84,14 @@ def write_image_list(image_paths: List[str], output_path: str) -> None:
             f.write(img + "\n")
 
 
-def run_colmap(seq_dir: str,
+def run_colmap(data_dir: str,
                extract_match: bool = True,
-               mapping: bool = True) -> None:
-    img_dir = os.path.join(seq_dir, "images")
-    database_fname = os.path.join(seq_dir, "database.db")
-    config_fname = os.path.join(seq_dir, "config.yaml")
-    image_list_path = os.path.join(seq_dir, "images.txt")
-
-    tum_to_image_list_file(os.path.join(seq_dir, "/global/init.txt"), img_dir, image_list_path)
+               mapping: bool = True,
+               triangulate: bool = True) -> None:
+    img_dir = os.path.join(data_dir, "images")
+    database_fname = os.path.join(data_dir, "database.db")
+    config_fname = os.path.join(data_dir, "config.yaml")
+    image_list_path = os.path.join(data_dir, "images.txt")
 
     if extract_match:
         subprocess.run([
@@ -118,10 +109,22 @@ def run_colmap(seq_dir: str,
             "--database_path", database_fname,
             "--SiftMatching.guided_matching", "1",
         ], check=True)
-
+    if triangulate:
+        os.makedirs(os.path.join(data_dir, "colmap_final"), exist_ok=True)
+        subprocess.run([
+            COLMAP_EXE, "point_triangulator",
+            '--database_path', database_fname,
+            '--image_path', img_dir,
+            '--input_path', os.path.join(data_dir, "colmap_result"),
+            '--output_path', os.path.join(data_dir, "colmap_final"),
+            '--Mapper.tri_ignore_two_view_tracks', '0',
+        ],check=True)
+        subprocess.run([
+            COLMAP_EXE, "model_analyzer",
+            "--path", os.path.join(data_dir, "colmap_final"),
+        ], check=True)
     if mapping:
-        sparse_dir = os.path.join(seq_dir, "sparse")
-        sparse_model_dir = os.path.join(sparse_dir, "0")
+        sparse_dir = os.path.join(data_dir, "sparse", "0")
         os.makedirs(sparse_dir, exist_ok=True)
         subprocess.run([
             COLMAP_EXE, "mapper",
@@ -133,14 +136,15 @@ def run_colmap(seq_dir: str,
         subprocess.run([
             COLMAP_EXE, "model_converter",
             "--output_type", "TXT",
-            "--input_path", sparse_model_dir,
-            "--output_path", sparse_model_dir,
+            "--input_path", sparse_dir,
+            "--output_path", sparse_dir,
         ], check=True)
 
         subprocess.run([
             COLMAP_EXE, "model_analyzer",
-            "--path", sparse_model_dir,
+            "--path", sparse_dir,
         ], check=True)
+
 
 def main() -> None:
     for seq in seq_dirs:

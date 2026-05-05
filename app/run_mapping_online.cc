@@ -26,7 +26,8 @@ int main(int argc, char **argv) {
     ros::NodeHandle nh;
 
     auto laser_mapping = std::make_shared<faster_lio::LaserMapping>();
-    laser_mapping->InitROS(nh,FLAGS_config_fname);
+    laser_mapping->Init(FLAGS_config_fname);
+    laser_mapping->SubAndPubToROS(nh);
     laser_mapping->output_dir = FLAGS_output_dir;
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);

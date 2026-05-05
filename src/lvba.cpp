@@ -4,15 +4,18 @@
 #include <boost/program_options.hpp>
 
 #include <float.h>
+#include <algorithm>
+#include <boost/histogram.hpp>
 #include <boost/pending/disjoint_sets.hpp>
 #include <unordered_set>
+#include "Sfm_Data.h"
 #include "ba_cost_functions.h"
 #include "common_lib.h"
 #include "cost_functions.h"
 #include "lidar_simulator.h"
-#include "reconstruction.h"
 #include "stamp_pose.h"
 #include "union_find.h"
+
 namespace po = boost::program_options;
 
 int main(int argc, char** argv) {
@@ -39,7 +42,7 @@ int main(int argc, char** argv) {
     faster_lio::TrajectoryInterpolator cam_interpolator(cam_stamped_poses);
 
     // load from COLMAP
-    Reconstruction recon;
+    Sfm_Data recon;
     recon.LoadFromDatabase(databse_fname);
 
     // load camera poses
@@ -53,6 +56,8 @@ int main(int argc, char** argv) {
     UnionFind uf;
     std::unordered_set<size_t> obs_set;
     for (const auto& [image_pair_id, two_view_geometry] : recon.two_view_geometries_) {
+        if (two_view_geometry.config == TwoViewGeometry::WATERMARK || two_view_geometry.inlier_matches.size() < 15)
+            continue;
         FeatureMatches pair_match = two_view_geometry.inlier_matches;
         auto [image_id1, image_id2] = PairIdToImagePair(image_pair_id);
         for (auto match : pair_match) {
@@ -68,7 +73,8 @@ int main(int argc, char** argv) {
 
     std::unordered_map<uint64_t, std::unordered_set<uint64_t>> track_map;
     for (auto obs_id : obs_set) {
-        track_map[uf.Find(obs_id)].insert(obs_id);
+        landmark_t track_id = uf.Find(obs_id);
+        track_map[track_id].insert(obs_id);
     }
 
     std::unordered_set<size_t> problematic_track_id;
@@ -86,16 +92,62 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unordered_set<size_t> remove_track_id;
+    for (auto& track_id : problematic_track_id) {
+        std::unordered_set<size_t>& obs_ids = track_map[track_id];
+        std::unordered_map<image_t, Eigen::Vector2d> image_obs_map;
+        for (auto obs_id : obs_ids) {
+            Observation obs = IdToObservation(obs_id);
+            image_t image_id = obs.image_id;
+            if (image_obs_map.count(image_id) > 0) {
+                // found duplicate, valid the distance
+                Eigen::Vector2d kp1 = image_obs_map[image_id];
+                Eigen::Vector2d kp2 = recon.images_[image_id]->points_[obs.point2d_id];
+                if ((kp1 - kp2).norm() > 4.0) remove_track_id.insert(track_id);
+            } else
+                image_obs_map[image_id] = recon.images_[image_id]->points_[obs.point2d_id];
+        }
+    }
+
+    std::cout << "Remove track id count: " << remove_track_id.size() << std::endl;
     for (auto& [track_id, obs_ids] : track_map) {
-        if (problematic_track_id.count(track_id) > 0) continue;
+        if (remove_track_id.count(track_id) > 0) continue;
         if (obs_ids.size() < 2) continue;
         recon.landmarks_[track_id] = Landmark();
         for (auto obs_id : obs_ids) {
             recon.landmarks_[track_id].track.emplace_back(IdToObservation(obs_id));
         }
     }
-
-    std::cout << "Total track count: " << recon.landmarks_.size() << std::endl;
+    std::cout << "Landmark count: " << recon.landmarks_.size() << std::endl;
+    std::cout << "Triangulate points..." << std::endl;
+    RobustTriangulate(recon);
+    for (auto it = recon.landmarks_.begin(); it != recon.landmarks_.end();) {
+        if (it->second.xyz.hasNaN()) {
+            it = recon.landmarks_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::vector<int> track_lens;
+    for (const auto& [id, lm] : recon.landmarks_) {
+        track_lens.push_back(lm.track.size());
+    }
+    if (!track_lens.empty()) {
+        namespace bh = boost::histogram;
+        const auto min_len_it = std::min_element(track_lens.begin(), track_lens.end());
+        const auto max_len_it = std::max_element(track_lens.begin(), track_lens.end());
+        const int min_len = *min_len_it;
+        const int max_len = *max_len_it;
+        auto hist = bh::make_histogram(bh::axis::integer<>(min_len, max_len + 1));
+        for (int len : track_lens) {
+            hist(len);
+        }
+        std::cout << "Track length histogram (len: count)" << std::endl;
+        for (auto&& bin : bh::indexed(hist)) {
+            std::cout << bin.bin() << ": " << *bin << std::endl;
+        }
+    }
+    std::cout << "Landmark count: " << recon.landmarks_.size() << std::endl;
     std::cout << "Average track length: " << recon.MeanTrackLength() << std::endl;
 
     // load lidar points
@@ -142,7 +194,7 @@ int main(int argc, char** argv) {
     ceres::Problem problem;
     std::unordered_map<camera_t, std::vector<double>> camera_params;
     for (auto& [camera_id, camera] : recon.cameras_) {
-        camera_params[camera_id] = camera->getParams();
+        camera_params[camera_id] = camera->get_params();
         problem.AddParameterBlock(camera_params[camera_id].data(), camera_params[camera_id].size(), nullptr);
         problem.SetParameterBlockConstant(camera_params[camera_id].data());
     }
@@ -179,9 +231,9 @@ int main(int argc, char** argv) {
                 Eigen::Vector2d& point2d = img->points_[track_elem.point2d_id];
                 std::shared_ptr<CamModel> camera = recon.cameras_[img->CameraId()];
                 ceres::CostFunction* cost_function;
-                if (camera->getType() == CAMERA_MODEL::PINHOLE) {
+                if (camera->get_type() == CAMERA_MODEL::PINHOLE) {
                     cost_function = PinholeIntrinsicCostFunctor::Create(point2d, 1.0);
-                } else if (camera->getType() == CAMERA_MODEL::PINHOLE_RADIAL) {
+                } else if (camera->get_type() == CAMERA_MODEL::PINHOLE_RADIAL) {
                     cost_function = PinholeRadialIntrinsicCostFunctor::Create(point2d, 1.0);
                 } else {
                     std::cerr << "Unsupported camera model" << std::endl;

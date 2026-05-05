@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
     const std::string output_dir = FLAGS_output_dir;
     auto laser_mapping = std::make_shared<faster_lio::LaserMapping>();
     laser_mapping->output_dir = output_dir;
-    if (!laser_mapping->InitWithoutROS(FLAGS_config_file)) {
+    if (!laser_mapping->Init(FLAGS_config_file)) {
         LOG(ERROR) << "laser mapping init failed.";
         return -1;
     }

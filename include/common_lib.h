@@ -88,7 +88,7 @@ struct hash<faster_lio::VOXEL_LOCATION> {
 using PointType = faster_lio::Point;
 using PointCloud = pcl::PointCloud<faster_lio::Point>;
 using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
-namespace faster_lio::common {
+namespace faster_lio {
 
 constexpr double G_m_s2 = 9.81;  // Gravity const in GuangDong/China
 
@@ -129,34 +129,27 @@ template <typename S>
 inline Eigen::Matrix<S, 3, 3> RotationFromArray(const std::vector<double> &v) {
     if (v.size() != 9 && v.size() != 4) throw std::runtime_error("Invalid rotation matrix");
     Eigen::Matrix<S, 3, 3> rotation;
-    if (v.size() == 9) rotation = common::MatFromArray<double>(v);
+    if (v.size() == 9) rotation = MatFromArray<double>(v);
     else if (v.size() == 4)
-        rotation = common::QuatFromArray<double>(v).toRotationMatrix();
+        rotation = QuatFromArray<double>(v).toRotationMatrix();
     return rotation;
 }
-using V2D = Eigen::Vector2d;
-using V3D = Eigen::Vector3d;
-using V4D = Eigen::Vector4d;
-using V5D = Eigen::Matrix<double, 5, 1>;
-using M3D = Eigen::Matrix3d;
-using M4D = Eigen::Matrix4d;
-using V3F = Eigen::Vector3f;
-using V4F = Eigen::Vector4f;
-using V5F = Eigen::Matrix<float, 5, 1>;
-using M3F = Eigen::Matrix3f;
-using M4F = Eigen::Matrix4f;
+using Mat = Eigen::MatrixXd;
+using Vec = Eigen::VectorXd;
 
-using VV3D = std::vector<V3D, Eigen::aligned_allocator<V3D>>;
-using VV3F = std::vector<V3F, Eigen::aligned_allocator<V3F>>;
-using VV4F = std::vector<V4F, Eigen::aligned_allocator<V4F>>;
-using VV4D = std::vector<V4D, Eigen::aligned_allocator<V4D>>;
-using VV5F = std::vector<V5F, Eigen::aligned_allocator<V5F>>;
-using VV5D = std::vector<V5D, Eigen::aligned_allocator<V5D>>;
+using Vec2 = Eigen::Vector2d;
+using Mat2X = Eigen::Matrix<double, 2, Eigen::Dynamic>;
 
-const M3D Eye3d = M3D::Identity();
-const M3F Eye3f = M3F::Identity();
-const V3D Zero3d(0, 0, 0);
-const V3F Zero3f(0, 0, 0);
+using Vec3 = Eigen::Vector3d;
+using Vec3f = Eigen::Vector3f;
+using Mat3X = Eigen::Matrix<double, 3, Eigen::Dynamic>;
+using Mat3 = Eigen::Matrix<double, 3, 3>;
+using Mat3f = Eigen::Matrix<float, 3, 3>;
+using Mat34 = Eigen::Matrix<double, 3, 4>;
+
+using Vec4 = Eigen::Vector4d;
+using Vec4f = Eigen::Vector4f;
+using Mat4 = Eigen::Matrix<double, 4, 4>;
 
 /// sync imu and lidar measurements
 struct MeasureGroup {
@@ -201,16 +194,8 @@ Pose6D set_pose6d(const double t, const Eigen::Matrix<T, 3, 1> &a, const Eigen::
     return rot_kp;
 }
 
-inline float calc_dist(const Eigen::Vector3f &p1, const Eigen::Vector3f &p2) { return (p1 - p2).squaredNorm(); }
 
-/**
- * estimate a plane
- * @tparam T
- * @param pca_result
- * @param point
- * @param threshold
- * @return
- */
+
 template <typename T>
 inline bool esti_plane(Eigen::Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &threshold = 0.1f) {
     if (point.size() < options::MIN_NUM_MATCH_POINTS) {
@@ -270,9 +255,7 @@ inline bool esti_plane(Eigen::Matrix<T, 4, 1> &pca_result, const PointVector &po
     return true;
 }
 
-}  // namespace faster_lio::common
 
-namespace faster_lio {
 using scan_t = uint32_t;
 struct ScanFrame {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW

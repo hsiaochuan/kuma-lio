@@ -3,8 +3,8 @@
 #include <boost/program_options.hpp>
 #include <fstream>
 #include <unordered_set>
+#include "Sfm_Data.h"
 #include "common_lib.h"
-#include "reconstruction.h"
 #include "stamp_pose.h"
 
 #define QUICKHULL_IMPLEMENTATION
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     RenderOptions options;
 
     // load images
-    Reconstruction recon;
+    Sfm_Data recon;
     recon.LoadFromCOLMAPResult(colmap_result);
 
     // load

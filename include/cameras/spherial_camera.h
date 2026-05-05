@@ -27,43 +27,36 @@ namespace faster_lio {
  */
 class SphericalCamera : public CamModel {
    public:
-    explicit SphericalCamera(unsigned int w = 0, unsigned int h = 0)
-        : CamModel(w, h) {
-    }
+    explicit SphericalCamera(unsigned int w = 0, unsigned int h = 0) : CamModel(w, h) {}
 
     ~SphericalCamera() override = default;
 
-    CAMERA_MODEL getType() const override { return SPHERICAL; }
+    CAMERA_MODEL get_type() const override { return SPHERICAL; }
 
-    // -- Projection (overrides default perspective-divide path) --------------
-    common::V2D project(const common::V3D& X,
-                        bool /*ignore_distortion*/ = false) const override {
+    Vec2 cam2ima(const Vec2& p) const override {
+        const double S = static_cast<double>(std::max(w_, h_));
+        return {p.x() * S + w_ / 2.0, p.y() * S + h_ / 2.0};
+    }
+    Vec2 ima2cam(const Vec2& p) const override {
+        const double S = static_cast<double>(std::max(w_, h_));
+        return {(p.x() - w_ / 2.0) / S, (p.y() - h_ / 2.0) / S};
+    }
+    Vec2 add_disto(const Vec2& p) const override { return p; }
+    Vec2 remove_disto(const Vec2& p) const override { return p; }
+    Vec2 get_ud_pixel(const Vec2& p) const override { return p; }
+
+    Vec2 project(const Vec3& X) const override {
         const double lon = std::atan2(X.x(), X.z());
         const double lat = std::atan2(-X.y(), std::hypot(X.x(), X.z()));
         return cam2ima({lon / (2.0 * M_PI), -lat / (2.0 * M_PI)});
     }
-
-    // -- Coordinate transforms -----------------------------------------------
-    common::V2D cam2ima(const common::V2D& p) const override {
-        const double S = static_cast<double>(std::max(w_, h_));
-        return {p.x() * S + w_ / 2.0,
-                p.y() * S + h_ / 2.0};
+    Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const override {
+        return ima2cam(get_ud_pixel(ima_point)).homogeneous().normalized();
     }
-    common::V2D ima2cam(const common::V2D& p) const override {
-        const double S = static_cast<double>(std::max(w_, h_));
-        return {(p.x() - w_ / 2.0) / S,
-                (p.y() - h_ / 2.0) / S};
-    }
-
-    // -- Distortion (none) ---------------------------------------------------
-    bool        have_disto()                        const override { return false; }
-    common::V2D add_disto   (const common::V2D& p) const override { return p; }
-    common::V2D remove_disto(const common::V2D& p) const override { return p; }
-    common::V2D get_ud_pixel(const common::V2D& p) const override { return p; }
 
     // -- Parameters ----------------------------------------------------------
-    std::vector<double> getParams() const override { return {}; }
-    bool updateFromParams(const std::vector<double>& /*params*/) override { return true; }
+    std::vector<double> get_params() const override { return {}; }
+    bool update_params(const std::vector<double>& /*params*/) override { return true; }
 };
 
 }  // namespace faster_lio

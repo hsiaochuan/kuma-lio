@@ -3,6 +3,7 @@
 #include <execution>
 #include <iomanip>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <cv_bridge/cv_bridge.h>
 #include "laser_mapping.h"
@@ -12,11 +13,11 @@
 namespace fs = boost::filesystem;
 namespace faster_lio {
 
-bool LaserMapping::InitROS(ros::NodeHandle &nh, const std::string & config_fname) {
+bool LaserMapping::Init(const std::string &config_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
     if (!LoadParamsFromYAML(config_fname))
         return false;
-    SubAndPubToROS(nh);
+
 
     ivox_ = std::make_shared<IVoxType>(ivox_options_);
     mapper = std::make_shared<GlobalOptimizor>();
@@ -25,28 +26,10 @@ bool LaserMapping::InitROS(ros::NodeHandle &nh, const std::string & config_fname
     mapper->options_ = global_options;
     mapper->output_dir = output_dir;
 
-    // esekf init
-    std::vector<double> epsi(23, 0.001);
-    kf_.init_dyn_share(
-        get_f, df_dx, df_dw,
-        [this](state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) { ObsModel(s, ekfom_data); },
-        max_iteraions, epsi.data());
-
-    return true;
-}
-
-bool LaserMapping::InitWithoutROS(const std::string &config_yaml) {
-    LOG(INFO) << "init laser mapping from " << config_yaml;
-    if (!LoadParamsFromYAML(config_yaml)) {
-        return false;
+    if (image_save_en_ && camera_) {
+        camera_t cam_id = 1;
+        sfm_data_.cameras_[cam_id] = camera_;
     }
-
-    ivox_ = std::make_shared<IVoxType>(ivox_options_);
-    mapper = std::make_shared<GlobalOptimizor>();
-    GlobalOptimizor::Options global_options;
-    global_options.LoadFromYaml(config_yaml);
-    mapper->options_ = global_options;
-    mapper->output_dir = output_dir;
 
     // esekf init
     std::vector<double> epsi(23, 0.001);
@@ -94,8 +77,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
         image_save_en_ = yaml["image_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
-        extrin_il_.q_ = common::RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
-        extrin_il_.t_ = common::VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
+        extrin_il_.q_ = RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
+        extrin_il_.t_ = VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
         ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
 
@@ -113,19 +96,12 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     }
 
     if (camera_enable_) {
-
-        std::string camera_type;
         try {
-            camera_type = yaml["cam"]["camera_model"].as<std::string>();
-        } catch (...) {
-            LOG(ERROR) << "fail to load the camera type";
-            return false;
-        }
-        CAMERA_MODEL camera_model = ToCameraModel(camera_type);
-        std::vector<double> resolution;
-        std::vector<double> distort_param;
-        std::vector<double> pinhole_param;
-        try {
+            std::vector<double> resolution;
+            std::vector<double> distort_param;
+            std::vector<double> pinhole_param;
+            auto camera_type = yaml["cam"]["camera_model"].as<std::string>();
+            CAMERA_MODEL camera_model = ToCameraModel(camera_type);
             resolution = yaml["cam"]["resolution"].as<std::vector<double>>();
             if (IsPinhole(camera_model)) {
                 pinhole_param = yaml["cam"]["pinhole_param"].as<std::vector<double>>();
@@ -135,46 +111,39 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
             }
             if (yaml["cam"]["extrin_R_cl"].IsDefined()) {
                 Pose3 extrin_cl;
-                extrin_cl.q_ = common::RotationFromArray<double>(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
-                extrin_cl.t_ = common::VecFromArray<double>(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
+                extrin_cl.q_ = RotationFromArray<double>(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
+                extrin_cl.t_ = VecFromArray<double>(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
                 extrin_ic_ = extrin_il_ * extrin_cl.GetInverse();
             } else if (yaml["cam"]["extrin_R_ic"].IsDefined()) {
-                extrin_ic_.q_ = common::RotationFromArray<double>(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
-                extrin_ic_.t_ = common::VecFromArray<double>(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
+                extrin_ic_.q_ = RotationFromArray<double>(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
+                extrin_ic_.t_ = VecFromArray<double>(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
             } else
                 throw std::runtime_error("cam extrinsic does not exist");
+
+            std::vector<double> param;
+            param.insert(param.end(),pinhole_param.begin(), pinhole_param.end());
+            param.insert(param.end(),distort_param.begin(), distort_param.end());
+            switch (camera_model) {
+                case PINHOLE:
+                    camera_ = std::make_shared<PinholeCamera>();
+                    break;
+                case PINHOLE_RADIAL:
+                    camera_ = std::make_shared<PinholeRadialCamera>();
+                    break;
+                case PINHOLE_FISHEYE:
+                    camera_ = std::make_shared<PinholeFisheyeCamera>();
+                    break;
+                case SPHERICAL:
+                    camera_ = std::make_shared<SphericalCamera>();
+                    break;
+            }
+            camera_->update_params(param);
+            camera_->w_ = static_cast<unsigned int>(resolution[0]);
+            camera_->h_ = static_cast<unsigned int>(resolution[1]);
         } catch (...) {
             LOG(ERROR) << "bad conversion in camera load";
             return false;
         }
-
-        std::vector<double> param;
-        param.insert(param.end(),pinhole_param.begin(), pinhole_param.end());
-        param.insert(param.end(),distort_param.begin(), distort_param.end());
-        bool update_param = false;
-        switch (camera_model) {
-            case PINHOLE:
-                camera_.reset(new PinholeCamera);
-                break;
-            case PINHOLE_RADIAL:
-                camera_.reset(new PinholeRadialCamera);
-                update_param = camera_->updateFromParams(param);
-                break;
-            case PINHOLE_FISHEYE:
-                camera_.reset(new PinholeFisheyeCamera);
-                update_param = camera_->updateFromParams(param);
-                break;
-            case SPHERICAL:
-                camera_.reset(new PinholeCamera);
-                break;
-        }
-        if (!update_param) {
-            LOG(ERROR) << "fail to update the param";
-            return false;
-        }
-        camera_->w_ = static_cast<unsigned int>(resolution[0]);
-        camera_->h_ = static_cast<unsigned int>(resolution[1]);
-        LOG(INFO) << "camera type: " << camera_model;
     }
 
     LOG(INFO) << "lidar_type " << lidar_type;
@@ -196,10 +165,10 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     scan_sampler_.setLeafSize(scan_filter_size, scan_filter_size, scan_filter_size);
 
     p_imu_->SetExtrinsic(extrin_il_.Trans(), extrin_il_.Mat3d());
-    p_imu_->SetGyrCov(common::V3D(gyr_cov, gyr_cov, gyr_cov));
-    p_imu_->SetAccCov(common::V3D(acc_cov, acc_cov, acc_cov));
-    p_imu_->SetGyrBiasCov(common::V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
-    p_imu_->SetAccBiasCov(common::V3D(b_acc_cov, b_acc_cov, b_acc_cov));
+    p_imu_->SetGyrCov(Vec3(gyr_cov, gyr_cov, gyr_cov));
+    p_imu_->SetAccCov(Vec3(acc_cov, acc_cov, acc_cov));
+    p_imu_->SetGyrBiasCov(Vec3(b_gyr_cov, b_gyr_cov, b_gyr_cov));
+    p_imu_->SetAccBiasCov(Vec3(b_acc_cov, b_acc_cov, b_acc_cov));
     return true;
 }
 
@@ -274,7 +243,7 @@ void LaserMapping::Run() {
     nearest_points_.resize(cur_pts);
     residuals_.resize(cur_pts, 0);
     point_selected_surf_.resize(cur_pts, true);
-    plane_coef_.resize(cur_pts, common::V4F::Zero());
+    plane_coef_.resize(cur_pts, Vec4f::Zero());
 
     // ICP and iterated Kalman filter update
     Timer::Evaluate(
@@ -291,22 +260,21 @@ void LaserMapping::Run() {
     // update local map
     Timer::Evaluate([&, this]() {
         MapIncremental();
-        static scan_t scan_id = 0;
-
-        ScanFrame::Ptr scan(new ScanFrame(scan_id));
-        std::stringstream ss;
-        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
-        std::string pcd_save_fname(output_dir + "/scans/" + ss.str() + ".pcd");
-        scan->cloud_fname = pcd_save_fname;
-        scan->world_from_body = Pose3(state_point_.rot, state_point_.pos);
-        scan->timestamp = measures_.lidar_end_time_;
-
-        mapper->AddScan(scan);
-        scan_id++;
     }, "    Incremental Mapping");
 
     LOG(INFO) << "[ mapping ]: In num: " << scan_undistort_->points.size() << " downsamp " << cur_pts
               << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << effect_feat_num_;
+
+    // add scan frame to global optimize
+    static scan_t scan_id = 1;
+    ScanFrame::Ptr scan = std::make_shared<ScanFrame>(scan_id);
+    std::stringstream stamp_string;
+    stamp_string << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+    scan->cloud_fname = output_dir + "/scans/" + stamp_string.str() + ".pcd";
+    scan->world_from_body = Pose3(state_point_.rot, state_point_.pos);
+    scan->timestamp = measures_.lidar_end_time_;
+    mapper->AddScan(scan);
+    scan_id++;
 
     // publish or save map pcd
     if (pub_laser_cloud_world_) {
@@ -325,21 +293,29 @@ void LaserMapping::Run() {
     Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
     trajectory_.emplace_back(lidar_end_time_,body_pose.Isometry3d());
 
-    if (image_save_en_) {
+    if (image_save_en_ && !measures_.img_.empty()) {
+        // construct the image
+        image_t im_id = scan_id;
+        Image::Ptr im = std::make_shared<Image>();
+        im->timestamp_ = measures_.lidar_end_time_;
+        im->image_id_ = im_id;
+        // the name not include the dir path, only the filename
+        im->name_ = stamp_string.str() + ".jpg";
+        im->cam_from_world_ = (scan->world_from_body * extrin_ic_).GetInverse();
+        CHECK(sfm_data_.cameras_.size() == 1);
+        im->camera_id_ = sfm_data_.cameras_.begin()->first;
+
+        // add to sfm_data
+        sfm_data_.images_[im->image_id_] = im;
+
+        // save image
         static auto once = fs::create_directories(output_dir + "/images");
-        std::stringstream ss;
-        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
-        std::string img_save_fname(output_dir + "/images/" + ss.str() + ".jpg");
-        if (!measures_.img_.empty())
-            cv::imwrite(img_save_fname, measures_.img_);
+        cv::imwrite(output_dir + "/images/" + im->name_, measures_.img_);
     }
 
     if (pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");
-        std::stringstream ss;
-        ss << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
-        std::string pcd_save_fname(output_dir + "/scans/" + ss.str() + ".pcd");
-        pcl::io::savePCDFileBinary(pcd_save_fname, *scan_undistort_);
+        pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
     }
 
     if (pcd_save_en_) {
@@ -600,10 +576,10 @@ void LaserMapping::MapIncremental() {
             }
 
             bool need_add = true;
-            float dist = common::calc_dist(point_world.getVector3fMap(), center);
+            float dist = (point_world.getVector3fMap() - center).norm();
             if (points_near.size() >= options::NUM_MATCH_POINTS) {
                 for (int readd_i = 0; readd_i < options::NUM_MATCH_POINTS; readd_i++) {
-                    if (common::calc_dist(points_near[readd_i].getVector3fMap(), center) < dist + 1e-6) {
+                    if ((points_near[readd_i].getVector3fMap() - center).norm() < dist + 1e-6) {
                         need_add = false;
                         break;
                     }
@@ -651,7 +627,7 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
                 PointType &point_world = scan_down_world_->points[i];
 
                 /* transform to world frame */
-                common::V3F p_body = point_body.getVector3fMap();
+                Vec3f p_body = point_body.getVector3fMap();
                 point_world.getVector3fMap() = R_wl * p_body + t_wl;
                 point_world.intensity = point_body.intensity;
 
@@ -663,7 +639,7 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
                     point_selected_surf_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
                     if (point_selected_surf_[i]) {
                         point_selected_surf_[i] =
-                            common::esti_plane(plane_coef_[i], points_near, esti_plane_thr);
+                            esti_plane(plane_coef_[i], points_near, esti_plane_thr);
                     }
                 }
 
@@ -713,25 +689,25 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
             ekfom_data.h.resize(effect_feat_num_);
 
             index.resize(effect_feat_num_);
-            const common::M3F off_R = s.offset_R_L_I.toRotationMatrix().cast<float>();
-            const common::V3F off_t = s.offset_T_L_I.cast<float>();
-            const common::M3F Rt = s.rot.toRotationMatrix().transpose().cast<float>();
+            const Mat3f off_R = s.offset_R_L_I.toRotationMatrix().cast<float>();
+            const Vec3f off_t = s.offset_T_L_I.cast<float>();
+            const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
 
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
-                common::V3F point_this_be = corr_pts_[i].head<3>();
-                common::M3F point_be_crossmat = Hat(point_this_be);
-                common::V3F point_this = off_R * point_this_be + off_t;
-                common::M3F point_crossmat = Hat(point_this);
+                Vec3f point_this_be = corr_pts_[i].head<3>();
+                Mat3f point_be_crossmat = Hat(point_this_be);
+                Vec3f point_this = off_R * point_this_be + off_t;
+                Mat3f point_crossmat = Hat(point_this);
 
                 /*** get the normal vector of closest surface/corner ***/
-                common::V3F norm_vec = corr_norm_[i].head<3>();
+                Vec3f norm_vec = corr_norm_[i].head<3>();
 
                 /*** calculate the Measurement Jacobian matrix H ***/
-                common::V3F C(Rt * norm_vec);
-                common::V3F A(point_crossmat * C);
+                Vec3f C(Rt * norm_vec);
+                Vec3f A(point_crossmat * C);
 
                 if (extrinsic_est_en_) {
-                    common::V3F B(point_be_crossmat * off_R.transpose() * C);
+                    Vec3f B(point_be_crossmat * off_R.transpose() * C);
                     ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], B[0],
                         B[1], B[2], C[0], C[1], C[2];
                 } else {
@@ -840,8 +816,8 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
 }
 
 void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
-    common::V3D p_body(pi->x, pi->y, pi->z);
-    common::V3D p_global(state_point_.rot * (state_point_.offset_R_L_I * p_body + state_point_.offset_T_L_I) +
+    Vec3 p_body(pi->x, pi->y, pi->z);
+    Vec3 p_global(state_point_.rot * (state_point_.offset_R_L_I * p_body + state_point_.offset_T_L_I) +
                          state_point_.pos);
 
     po->x = p_global(0);
@@ -850,9 +826,9 @@ void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
     po->intensity = pi->intensity;
 }
 
-void LaserMapping::PointBodyToWorld(const common::V3F &pi, PointType *const po) {
-    common::V3D p_body(pi.x(), pi.y(), pi.z());
-    common::V3D p_global(state_point_.rot * (state_point_.offset_R_L_I * p_body + state_point_.offset_T_L_I) +
+void LaserMapping::PointBodyToWorld(const Vec3f &pi, PointType *const po) {
+    Vec3 p_body(pi.x(), pi.y(), pi.z());
+    Vec3 p_global(state_point_.rot * (state_point_.offset_R_L_I * p_body + state_point_.offset_T_L_I) +
                          state_point_.pos);
 
     po->x = p_global(0);
@@ -862,8 +838,8 @@ void LaserMapping::PointBodyToWorld(const common::V3F &pi, PointType *const po) 
 }
 
 void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *const po) {
-    common::V3D p_body_lidar(pi->x, pi->y, pi->z);
-    common::V3D p_body_imu(state_point_.offset_R_L_I * p_body_lidar + state_point_.offset_T_L_I);
+    Vec3 p_body_lidar(pi->x, pi->y, pi->z);
+    Vec3 p_body_imu(state_point_.offset_R_L_I * p_body_lidar + state_point_.offset_T_L_I);
 
     po->x = p_body_imu(0);
     po->y = p_body_imu(1);
@@ -913,12 +889,31 @@ void LaserMapping::Finish() {
     Trajectory kf_poses = mapper->ExportStampedPoses();
     TrajectoryGenerator::save_to_tumtxt(kf_poses, output_dir + "/final.txt");
 
-    // export the poses in camera frame
-    Trajectory kf_cam_poses;
-    for (auto stamp_pose : kf_poses) {
-        stamp_pose.pose = stamp_pose.pose * extrin_ic_.Isometry3d();
-        kf_cam_poses.emplace_back(stamp_pose);
+
+    // export COLMAP
+    if (image_save_en_) {
+        // only for the keyscan, erase others
+        for (auto it = sfm_data_.images_.begin(); it != sfm_data_.images_.end();) {
+            if (mapper->keyscans_.count(it->first) > 0) {
+                Image::Ptr im = it->second;
+                im->cam_from_world_ = (mapper->keyscans_[it->first]->world_from_body * extrin_ic_).GetInverse();
+                ++it;
+            }else
+                it = sfm_data_.images_.erase(it);
+        }
+        // write image list txt
+        std::ofstream ofs(output_dir + "/images.txt");
+        for (const auto &[im_id, im]: sfm_data_.images_) {
+            ofs << im->name_ << std::endl;
+        }
+        ofs.close();
+
+        // write colmap
+        std::string colmap_dir = output_dir + "/colmap_result/";
+        fs::create_directories(colmap_dir);
+        LOG(INFO) << "Exporting COLMAP result to " << colmap_dir;
+        sfm_data_.WriteCOLMAPText(colmap_dir);
     }
-    TrajectoryGenerator::save_to_tumtxt(kf_cam_poses, output_dir + "/cam_final.txt");
+
 }
 }  // namespace faster_lio
