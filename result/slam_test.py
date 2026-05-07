@@ -370,29 +370,6 @@ class SLAMTestRunner:
 # ──────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(description="SLAM Test Framework")
-    parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
-                        help="Run only specified datasets (by name)")
-    parser.add_argument("--if_delete_result_dir", action="store_true", default=False, help="Delete result dir if exists")
-    parser.add_argument("--if_slam", action="store_true", default=False, help="Run SLAM")
-    parser.add_argument("--if_lvba", action="store_true", default=True, help="Run LVBA")
-    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
-    args = parser.parse_args()
-
-    data_name_list = args.datasets
-    runner = SLAMTestRunner()
-    runner.if_delete_result_dir = args.if_delete_result_dir
-    runner.if_slam = args.if_slam
-    runner.if_lvba = args.if_lvba
-    runner.if_postprocess = args.if_postprocess
-    datasets = DatasetsList(data_name_list)
-    print(f"Selected datasets: {[d.name for d in datasets]}")
-    runner.run_all(datasets)
-
-
 def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     """Default datasets equivalent to original two test scripts"""
     botanic_garden = DatasetConfig(
@@ -500,7 +477,26 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         if dataset.name in name_list:
             run_datasets.append(dataset)
     return run_datasets
+def main():
+    parser = argparse.ArgumentParser(description="SLAM Test Framework")
+    parser.add_argument("--datasets", nargs="+",
+                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
+                        help="Run only specified datasets (by name)")
+    parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
+    parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
+    parser.add_argument("--if_lvba", action="store_true", default=True, help="Run LVBA")
+    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
+    args = parser.parse_args()
 
+    data_name_list = args.datasets
+    runner = SLAMTestRunner()
+    runner.if_delete_result_dir = args.if_delete_result_dir
+    runner.if_slam = args.if_slam
+    runner.if_lvba = args.if_lvba
+    runner.if_postprocess = args.if_postprocess
+    datasets = DatasetsList(data_name_list)
+    print(f"Selected datasets: {[d.name for d in datasets]}")
+    runner.run_all(datasets)
 
 if __name__ == "__main__":
     main()

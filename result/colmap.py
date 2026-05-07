@@ -123,6 +123,12 @@ def run_colmap(data_dir: str,
             COLMAP_EXE, "model_analyzer",
             "--path", os.path.join(data_dir, "colmap_final"),
         ], check=True)
+        subprocess.run([
+            COLMAP_EXE, "model_converter",
+            "--output_type", "TXT",
+            "--input_path", os.path.join(data_dir, "colmap_final"),
+            "--output_path", os.path.join(data_dir, "colmap_final"),
+        ], check=True)
     if mapping:
         sparse_dir = os.path.join(data_dir, "sparse", "0")
         os.makedirs(sparse_dir, exist_ok=True)
