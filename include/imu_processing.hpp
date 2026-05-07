@@ -144,8 +144,8 @@ void ImuProcess::IMUInit(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 1
     init_state.grav = S2(-mean_acc_ / mean_acc_.norm() * G_m_s2);
 
     init_state.bg = mean_gyr_;
-    init_state.offset_T_L_I = Lidar_T_wrt_IMU_;
-    init_state.offset_R_L_I = Lidar_R_wrt_IMU_;
+    init_state.t_il = Lidar_T_wrt_IMU_;
+    init_state.R_il = Lidar_R_wrt_IMU_;
     kf_state.change_x(init_state);
 
     esekfom::esekf<state_ikfom, 12, input_ikfom>::cov init_P = kf_state.get_P();
@@ -178,8 +178,8 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
                                           imu_state.rot.toRotationMatrix()));
 
     /*** forward propagation at each imu_ point ***/
-    Vec3 angvel_avr, acc_avr, acc_imu, vel_imu, pos_imu;
-    Mat3 R_imu;
+    Vec3 omega_i, acc_avr, acc_i, vel_i, pos_i;
+    Mat3 R_i;
 
     double dt = 0;
 
@@ -192,7 +192,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
             continue;
         }
 
-        angvel_avr = 0.5 * (head.angular_velocity + tail.angular_velocity);
+        omega_i = 0.5 * (head.angular_velocity + tail.angular_velocity);
         acc_avr =  0.5 * (head.linear_acceleration + tail.linear_acceleration);
 
         acc_avr = acc_avr * G_m_s2 / mean_acc_.norm();  // - state_inout.ba;
@@ -204,7 +204,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
         }
 
         in.acc = acc_avr;
-        in.gyro = angvel_avr;
+        in.gyro = omega_i;
         Q_.block<3, 3>(0, 0).diagonal() = cov_gyr_;
         Q_.block<3, 3>(3, 3).diagonal() = cov_acc_;
         Q_.block<3, 3>(6, 6).diagonal() = cov_bias_gyr_;
@@ -213,7 +213,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
 
         /* save the poses at each IMU measurements */
         imu_state = kf_state.get_x();
-        angvel_last_ = angvel_avr - imu_state.bg;
+        angvel_last_ = omega_i - imu_state.bg;
         acc_s_last_ = imu_state.rot * (acc_avr - imu_state.ba);
         for (int i = 0; i < 3; i++) {
             acc_s_last_[i] += imu_state.grav[i];
@@ -237,38 +237,34 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
     if (pcl_out.points.empty()) {
         return;
     }
-    auto it_pcl = pcl_out.points.end() - 1;
-    for (auto it_kp = IMUpose_.end() - 1; it_kp != IMUpose_.begin(); it_kp--) {
-        auto head = it_kp - 1;
-        auto tail = it_kp;
-        R_imu = MatFromArray(head->rot);
-        vel_imu = VecFromArray(head->vel);
-        pos_imu = VecFromArray(head->pos);
-        acc_imu = VecFromArray(tail->acc);
-        angvel_avr = VecFromArray(tail->gyr);
+    auto it_k = pcl_out.points.end() - 1;
+    for (auto imu_i = IMUpose_.end() - 1; imu_i != IMUpose_.begin(); imu_i--) {
+        auto head = imu_i - 1;
+        auto tail = imu_i;
+        R_i = MatFromArray(head->rot);
+        vel_i = VecFromArray(head->vel);
+        pos_i = VecFromArray(head->pos);
+        acc_i = VecFromArray(tail->acc);
+        omega_i = VecFromArray(tail->gyr);
 
-        for (; it_pcl->timestamp > head->offset_time; it_pcl--) {
-            dt = it_pcl->timestamp - head->offset_time;
+        for (; it_k->timestamp > head->offset_time; it_k--) {
+            dt = it_k->timestamp - head->offset_time;
 
-            /* Transform to the 'end' frame, using only the rotation
-             * Note: Compensation direction is INVERSE of Frame's moving direction
-             * So if we want to compensate a point at timestamp-i to the frame-e
-             * p_compensate = R_imu_e ^ T * (R_i * P_i + T_ei) where T_ei is represented in global frame */
-            Mat3 R_i(R_imu * ExpMat(angvel_avr * dt));
 
-            Vec3 P_i(it_pcl->x, it_pcl->y, it_pcl->z);
-            Vec3 T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt - imu_state.pos);
+            Mat3 R_k(R_i * ExpMat(omega_i * dt));
+            Vec3 pk(it_k->x, it_k->y, it_k->z);
+            Vec3 pos_k = pos_i + vel_i * dt + 0.5 * acc_i * dt * dt;
             Vec3 p_compensate =
-                imu_state.offset_R_L_I.conjugate() *
-                (imu_state.rot.conjugate() * (R_i * (imu_state.offset_R_L_I * P_i + imu_state.offset_T_L_I) + T_ei) -
-                 imu_state.offset_T_L_I);  // not accurate!
+                imu_state.R_il.conjugate() *
+                (imu_state.rot.conjugate() * (R_k * (imu_state.R_il * pk + imu_state.t_il) + pos_k - imu_state.pos) -
+                 imu_state.t_il);  // not accurate!
 
             // save Undistorted points and their rotation
-            it_pcl->x = p_compensate(0);
-            it_pcl->y = p_compensate(1);
-            it_pcl->z = p_compensate(2);
+            it_k->x = p_compensate(0);
+            it_k->y = p_compensate(1);
+            it_k->z = p_compensate(2);
 
-            if (it_pcl == pcl_out.points.begin()) {
+            if (it_k == pcl_out.points.begin()) {
                 break;
             }
         }

@@ -539,7 +539,7 @@ bool LaserMapping::SyncPackages() {
 
 void LaserMapping::PrintState(const state_ikfom &s) {
     LOG(INFO) << "state r: " << s.rot.coeffs().transpose() << ", t: " << s.pos.transpose()
-              << ", off r: " << s.offset_R_L_I.coeffs().transpose() << ", t: " << s.offset_T_L_I.transpose();
+              << ", off r: " << s.R_il.coeffs().transpose() << ", t: " << s.t_il.transpose();
 }
 
 void LaserMapping::MapIncremental() {
@@ -618,8 +618,8 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
     Timer::Evaluate(
         [&, this]() {
-            auto R_wl = (s.rot * s.offset_R_L_I).cast<float>();
-            auto t_wl = (s.rot * s.offset_T_L_I + s.pos).cast<float>();
+            auto R_wl = (s.rot * s.R_il).cast<float>();
+            auto t_wl = (s.rot * s.t_il + s.pos).cast<float>();
 
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
@@ -689,8 +689,8 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
             ekfom_data.h.resize(effect_feat_num_);
 
             index.resize(effect_feat_num_);
-            const Mat3f off_R = s.offset_R_L_I.toRotationMatrix().cast<float>();
-            const Vec3f off_t = s.offset_T_L_I.cast<float>();
+            const Mat3f off_R = s.R_il.toRotationMatrix().cast<float>();
+            const Vec3f off_t = s.t_il.cast<float>();
             const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
 
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
@@ -817,7 +817,7 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
 
 void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
     Vec3 p_body(pi->x, pi->y, pi->z);
-    Vec3 p_global(state_point_.rot * (state_point_.offset_R_L_I * p_body + state_point_.offset_T_L_I) +
+    Vec3 p_global(state_point_.rot * (state_point_.R_il * p_body + state_point_.t_il) +
                          state_point_.pos);
 
     po->x = p_global(0);
@@ -828,7 +828,7 @@ void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
 
 void LaserMapping::PointBodyToWorld(const Vec3f &pi, PointType *const po) {
     Vec3 p_body(pi.x(), pi.y(), pi.z());
-    Vec3 p_global(state_point_.rot * (state_point_.offset_R_L_I * p_body + state_point_.offset_T_L_I) +
+    Vec3 p_global(state_point_.rot * (state_point_.R_il * p_body + state_point_.t_il) +
                          state_point_.pos);
 
     po->x = p_global(0);
@@ -839,7 +839,7 @@ void LaserMapping::PointBodyToWorld(const Vec3f &pi, PointType *const po) {
 
 void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *const po) {
     Vec3 p_body_lidar(pi->x, pi->y, pi->z);
-    Vec3 p_body_imu(state_point_.offset_R_L_I * p_body_lidar + state_point_.offset_T_L_I);
+    Vec3 p_body_imu(state_point_.R_il * p_body_lidar + state_point_.t_il);
 
     po->x = p_body_imu(0);
     po->y = p_body_imu(1);
