@@ -8,7 +8,6 @@ import subprocess
 import os
 import datetime
 import time
-import yaml
 import argparse
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
@@ -46,9 +45,10 @@ class DatasetConfig:
     name: str
     bag_files: List[str]
     config: str  # single config (BotanicGarden)
+    start: float = 0.0
+    duration: float = -1.0
     config_map: Dict[str, str] = field(default_factory=dict)  # keyword → config (MCD_VIRAL)
     run_mode: RunMode = RunMode.OFFLINE
-
     def resolve_config(self, bag_name: str) -> str:
         """Select configuration file based on bag name"""
         for keyword, cfg in self.config_map.items():
@@ -189,15 +189,15 @@ class SLAMTestRunner:
 
     # ── Single bag run ───────────────────────────
 
-    def _run_offline(self, bag_file: str, config: str, output_dir: str) -> bool:
+    def _run_offline(self, bag_file: str, config: str, output_dir: str, start: float, duration: float) -> bool:
         try:
             subprocess.run(
                 [self.offline_app,
                  "--config_file", config,
                  "--bag_file", bag_file,
                  "--output_dir", output_dir,
-                 "--start", '0',
-                 '--duration', '-1',
+                 "--start", str(start),
+                 '--duration', str(duration),
                  ],
                 check=True,
             )
@@ -262,7 +262,7 @@ class SLAMTestRunner:
     def run_single(self,
                    bag_file: str,
                    config: str,
-                   output_dir: str, run_mode: RunMode) -> TestResult:
+                   output_dir: str, run_mode: RunMode, start: float, duration: float) -> TestResult:
         name = Path(bag_file).stem
         result = TestResult(
             bag_name=name,
@@ -277,7 +277,7 @@ class SLAMTestRunner:
         start_time = time.time()
         if self.if_slam:
             if run_mode == RunMode.OFFLINE:
-                self._run_offline(bag_file, config, output_dir)
+                self._run_offline(bag_file, config, output_dir, start, duration)
             else:
                 self._run_online(bag_file, config, output_dir)
         if self.if_postprocess:
@@ -320,7 +320,7 @@ class SLAMTestRunner:
                 print(f"Result dir {output_dir} already exists, remove it")
                 shutil.rmtree(output_dir)
             os.makedirs(output_dir, exist_ok=True)
-            result = self.run_single(bag_file, config, output_dir, dataset.run_mode)
+            result = self.run_single(bag_file, config, output_dir, dataset.run_mode, dataset.start, dataset.duration)
             result.dataset = dataset.name
             suite.results.append(result)
 
@@ -486,16 +486,26 @@ def main():
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
     parser.add_argument("--if_lvba", action="store_true", default=True, help="Run LVBA")
     parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
+    parser.add_argument("--start", type=float, default=0.0, help="Start time (sec) for offline mode")
+    parser.add_argument("--duration", type=float, default=-1.0, help="Duration (sec) for offline mode, -1 for full length")
     args = parser.parse_args()
 
+    # decide the datasets to run
     data_name_list = args.datasets
+    datasets = DatasetsList(data_name_list)
+    print(f"Selected datasets: {[d.name for d in datasets]}")
+
+    # decide the start and duration
+    for dataset in datasets:
+        dataset.start = args.start
+        dataset.duration = args.duration
+    print(f"start from {args.start} and duration is {args.duration}")
+    # run
     runner = SLAMTestRunner()
     runner.if_delete_result_dir = args.if_delete_result_dir
     runner.if_slam = args.if_slam
     runner.if_lvba = args.if_lvba
     runner.if_postprocess = args.if_postprocess
-    datasets = DatasetsList(data_name_list)
-    print(f"Selected datasets: {[d.name for d in datasets]}")
     runner.run_all(datasets)
 
 if __name__ == "__main__":
