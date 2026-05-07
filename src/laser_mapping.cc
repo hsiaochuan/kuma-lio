@@ -209,6 +209,7 @@ void LaserMapping::Run() {
 
     /// IMU process, kf prediction, undistortion
     p_imu_->Process(measures_, kf_, scan_undistort_);
+    pcl::transformPointCloud(*scan_undistort_, *scan_undistort_, extrin_il_.Mat4d());
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {
         LOG(WARNING) << "No point, skip this scan!";
         return;
@@ -219,7 +220,7 @@ void LaserMapping::Run() {
         state_point_ = kf_.get_x();
         scan_down_world_->resize(scan_undistort_->size());
         for (int i = 0; i < scan_undistort_->size(); i++) {
-            PointBodyToWorld(&scan_undistort_->points[i], &scan_down_world_->points[i]);
+            PointBody2World(&scan_undistort_->points[i], &scan_down_world_->points[i]);
         }
         ivox_->AddPoints(scan_down_world_->points);
         if_local_map_init_ = false;
@@ -557,7 +558,7 @@ void LaserMapping::MapIncremental() {
 
     std::for_each(std::execution::unseq, index.begin(), index.end(), [&](const size_t &i) {
         /* transform to world frame */
-        PointBodyToWorld(&(scan_down_body_->points[i]), &(scan_down_world_->points[i]));
+        PointBody2World(&(scan_down_body_->points[i]), &(scan_down_world_->points[i]));
 
         /* decide if need add to map */
         PointType &point_world = scan_down_world_->points[i];
@@ -618,8 +619,8 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
     Timer::Evaluate(
         [&, this]() {
-            auto R_wl = (s.rot * s.R_il).cast<float>();
-            auto t_wl = (s.rot * s.t_il + s.pos).cast<float>();
+            auto R_wl = (s.rot).cast<float>();
+            auto t_wl = (s.pos).cast<float>();
 
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
@@ -696,7 +697,7 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 Vec3f point_this_be = corr_pts_[i].head<3>();
                 Mat3f point_be_crossmat = Hat(point_this_be);
-                Vec3f point_this = off_R * point_this_be + off_t;
+                Vec3f point_this = point_this_be;
                 Mat3f point_crossmat = Hat(point_this);
 
                 /*** get the normal vector of closest surface/corner ***/
@@ -793,7 +794,7 @@ void LaserMapping::PublishFrameEffectWorld() {
     PointCloud::Ptr laser_cloud(new PointCloud);
     laser_cloud->resize(corr_pts_.size());
     for (int i = 0; i < corr_pts_.size(); i++) {
-        PointBodyToWorld(corr_pts_[i].head<3>(), &laser_cloud->points[i]);
+        PointBody2World(corr_pts_[i].head<3>(), &laser_cloud->points[i]);
     }
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud, laserCloudmsg);
@@ -815,9 +816,9 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
     TrajectoryGenerator::save_to_pcd(cam_traj,fs::path(traj_file).parent_path().string() + "/cam_traj_log.ply");
 }
 
-void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
+void LaserMapping::PointBody2World(const PointType *pi, PointType *const po) {
     Vec3 p_body(pi->x, pi->y, pi->z);
-    Vec3 p_global(state_point_.rot * (state_point_.R_il * p_body + state_point_.t_il) +
+    Vec3 p_global(state_point_.rot * (p_body) +
                          state_point_.pos);
 
     po->x = p_global(0);
@@ -826,25 +827,15 @@ void LaserMapping::PointBodyToWorld(const PointType *pi, PointType *const po) {
     po->intensity = pi->intensity;
 }
 
-void LaserMapping::PointBodyToWorld(const Vec3f &pi, PointType *const po) {
+void LaserMapping::PointBody2World(const Vec3f &pi, PointType *const po) {
     Vec3 p_body(pi.x(), pi.y(), pi.z());
-    Vec3 p_global(state_point_.rot * (state_point_.R_il * p_body + state_point_.t_il) +
+    Vec3 p_global(state_point_.rot * (p_body) +
                          state_point_.pos);
 
     po->x = p_global(0);
     po->y = p_global(1);
     po->z = p_global(2);
     po->intensity = std::abs(po->z);
-}
-
-void LaserMapping::PointBodyLidarToIMU(PointType const *const pi, PointType *const po) {
-    Vec3 p_body_lidar(pi->x, pi->y, pi->z);
-    Vec3 p_body_imu(state_point_.R_il * p_body_lidar + state_point_.t_il);
-
-    po->x = p_body_imu(0);
-    po->y = p_body_imu(1);
-    po->z = p_body_imu(2);
-    po->intensity = pi->intensity;
 }
 
 void LaserMapping::Finish() {

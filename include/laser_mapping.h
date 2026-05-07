@@ -68,10 +68,8 @@ class LaserMapping {
     void Savetrajectory(const std::string &traj_file);
 
     void Finish();
-    void PointBodyToWorld(PointType const *pi, PointType *const po);
-    void PointBodyToWorld(const Vec3f &pi, PointType *const po);
-    void PointBodyLidarToIMU(PointType const *const pi, PointType *const po);
-
+    void PointBody2World(PointType const *pi, PointType *const po);
+    void PointBody2World(const Vec3f &pi, PointType *const po);
     void MapIncremental();
 
     void SubAndPubToROS(ros::NodeHandle &nh);

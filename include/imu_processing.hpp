@@ -238,6 +238,9 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
         return;
     }
     auto it_k = pcl_out.points.end() - 1;
+    Pose3 extrin_il(imu_state.R_il, imu_state.t_il);
+    Pose3 extrin_li = extrin_il.GetInverse();
+    Pose3 body_world_end = Pose3(imu_state.rot, imu_state.pos).GetInverse();
     for (auto imu_i = IMUpose_.end() - 1; imu_i != IMUpose_.begin(); imu_i--) {
         auto head = imu_i - 1;
         auto tail = imu_i;
@@ -254,10 +257,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
             Mat3 R_k(R_i * ExpMat(omega_i * dt));
             Vec3 pk(it_k->x, it_k->y, it_k->z);
             Vec3 pos_k = pos_i + vel_i * dt + 0.5 * acc_i * dt * dt;
-            Vec3 p_compensate =
-                imu_state.R_il.conjugate() *
-                (imu_state.rot.conjugate() * (R_k * (imu_state.R_il * pk + imu_state.t_il) + pos_k - imu_state.pos) -
-                 imu_state.t_il);  // not accurate!
+            Vec3 p_compensate = extrin_li * body_world_end * (R_k * (extrin_il * pk) + pos_k);
 
             // save Undistorted points and their rotation
             it_k->x = p_compensate(0);
