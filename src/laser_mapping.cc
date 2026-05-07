@@ -576,10 +576,10 @@ void LaserMapping::MapIncremental() {
             }
 
             bool need_add = true;
-            float dist = (point_world.getVector3fMap() - center).norm();
+            float dist = (point_world.getVector3fMap() - center).squaredNorm();
             if (points_near.size() >= options::NUM_MATCH_POINTS) {
                 for (int readd_i = 0; readd_i < options::NUM_MATCH_POINTS; readd_i++) {
-                    if ((points_near[readd_i].getVector3fMap() - center).norm() < dist + 1e-6) {
+                    if ((points_near[readd_i].getVector3fMap() - center).squaredNorm() < dist + 1e-6) {
                         need_add = false;
                         break;
                     }
