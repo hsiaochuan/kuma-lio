@@ -1,26 +1,23 @@
 #ifndef FASTER_LIO_LASER_MAPPING_H
 #define FASTER_LIO_LASER_MAPPING_H
 
-#include <livox_ros_driver/CustomMsg.h>
+#include "livox_ros_driver/CustomMsg.h"
 #include <nav_msgs/Path.h>
 #include <pcl/filters/voxel_grid.h>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CompressedImage.h>
-#include <condition_variable>
-#include <thread>
 
-#include "global_optimizor.h"
-#include <cameras/cameras.h>
+// Heavy dependencies are forward-declared below to reduce rebuilds.
 #include "imu_processing.hpp"
 #include "ivox3d/ivox3d.h"
 #include "pointcloud_preprocess.h"
 #include "pose3.h"
 #include "types.h"
-#include <stamp_pose.h>
-
-#include "Sfm_Data.h"
+#include "stamp_pose.h"
+#include "sfm_data.h"
+#include "global_optimizor.h"
 namespace faster_lio {
 
 class LaserMapping {
@@ -160,7 +157,7 @@ class LaserMapping {
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
     nav_msgs::Path path_;
     Trajectory trajectory_;
-    Sfm_Data sfm_data_;
+    sfm_data sfm_data_;
    public:
     std::string output_dir;
 };

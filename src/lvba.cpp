@@ -8,11 +8,11 @@
 #include <boost/histogram.hpp>
 #include <boost/pending/disjoint_sets.hpp>
 #include <unordered_set>
-#include "Sfm_Data.h"
 #include "ba_cost_functions.h"
 #include "common_lib.h"
 #include "cost_functions.h"
 #include "lidar_simulator.h"
+#include "sfm_data.h"
 #include "stamp_pose.h"
 #include "union_find.h"
 
@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
     faster_lio::TrajectoryInterpolator cam_interpolator(cam_stamped_poses);
 
     // load from COLMAP
-    Sfm_Data recon;
+    sfm_data recon;
     recon.LoadFromDatabase(databse_fname);
 
     // load camera poses
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
     }
     std::cout << "Landmark count: " << recon.landmarks_.size() << std::endl;
     std::cout << "Triangulate points..." << std::endl;
-    RobustTriangulate(recon);
+    // RobustTriangulate(recon);
     for (auto it = recon.landmarks_.begin(); it != recon.landmarks_.end();) {
         if (it->second.xyz.hasNaN()) {
             it = recon.landmarks_.erase(it);

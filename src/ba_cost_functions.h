@@ -5,7 +5,7 @@
 #ifndef FASTER_LIO_BA_COST_FUNCTIONS_H
 #define FASTER_LIO_BA_COST_FUNCTIONS_H
 #include <ceres/ceres.h>
-#include <ceres/rotation.h>
+
 namespace faster_lio {
 template <typename T>
 using ConstEigenVector3Map = Eigen::Map<const Eigen::Matrix<T, 3, 1>>;

@@ -2,6 +2,9 @@
 #include <pcl/filters/voxel_grid.h>
 #include <boost/program_options.hpp>
 #include "stamp_pose.h"
+#include <boost/filesystem.hpp>
+#include <pcl/io/pcd_io.h>
+#include <pcl/common/transforms.h>
 namespace po = boost::program_options;
 int main(int argc, char** argv) {
     std::string trajectory_fname;

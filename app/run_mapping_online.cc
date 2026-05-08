@@ -4,7 +4,7 @@
 #include <gflags/gflags.h>
 #include <unistd.h>
 #include <csignal>
-
+#include "utils.h"
 #include "laser_mapping.h"
 
 /// run the lidar mapping in online mode

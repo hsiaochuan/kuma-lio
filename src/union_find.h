@@ -1,11 +1,7 @@
 #pragma once
-#include <cstdint>
-#include <unordered_map>
 
+#include <unordered_map>
 namespace faster_lio {
-
-#include <unordered_map>
-#include <cstddef>
 
 class UnionFind {
 public:

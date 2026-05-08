@@ -1,8 +1,7 @@
 #pragma once
 
 #include <glog/logging.h>
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_sort.h>
+
 
 #include <unordered_map>
 #include "common_lib.h"

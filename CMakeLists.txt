@@ -23,12 +23,22 @@ else ()
     message("USING_IVOX_NODE_TYPE_DEFAULT")
 endif()
 
+include_directories(src)
 add_library(${PROJECT_NAME}
         src/laser_mapping.cc
+        src/laser_mapping_init.cc
+        src/laser_mapping_callbacks.cc
+        src/laser_mapping_publish.cc
+        src/global_optimizor.cpp
         src/pointcloud_preprocess.cc
         src/options.cc
+        src/imu_process.cpp
+        src/pose3.cpp
+        src/stamp_pose.cpp
         src/utils.cc
         src/voxel_map.cpp
+        src/sfm_data.cpp
+        src/database.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}
@@ -43,7 +53,6 @@ target_link_libraries(${PROJECT_NAME}
         sqlite3
         )
 
-include_directories(${PROJECT_NAME} PRIVATE ${PYTHON_INCLUDE_DIRS})
 add_executable(run_mapping_online app/run_mapping_online.cc)
 target_link_libraries(run_mapping_online
         ${PROJECT_NAME} gflags

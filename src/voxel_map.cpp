@@ -1,6 +1,7 @@
 #include "voxel_map.h"
 #include <pcl/common/transforms.h>
 #include <pcl/segmentation/sac_segmentation.h>
+#include <tbb/parallel_sort.h>
 namespace faster_lio {
 VoxelMap::VoxelMap(const Config& config) : config_(config){
 }
