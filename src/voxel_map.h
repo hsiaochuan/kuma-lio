@@ -32,7 +32,7 @@ struct Grid {
 struct PointWithVoxLoc {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    PointType point_;
+    faster_lio::Point point_;
     VOXEL_LOCATION vox_loc;
     PointWithVoxLoc() = default;
 

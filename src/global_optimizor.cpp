@@ -316,7 +316,7 @@ std::unordered_map<ScanPair, PairData> GlobalOptimizor::DetectLoopClosure() {
         PointCloud::Ptr points_a = submaps[reg_pair.scan_id1_];
         PointCloud::Ptr points_b = submaps[reg_pair.scan_id2_];
 
-        pcl::GeneralizedIterativeClosestPoint<PointType, PointType> gicp;
+        pcl::GeneralizedIterativeClosestPoint<faster_lio::Point, faster_lio::Point> gicp;
         gicp.setMaxCorrespondenceDistance(2.0);
         gicp.setInputSource(points_a);
         gicp.setInputTarget(points_b);

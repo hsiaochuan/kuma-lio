@@ -27,7 +27,7 @@ class LaserMapping {
 #ifdef IVOX_NODE_TYPE_PHC
     using IVoxType = IVox<3, IVoxNodeType::PHC, PointType>;
 #else
-    using IVoxType = IVox<3, IVoxNodeType::DEFAULT, PointType>;
+    using IVoxType = IVox<3, IVoxNodeType::DEFAULT, Point>;
 #endif
 
     LaserMapping();
@@ -96,7 +96,7 @@ class LaserMapping {
     std::vector<PointVector> nearest_points_;            // nearest points of current scan
     std::vector<Vec4f> corr_pts_;                              // inlier pts
     std::vector<Vec4f> corr_norm_;                             // inlier plane norms
-    pcl::VoxelGrid<PointType> scan_sampler_;             // voxel filter for current scan
+    pcl::VoxelGrid<Point> scan_sampler_;             // voxel filter for current scan
     std::vector<float> residuals_;                       // point-to-plane residuals
     std::vector<char> point_selected_surf_;              // selected points
     std::vector<Vec4f> plane_coef_;                            // plane coeffs

@@ -103,7 +103,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
 
     /*** sort point clouds by offset time ***/
     undistort_points = *distort_points;
-    std::sort(undistort_points.points.begin(), undistort_points.points.end(), [](const PointType &x, const PointType &y) { return (x.timestamp < y.timestamp); });
+    std::sort(undistort_points.points.begin(), undistort_points.points.end(), [](const faster_lio::Point &x, const faster_lio::Point &y) { return (x.timestamp < y.timestamp); });
 
     /*** Initialize IMU pose ***/
     state_ikfom imu_state = kf_state.get_x();

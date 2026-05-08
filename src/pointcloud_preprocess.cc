@@ -45,7 +45,7 @@ void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::Const
 
         if (range < (blind_ * blind_)) continue;
 
-        PointType added_pt;
+        faster_lio::Point added_pt;
         added_pt.x = msg->points[i].x;
         added_pt.y = msg->points[i].y;
         added_pt.z = msg->points[i].z;
@@ -75,7 +75,7 @@ void PointCloudPreprocess::OusterHandler(const sensor_msgs::PointCloud2::ConstPt
         if (range < (blind_ * blind_)) continue;
 
         Eigen::Vector3d pt_vec;
-        PointType added_pt;
+        faster_lio::Point added_pt;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
         added_pt.z = pl_orig.points[i].z;
@@ -103,7 +103,7 @@ void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr
 
         if (range < blind_ * blind_) continue;
 
-        PointType added_pt;
+        faster_lio::Point added_pt;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
         added_pt.z = pl_orig.points[i].z;

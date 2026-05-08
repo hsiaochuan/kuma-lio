@@ -234,7 +234,7 @@ void LaserMapping::MapIncremental() {
             (state_point_.rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_.pos).cast<float>();
 
         /* decide if need add to map */
-        PointType &point_world = scan_down_world_->points[i];
+        Point &point_world = scan_down_world_->points[i];
         if (!nearest_points_[i].empty()) {
             const PointVector &points_near = nearest_points_[i];
 
@@ -275,13 +275,64 @@ void LaserMapping::MapIncremental() {
         "    IVox Add Points");
 }
 
-/**
- * Lidar point cloud registration
- * will be called by the eskf custom observation model
- * compute point-to-plane residual here
- * @param s kf state
- * @param ekfom_data H matrix
- */
+
+static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector &point, const float &threshold = 0.1f) {
+    if (point.size() < options::MIN_NUM_MATCH_POINTS) {
+        return false;
+    }
+
+    Eigen::Matrix<float, 3, 1> normvec;
+
+    if (point.size() == options::NUM_MATCH_POINTS) {
+        Eigen::Matrix<float, options::NUM_MATCH_POINTS, 3> A;
+        Eigen::Matrix<float, options::NUM_MATCH_POINTS, 1> b;
+
+        A.setZero();
+        b.setOnes();
+        b *= -1.0f;
+
+        for (int j = 0; j < options::NUM_MATCH_POINTS; j++) {
+            A(j, 0) = point[j].x;
+            A(j, 1) = point[j].y;
+            A(j, 2) = point[j].z;
+        }
+
+        normvec = A.colPivHouseholderQr().solve(b);
+    } else {
+        Eigen::MatrixXd A(point.size(), 3);
+        Eigen::VectorXd b(point.size(), 1);
+
+        A.setZero();
+        b.setOnes();
+        b *= -1.0f;
+
+        for (int j = 0; j < point.size(); j++) {
+            A(j, 0) = point[j].x;
+            A(j, 1) = point[j].y;
+            A(j, 2) = point[j].z;
+        }
+
+        Eigen::MatrixXd n = A.colPivHouseholderQr().solve(b);
+        normvec(0, 0) = n(0, 0);
+        normvec(1, 0) = n(1, 0);
+        normvec(2, 0) = n(2, 0);
+    }
+
+    float n = normvec.norm();
+    pca_result(0) = normvec(0) / n;
+    pca_result(1) = normvec(1) / n;
+    pca_result(2) = normvec(2) / n;
+    pca_result(3) = 1.0 / n;
+
+    for (const auto &p : point) {
+        Eigen::Matrix<float, 4, 1> temp = p.getVector4fMap();
+        temp[3] = 1.0;
+        if (fabs(pca_result.dot(temp)) > threshold) {
+            return false;
+        }
+    }
+    return true;
+}
 void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) {
     int cnt_pts = scan_down_body_->size();
 
@@ -297,8 +348,8 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
-                PointType &point_body = scan_down_body_->points[i];
-                PointType &point_world = scan_down_world_->points[i];
+                Point &point_body = scan_down_body_->points[i];
+                Point &point_world = scan_down_world_->points[i];
 
                 /* transform to world frame */
                 Vec3f p_body = point_body.getVector3fMap();

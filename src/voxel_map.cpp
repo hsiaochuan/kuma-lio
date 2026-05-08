@@ -12,7 +12,7 @@ void VoxelMap::Finish(const double & min_inlier, const double & thr) {
             continue;
         }
 
-        pcl::SACSegmentation<PointType> seg;
+        pcl::SACSegmentation<faster_lio::Point> seg;
         seg.setOptimizeCoefficients(true);
         seg.setModelType(pcl::SACMODEL_PLANE);
         seg.setMethodType(pcl::SAC_RANSAC);

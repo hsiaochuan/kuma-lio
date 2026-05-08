@@ -74,8 +74,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
         image_save_en_ = yaml["image_save_en"].as<bool>();
         pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
-        extrin_il_.q_ = RotationFromArray<double>(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
-        extrin_il_.t_ = VecFromArray<double>(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
+        extrin_il_.q_ = RotationFromArray(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
+        extrin_il_.t_ = VecFromArray(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
         ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
         ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
 
@@ -108,12 +108,12 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
             }
             if (yaml["cam"]["extrin_R_cl"].IsDefined()) {
                 Pose3 extrin_cl;
-                extrin_cl.q_ = RotationFromArray<double>(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
-                extrin_cl.t_ = VecFromArray<double>(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
+                extrin_cl.q_ = RotationFromArray(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
+                extrin_cl.t_ = VecFromArray(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
                 extrin_ic_ = extrin_il_ * extrin_cl.GetInverse();
             } else if (yaml["cam"]["extrin_R_ic"].IsDefined()) {
-                extrin_ic_.q_ = RotationFromArray<double>(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
-                extrin_ic_.t_ = VecFromArray<double>(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
+                extrin_ic_.q_ = RotationFromArray(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
+                extrin_ic_.t_ = VecFromArray(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
             } else
                 throw std::runtime_error("cam extrinsic does not exist");
 

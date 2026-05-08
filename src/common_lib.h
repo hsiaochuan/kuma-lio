@@ -54,6 +54,24 @@ struct EIGEN_ALIGN16 Point {
     std::uint16_t ring;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
+
+struct EIGEN_ALIGN16 ColorPoint {
+    PCL_ADD_POINT4D;
+    float intensity;
+    double timestamp;
+    std::uint16_t ring;
+    uint32_t color;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
+inline uint32_t RGBToU32(uint8_t r, uint8_t g, uint8_t b) {
+    return (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
+}
+inline void U32ToRGB(uint32_t color, uint8_t &r, uint8_t &g, uint8_t &b) {
+    r = (color >> 16) & 0xFF;
+    g = (color >> 8) & 0xFF;
+    b = color & 0xFF;
+}
 struct Imu {
     using Ptr = std::shared_ptr<Imu>;
     double timestamp;
@@ -85,55 +103,7 @@ struct hash<faster_lio::VOXEL_LOCATION> {
     }
 };
 }  // namespace std
-using PointType = faster_lio::Point;
-using PointCloud = pcl::PointCloud<faster_lio::Point>;
-using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
 namespace faster_lio {
-
-constexpr double G_m_s2 = 9.81;  // Gravity const in GuangDong/China
-
-template <typename S>
-inline Eigen::Matrix<S, 3, 1> VecFromArray(const std::vector<double> &v) {
-    return Eigen::Matrix<S, 3, 1>(v[0], v[1], v[2]);
-}
-
-template <typename S>
-inline Eigen::Matrix<S, 3, 1> VecFromArray(const boost::array<S, 3> &v) {
-    return Eigen::Matrix<S, 3, 1>(v[0], v[1], v[2]);
-}
-
-template <typename S>
-inline Eigen::Matrix<S, 3, 3> MatFromArray(const std::vector<double> &v) {
-    Eigen::Matrix<S, 3, 3> m;
-    m << v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8];
-    return m;
-}
-
-template <typename S>
-inline Eigen::Matrix<S, 3, 3> MatFromArray(const boost::array<S, 9> &v) {
-    Eigen::Matrix<S, 3, 3> m;
-    m << v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8];
-    return m;
-}
-
-template <typename S>
-inline Eigen::Quaternion<S> QuatFromArray(const std::vector<double> &v) {
-    Eigen::Quaternion<S> q;
-    q.x() = v[0];
-    q.y() = v[1];
-    q.z() = v[2];
-    q.w() = v[3];
-    return q;
-}
-template <typename S>
-inline Eigen::Matrix<S, 3, 3> RotationFromArray(const std::vector<double> &v) {
-    if (v.size() != 9 && v.size() != 4) throw std::runtime_error("Invalid rotation matrix");
-    Eigen::Matrix<S, 3, 3> rotation;
-    if (v.size() == 9) rotation = MatFromArray<double>(v);
-    else if (v.size() == 4)
-        rotation = QuatFromArray<double>(v).toRotationMatrix();
-    return rotation;
-}
 using Mat = Eigen::MatrixXd;
 using Vec = Eigen::VectorXd;
 
@@ -151,6 +121,41 @@ using Vec4 = Eigen::Vector4d;
 using Vec4f = Eigen::Vector4f;
 using Mat4 = Eigen::Matrix<double, 4, 4>;
 
+using PointCloud = pcl::PointCloud<faster_lio::Point>;
+using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
+using ColorPointCloud = pcl::PointCloud<faster_lio::ColorPoint>;
+
+constexpr double G_m_s2 = 9.81;  // Gravity const in GuangDong/China
+
+inline Vec3 VecFromArray(const std::vector<double> &v) {
+    return Vec3(v[0], v[1], v[2]);
+}
+
+inline Mat3 MatFromArray(const std::vector<double> &v) {
+    Mat3 m;
+    m << v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8];
+    return m;
+}
+
+inline Eigen::Quaterniond QuatFromArray(const std::vector<double> &v) {
+    Eigen::Quaterniond q;
+    q.x() = v[0];
+    q.y() = v[1];
+    q.z() = v[2];
+    q.w() = v[3];
+    return q;
+}
+
+inline Mat3 RotationFromArray(const std::vector<double> &v) {
+    if (v.size() != 9 && v.size() != 4) throw std::runtime_error("Invalid rotation matrix");
+    Mat3 rotation;
+    if (v.size() == 9) rotation = MatFromArray(v);
+    else if (v.size() == 4)
+        rotation = QuatFromArray(v).toRotationMatrix();
+    return rotation;
+}
+
+
 /// sync imu and lidar measurements
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
@@ -159,66 +164,6 @@ struct MeasureGroup {
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
 };
-
-template <typename T>
-inline bool esti_plane(Eigen::Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &threshold = 0.1f) {
-    if (point.size() < options::MIN_NUM_MATCH_POINTS) {
-        return false;
-    }
-
-    Eigen::Matrix<T, 3, 1> normvec;
-
-    if (point.size() == options::NUM_MATCH_POINTS) {
-        Eigen::Matrix<T, options::NUM_MATCH_POINTS, 3> A;
-        Eigen::Matrix<T, options::NUM_MATCH_POINTS, 1> b;
-
-        A.setZero();
-        b.setOnes();
-        b *= -1.0f;
-
-        for (int j = 0; j < options::NUM_MATCH_POINTS; j++) {
-            A(j, 0) = point[j].x;
-            A(j, 1) = point[j].y;
-            A(j, 2) = point[j].z;
-        }
-
-        normvec = A.colPivHouseholderQr().solve(b);
-    } else {
-        Eigen::MatrixXd A(point.size(), 3);
-        Eigen::VectorXd b(point.size(), 1);
-
-        A.setZero();
-        b.setOnes();
-        b *= -1.0f;
-
-        for (int j = 0; j < point.size(); j++) {
-            A(j, 0) = point[j].x;
-            A(j, 1) = point[j].y;
-            A(j, 2) = point[j].z;
-        }
-
-        Eigen::MatrixXd n = A.colPivHouseholderQr().solve(b);
-        normvec(0, 0) = n(0, 0);
-        normvec(1, 0) = n(1, 0);
-        normvec(2, 0) = n(2, 0);
-    }
-
-    T n = normvec.norm();
-    pca_result(0) = normvec(0) / n;
-    pca_result(1) = normvec(1) / n;
-    pca_result(2) = normvec(2) / n;
-    pca_result(3) = 1.0 / n;
-
-    for (const auto &p : point) {
-        Eigen::Matrix<T, 4, 1> temp = p.getVector4fMap();
-        temp[3] = 1.0;
-        if (fabs(pca_result.dot(temp)) > threshold) {
-            return false;
-        }
-    }
-    return true;
-}
-
 
 using scan_t = uint32_t;
 struct ScanFrame {
