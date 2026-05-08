@@ -159,42 +159,6 @@ struct MeasureGroup {
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
 };
-struct Pose6D {
-    double offset_time = 0;
-    boost::array<double, 3> acc;
-    boost::array<double, 3> gyr;
-    boost::array<double, 3> vel;
-    boost::array<double, 3> pos;
-    boost::array<double, 9> rot;
-};
-
-/**
- * set a pose 6d from ekf status
- * @tparam T
- * @param t
- * @param a
- * @param g
- * @param v
- * @param p
- * @param R
- * @return
- */
-template <typename T>
-Pose6D set_pose6d(const double t, const Eigen::Matrix<T, 3, 1> &a, const Eigen::Matrix<T, 3, 1> &g,
-                  const Eigen::Matrix<T, 3, 1> &v, const Eigen::Matrix<T, 3, 1> &p, const Eigen::Matrix<T, 3, 3> &R) {
-    Pose6D rot_kp;
-    rot_kp.offset_time = t;
-    for (int i = 0; i < 3; i++) {
-        rot_kp.acc[i] = a(i);
-        rot_kp.gyr[i] = g(i);
-        rot_kp.vel[i] = v(i);
-        rot_kp.pos[i] = p(i);
-        for (int j = 0; j < 3; j++) rot_kp.rot[i * 3 + j] = R(i, j);
-    }
-    return rot_kp;
-}
-
-
 
 template <typename T>
 inline bool esti_plane(Eigen::Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &threshold = 0.1f) {

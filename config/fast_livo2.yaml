@@ -64,9 +64,9 @@ global:
   ba_enable: false
   ba_iters: 3
 
-  keyframe_dist_threshold: 0.5
-  keyframe_angle_threshold: 5.0
-  keyframe_time_threshold: 2.0
+  keyframe_dist_threshold: 1.0
+  keyframe_angle_threshold: 8.0
+  keyframe_time_threshold: 3.0
 
   output_all_loop_reigster_result: false
   lc_detect_dist_thr: 5.0

@@ -24,7 +24,7 @@ void ImuProcess::Reset() {
     imu_need_init_ = true;
     init_iter_num_ = 1;
     v_imu_.clear();
-    IMUpose_.clear();
+    imu_poses_.clear();
     cur_pcl_un_.reset(new PointCloud());
 }
 
@@ -94,7 +94,7 @@ void ImuProcess::IMUInit(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 1
 }
 
 void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                              PointCloud &pcl_out) {
+                              PointCloud::Ptr distort_points, PointCloud& undistort_points) {
     /*** add the imu_ of the last frame-tail to the of current frame-head ***/
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
@@ -102,14 +102,13 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
     const double &pcl_end_time = meas.lidar_end_time_;
 
     /*** sort point clouds by offset time ***/
-    pcl_out = *(meas.lidar_);
-    sort(pcl_out.points.begin(), pcl_out.points.end(), [](const PointType &x, const PointType &y) { return (x.timestamp < y.timestamp); });
+    undistort_points = *distort_points;
+    std::sort(undistort_points.points.begin(), undistort_points.points.end(), [](const PointType &x, const PointType &y) { return (x.timestamp < y.timestamp); });
 
     /*** Initialize IMU pose ***/
     state_ikfom imu_state = kf_state.get_x();
-    IMUpose_.clear();
-    IMUpose_.push_back(set_pose6d(last_lidar_end_time_, acc_s_last_, angvel_last_, imu_state.vel, imu_state.pos,
-                                          imu_state.rot.toRotationMatrix()));
+    imu_poses_.clear();
+    imu_poses_.emplace_back(last_lidar_end_time_, imu_state.pos, imu_state.vel, acc_s_last_, imu_state.rot.toRotationMatrix(), angvel_last_);
 
     /*** forward propagation at each imu_ point ***/
     Vec3 omega_i, acc_avr, acc_i, vel_i, pos_i;
@@ -153,9 +152,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
             acc_s_last_[i] += imu_state.grav[i];
         }
 
-
-        IMUpose_.emplace_back(set_pose6d(tail.timestamp, acc_s_last_, angvel_last_, imu_state.vel, imu_state.pos,
-                                                 imu_state.rot.toRotationMatrix()));
+        imu_poses_.emplace_back(tail.timestamp, imu_state.pos, imu_state.vel, acc_s_last_, imu_state.rot.toRotationMatrix(), angvel_last_);
     }
 
     /*** calculated the pos and attitude prediction at the frame-end ***/
@@ -168,21 +165,21 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
     last_lidar_end_time_ = pcl_end_time;
 
     /*** undistort each lidar point (backward propagation) ***/
-    if (pcl_out.points.empty()) {
+    if (undistort_points.points.empty()) {
         return;
     }
-    auto it_k = pcl_out.points.end() - 1;
+    auto it_k = undistort_points.points.end() - 1;
     Pose3 extrin_il(imu_state.R_il, imu_state.t_il);
     Pose3 extrin_li = extrin_il.GetInverse();
     Pose3 body_world_end = Pose3(imu_state.rot, imu_state.pos).GetInverse();
-    for (auto imu_i = IMUpose_.end() - 1; imu_i != IMUpose_.begin(); imu_i--) {
+    for (auto imu_i = imu_poses_.end() - 1; imu_i != imu_poses_.begin(); imu_i--) {
         auto head = imu_i - 1;
         auto tail = imu_i;
-        R_i = MatFromArray(head->rot);
-        vel_i = VecFromArray(head->vel);
-        pos_i = VecFromArray(head->pos);
-        acc_i = VecFromArray(tail->acc);
-        omega_i = VecFromArray(tail->gyr);
+        R_i = head->rot;
+        vel_i = head->vel;
+        pos_i = head->pos;
+        acc_i = tail->acc;
+        omega_i = tail->gyr;
 
         for (; it_k->timestamp > head->offset_time; it_k--) {
             dt = it_k->timestamp - head->offset_time;
@@ -191,14 +188,14 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
             Mat3 R_k(R_i * ExpMat(omega_i * dt));
             Vec3 pk(it_k->x, it_k->y, it_k->z);
             Vec3 pos_k = pos_i + vel_i * dt + 0.5 * acc_i * dt * dt;
-            Vec3 p_compensate = extrin_li * body_world_end * (R_k * (extrin_il * pk) + pos_k);
+            Vec3 p_compensate = body_world_end * (R_k * pk + pos_k);
 
             // save Undistorted points and their rotation
             it_k->x = p_compensate(0);
             it_k->y = p_compensate(1);
             it_k->z = p_compensate(2);
 
-            if (it_k == pcl_out.points.begin()) {
+            if (it_k == undistort_points.points.begin()) {
                 break;
             }
         }
@@ -206,7 +203,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
 }
 
 void ImuProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                         PointCloud::Ptr cur_pcl_un_) {
+                         PointCloud::Ptr distort_points, PointCloud& undistort_points) {
     if (meas.imu_.empty()) {
         return;
     }
@@ -234,5 +231,5 @@ void ImuProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 1
         return;
     }
 
-    Timer::Evaluate([&, this]() { UndistortPcl(meas, kf_state, *cur_pcl_un_); }, "Undistort Pcl");
+    Timer::Evaluate([&, this]() { UndistortPcl(meas, kf_state, distort_points, undistort_points); }, "Undistort Pcl");
 }

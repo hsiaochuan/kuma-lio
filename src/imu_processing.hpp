@@ -15,7 +15,18 @@ constexpr int MAX_INI_COUNT = 20;
 class ImuProcess {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    struct PoseWithVel {
+        PoseWithVel() : pos(Vec3::Zero()), vel(Vec3::Zero()), acc(Vec3::Zero()), rot(Mat3::Identity()), gyr(Vec3::Zero()) {}
+        PoseWithVel(const double & offset, const Vec3 &p, const Vec3 &v, const Vec3 &a, const Mat3 &r, const Vec3 &g)
+            : offset_time(offset), pos(p), vel(v), acc(a), rot(r), gyr(g) {}
+        double offset_time = 0;
+        Vec3 pos;
+        Vec3 vel;
+        Vec3 acc;
 
+        Mat3 rot;
+        Vec3 gyr;
+    };
     ImuProcess();
     ~ImuProcess();
 
@@ -26,7 +37,7 @@ class ImuProcess {
     void SetGyrBiasCov(const Vec3 &b_g);
     void SetAccBiasCov(const Vec3 &b_a);
     void Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                 PointCloud::Ptr pcl_un_);
+                 PointCloud::Ptr distort_points, PointCloud& undistort_points);
 
     Eigen::Matrix<double, 12, 12> Q_;
     Vec3 cov_acc_;
@@ -39,12 +50,12 @@ class ImuProcess {
    private:
     void IMUInit(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);
     void UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                      PointCloud &pcl_out);
+                      PointCloud::Ptr distort_points, PointCloud& undistort_points);
 
     PointCloud::Ptr cur_pcl_un_;
     Imu last_imu_;
     std::deque<sensor_msgs::ImuConstPtr> v_imu_;
-    std::vector<Pose6D> IMUpose_;
+    std::vector<PoseWithVel> imu_poses_;
     std::vector<Mat3> v_rot_pcl_;
     Mat3 Lidar_R_wrt_IMU_;
     Vec3 Lidar_T_wrt_IMU_;
