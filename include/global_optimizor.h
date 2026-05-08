@@ -180,9 +180,10 @@ class GlobalOptimizor {
         for (const auto& [scan_id, scan] : keyscans_) {
             PointCloud::Ptr scan_world(new PointCloud);
             pcl::transformPointCloud(*scan->GetScan(), *scan_world, scan->GetWorldFromBody().Mat4d());
-            map.AddCloud(scan_world);
+            map.AddPoints(scan_world);
         }
 
+        map.Finish(10,0.025);
         // add to problem
         ceres::Problem problem;
         for (const auto& [scan_id, scan] : keyscans_) {
@@ -190,14 +191,18 @@ class GlobalOptimizor {
             problem.AddParameterBlock(scan->world_from_body.PosData(), 3);
         }
 
+        problem.SetParameterBlockConstant(keyscans_.begin()->second->world_from_body.QuatData());
+        problem.SetParameterBlockConstant(keyscans_.begin()->second->world_from_body.PosData());
+
         // add constrain
         int plane_voxel_count = 0;
         for (const auto& iter : map.voxel_map_) {
-            if (iter.second->normal != Eigen::Vector3d::Zero()) {
+            if (iter.second->plane_coeff != Vec4::Zero()) {
                 plane_voxel_count++;
                 auto grid = iter.second;
                 std::unordered_map<scan_t, PointCluster> clusters;
-                for (Point& point : grid->points) {
+                for (int inlier_idx : iter.second->inliers_) {
+                    Point& point = grid->points->at(inlier_idx);
                     int point_id = static_cast<int>(point.intensity);
                     scan_t scan_id = static_cast<scan_t>(point.timestamp);
                     CHECK(keyscans_.count(scan_id));
@@ -211,9 +216,8 @@ class GlobalOptimizor {
                     int nk = cluster_k.N;
                     Eigen::Matrix3d cov_k = cluster_k.Cov();
                     Eigen::Vector3d mean_k = cluster_k.Mean();
-                    Eigen::Vector3d normal = grid->normal;
-                    Eigen::Vector3d center = grid->cluster.Mean();
-                    auto costs = BaregCostFunctionCreate(nk, cov_k, mean_k, normal, center, 1.0);
+                    Vec4 plane_coeff = grid->plane_coeff;
+                    auto costs = BaregCostFunctionCreate(nk, cov_k, mean_k, plane_coeff, 1.0);
                     if (costs[0])
                         problem.AddResidualBlock(costs[0], nullptr, keyscans_[scan_k]->world_from_body.QuatData(),
                                                  keyscans_[scan_k]->world_from_body.PosData());

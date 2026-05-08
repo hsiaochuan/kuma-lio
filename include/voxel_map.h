@@ -11,26 +11,22 @@ namespace faster_lio {
 struct Grid {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Grid() : normal(Eigen::Vector3d::Zero()) {}
+    Grid() : plane_coeff(Vec4::Zero()), points(new PointCloud) {}
     PointCluster cluster;
-    PointCloud points;
-    Eigen::Vector3d normal;
+    PointCloud::Ptr points;
 
+    // plane coeff
+    Vec4 plane_coeff = Vec4::Zero();
+    std::vector<int> inliers_;
     void Update(PointCluster& cluster_add, PointCloud & points_add) {
         // update cluster and normal
         cluster += cluster_add;
-        points += points_add;
-        normal.setZero();
-        if (cluster.N >= 4) {
-            Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(cluster.Cov());
-            if (solver.eigenvalues()[0] / solver.eigenvalues()[1] < 0.1) {
-                normal = solver.eigenvectors().col(0);
-            }
-        }
+        *points += points_add;
+        plane_coeff.setZero();
     }
     void Reset() {
         cluster.SetZero();
-        normal.setZero();
+        plane_coeff.setZero();
     }
 };
 
@@ -54,6 +50,7 @@ class VoxelMap {
     explicit VoxelMap(const Config& config);
     Config config_;
     std::unordered_map<VOXEL_LOCATION, std::shared_ptr<Grid>> voxel_map_;
-    bool AddCloud(const PointCloud::Ptr& input_cloud);
+    bool AddPoints(const PointCloud::Ptr& points);
+    void Finish(const double & min_inlier, const double & thr);
 };
 }  // namespace faster_lio

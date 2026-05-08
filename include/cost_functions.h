@@ -44,25 +44,24 @@ struct TwoVectorRotationCostFunctor {
 };
 struct PointPlaneCostFunctor {
    public:
-    PointPlaneCostFunctor(const Eigen::Vector3d& normal, const Eigen::Vector3d& center, const Eigen::Vector3d& point,
+    PointPlaneCostFunctor(const Eigen::Vector4d& plane_coeff, const Eigen::Vector3d& point,
                           double& weight)
-        : normal_(normal), center_(center), point(point), weight(weight) {}
+        : plane_coeff_(plane_coeff), point(point), weight(weight) {}
     template <typename T>
     bool operator()(const T* const q_vec, const T* const t_vec, T* res) const {
         ConstEigenQuaternionMap<T> q(q_vec);
         ConstEigenVector3Map<T> t(t_vec);
-        res[0] = T(weight) * normal_.cast<T>().dot(q * point.cast<T>() + t - center_.cast<T>());
+        res[0] = T(weight) * plane_coeff_.cast<T>().dot((q * point.cast<T>() + t).homogeneous());
         return true;
     }
-    static ceres::CostFunction* Create(const Eigen::Vector3d& normal, const Eigen::Vector3d& center,
-                                       const Eigen::Vector3d& point, double& weight) {
+    static ceres::CostFunction* Create(const Eigen::Vector4d& plane_coeff, const Eigen::Vector3d& point,
+                          double& weight) {
         return new ceres::AutoDiffCostFunction<PointPlaneCostFunctor, 1, 4, 3>(
-            new PointPlaneCostFunctor(normal, center, point, weight));
+            new PointPlaneCostFunctor(plane_coeff, point, weight));
     }
 
    private:
-    Eigen::Vector3d normal_;
-    Eigen::Vector3d center_;
+    Eigen::Vector4d plane_coeff_;
     Eigen::Vector3d point;
     double weight;
 };

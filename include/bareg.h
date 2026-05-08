@@ -8,15 +8,13 @@
 namespace faster_lio {
 
 inline std::array<ceres::CostFunction *, 3> BaregCostFunctionCreate(int N_k, const Eigen::Matrix3d &cov_k,
-                                                                    const Eigen::Vector3d &mean_k,
-                                                                    const Eigen::Vector3d &normal,
-                                                                    const Eigen::Vector3d &center, double scale) {
+                                                                    const Eigen::Vector3d &mean_k,Eigen::Vector4d& plane_coeff, double scale) {
     std::array<ceres::CostFunction *, 3> cost_functions{};
     cost_functions.fill(nullptr);
     if (N_k) {
         double f3 = std::sqrt(N_k);
         f3 *= scale;
-        cost_functions[0] = PointPlaneCostFunctor::Create(normal, center, mean_k, f3);
+        cost_functions[0] = PointPlaneCostFunctor::Create(plane_coeff, mean_k, f3);
     }
     if (N_k > 3) {
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(cov_k);
@@ -27,10 +25,10 @@ inline std::array<ceres::CostFunction *, 3> BaregCostFunctionCreate(int N_k, con
         f1 *= scale;
         f2 *= scale;
         Eigen::Vector3d max_vec = vecs_k.col(2);
-        if (!std::isnan(f1)) cost_functions[1] = TwoVectorRotationCostFunctor::Create(max_vec, normal, f1);
+        if (!std::isnan(f1)) cost_functions[1] = TwoVectorRotationCostFunctor::Create(max_vec, plane_coeff.head<3>(), f1);
 
         Eigen::Vector3d mid_vec = vecs_k.col(1);
-        if (!std::isnan(f2)) cost_functions[2] = TwoVectorRotationCostFunctor::Create(mid_vec, normal, f2);
+        if (!std::isnan(f2)) cost_functions[2] = TwoVectorRotationCostFunctor::Create(mid_vec, plane_coeff.head<3>(), f2);
     }
     return cost_functions;
 }

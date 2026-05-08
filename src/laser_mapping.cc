@@ -837,6 +837,8 @@ void LaserMapping::Finish() {
 
     mapper->ScanFilter();
     boost::filesystem::create_directories(output_dir + "/global/");
+    mapper->ExportMap(output_dir + "/init.pcd");
+    TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/init.txt");
     std::unordered_map<ScanPair, PairData> loops;
     if (mapper->options_.lc_enable) {
         loops = mapper->DetectLoopClosure();
@@ -856,8 +858,7 @@ void LaserMapping::Finish() {
     // export the poses in body frame
     std::cout << "Exporting final map and trajectory..." << std::endl;
     mapper->ExportMap(output_dir + "/final.pcd");
-    Trajectory kf_poses = mapper->ExportStampedPoses();
-    TrajectoryGenerator::save_to_tumtxt(kf_poses, output_dir + "/final.txt");
+    TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/final.txt");
 
 
     // export COLMAP
