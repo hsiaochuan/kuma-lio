@@ -23,7 +23,7 @@ void LaserMapping::PublishPath() {
     msg_body_pose.pose.orientation.z = state_point_.rot.coeffs()[2];
     msg_body_pose.pose.orientation.w = state_point_.rot.coeffs()[3];
     msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time_);
-    msg_body_pose.header.frame_id = tf_world_frame_;
+    msg_body_pose.header.frame_id = "world";
 
     /*** if path is too large, the rvis will crash ***/
     path_.poses.push_back(msg_body_pose);
@@ -32,8 +32,8 @@ void LaserMapping::PublishPath() {
 
 void LaserMapping::PublishOdometry() {
     nav_msgs::Odometry odom_aft_mapped;
-    odom_aft_mapped.header.frame_id = tf_world_frame_;
-    odom_aft_mapped.child_frame_id = tf_imu_frame_;
+    odom_aft_mapped.header.frame_id = "world";
+    odom_aft_mapped.child_frame_id = "body";
     odom_aft_mapped.header.stamp = ros::Time().fromSec(lidar_end_time_);  // ros::Time().fromSec(lidar_end_time_);
     odom_aft_mapped.pose.pose.position.x = state_point_.pos(0);
     odom_aft_mapped.pose.pose.position.y = state_point_.pos(1);
@@ -64,7 +64,7 @@ void LaserMapping::PublishOdometry() {
     q.setY(odom_aft_mapped.pose.pose.orientation.y);
     q.setZ(odom_aft_mapped.pose.pose.orientation.z);
     transform.setRotation(q);
-    br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped.header.stamp, tf_world_frame_, tf_imu_frame_));
+    br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped.header.stamp, "world", "body"));
 }
 
 void LaserMapping::PublishFrameWorld() const {
@@ -74,7 +74,7 @@ void LaserMapping::PublishFrameWorld() const {
     sensor_msgs::PointCloud2 scan_msg;
     pcl::toROSMsg(*scan_world, scan_msg);
     scan_msg.header.stamp = ros::Time().fromSec(lidar_end_time_);
-    scan_msg.header.frame_id = tf_world_frame_;
+    scan_msg.header.frame_id = "world";
     pub_laser_cloud_world_.publish(scan_msg);
 }
 
@@ -88,7 +88,7 @@ void LaserMapping::PublishFrameEffectWorld() {
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time_);
-    laserCloudmsg.header.frame_id = tf_world_frame_;
+    laserCloudmsg.header.frame_id = "world";
     pub_laser_cloud_effect_world_.publish(laserCloudmsg);
 }
 
@@ -97,7 +97,7 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
 
     Trajectory cam_traj;
     for (auto stamp_pose : trajectory_) {
-        stamp_pose.pose = stamp_pose.pose * extrin_ic_.Isometry3d();
+        stamp_pose.pose = stamp_pose.pose * param->extrin_ic_.Isometry3d();
         cam_traj.emplace_back(stamp_pose);
     }
     std::string cam_traj_file = fs::path(traj_file).parent_path().string() + "/cam_traj_log.txt";
@@ -106,7 +106,7 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
 }
 
 void LaserMapping::Finish() {
-    if (pcd_save_interval_ > 0) {
+    if (param->pcd_save_interval_ > 0) {
         static auto once = fs::create_directories(output_dir + "/maps");
 
         // sample
@@ -148,12 +148,12 @@ void LaserMapping::Finish() {
     TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/final.txt");
 
     // export COLMAP
-    if (image_save_en_) {
+    if (param->image_save_en_) {
         // only for the keyscan, erase others
         for (auto it = sfm_data_.images_.begin(); it != sfm_data_.images_.end();) {
             if (mapper->keyscans_.count(it->first) > 0) {
                 Image::Ptr im = it->second;
-                im->cam_from_world_ = (mapper->keyscans_[it->first]->world_from_body * extrin_ic_).GetInverse();
+                im->cam_from_world_ = (mapper->keyscans_[it->first]->world_from_body * param->extrin_ic_).GetInverse();
                 ++it;
             } else
                 it = sfm_data_.images_.erase(it);

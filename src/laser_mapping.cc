@@ -20,7 +20,7 @@ void LaserMapping::Run() {
 
     /// IMU process, kf prediction, undistortion
     PointCloud::Ptr scan_body(new PointCloud);
-    pcl::transformPointCloud(*measures_.lidar_, *scan_body, extrin_il_.Mat4d());
+    pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
     p_imu_->Process(measures_, kf_, scan_body, *scan_undistort_);
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {
         LOG(WARNING) << "No point, skip this scan!";
@@ -108,7 +108,7 @@ void LaserMapping::Run() {
     Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
     trajectory_.emplace_back(lidar_end_time_, body_pose.Isometry3d());
 
-    if (image_save_en_ && !measures_.img_.empty()) {
+    if (param->image_save_en_ && !measures_.img_.empty()) {
         // construct the image
         image_t im_id = scan_id;
         Image::Ptr im = std::make_shared<Image>();
@@ -116,7 +116,7 @@ void LaserMapping::Run() {
         im->image_id_ = im_id;
         // the name not include the dir path, only the filename
         im->name_ = stamp_string.str() + ".jpg";
-        im->cam_from_world_ = (scan->world_from_body * extrin_ic_).GetInverse();
+        im->cam_from_world_ = (scan->world_from_body * param->extrin_ic_).GetInverse();
         CHECK(sfm_data_.cameras_.size() == 1);
         im->camera_id_ = sfm_data_.cameras_.begin()->first;
 
@@ -128,16 +128,16 @@ void LaserMapping::Run() {
         cv::imwrite(output_dir + "/images/" + im->name_, measures_.img_);
     }
 
-    if (pcd_save_en_) {
+    if (param->pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");
         pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
     }
 
-    if (pcd_save_en_) {
+    if (param->pcd_save_en_) {
         *pcl_wait_save_ += *scan_down_world_;
         static int scan_wait_num = 0;
         scan_wait_num++;
-        if (pcd_save_interval_ > 0 && scan_wait_num >= pcd_save_interval_) {
+        if (param->pcd_save_interval_ > 0 && scan_wait_num >= param->pcd_save_interval_) {
             static auto once = fs::create_directories(output_dir + "/maps");
 
             // sample
@@ -162,26 +162,26 @@ bool LaserMapping::SyncPackages() {
         return false;
     }
 
-    if (camera_enable_ && image_buffer_.empty())
+    if (param->camera_enable_ && image_buffer_.empty())
         return false;
 
     // set the measure end timestamp
     if (lidar_end_time_ == 0) {
         // for first time
-        if (camera_enable_) {
+        if (param->camera_enable_) {
             lidar_end_time_ = image_buffer_.front().timestamp_;
             measures_.img_ = image_buffer_.front().image_data_;
             image_buffer_.pop_front();
         } else
-            lidar_end_time_ = points_buffer_.front().timestamp + scan_interval_;
+            lidar_end_time_ = points_buffer_.front().timestamp + param->scan_interval_;
     } else if (measures_.lidar_end_time_ == lidar_end_time_) {
         // after the update, incre the end time
-        if (camera_enable_) {
+        if (param->camera_enable_) {
             lidar_end_time_ = image_buffer_.front().timestamp_;
             measures_.img_ = image_buffer_.front().image_data_;
             image_buffer_.pop_front();
         } else
-            lidar_end_time_ = lidar_end_time_ + scan_interval_;
+            lidar_end_time_ = lidar_end_time_ + param->scan_interval_;
     } else {
         // the measure is not synced, no need to set the lidar end time
         lidar_end_time_ = lidar_end_time_;
@@ -239,12 +239,12 @@ void LaserMapping::MapIncremental() {
             const PointVector &points_near = nearest_points_[i];
 
             Eigen::Vector3f center =
-                ((point_world.getVector3fMap() / map_filter_size_).array().floor() + 0.5) * map_filter_size_;
+                ((point_world.getVector3fMap() / param->map_filter_size_).array().floor() + 0.5) * param->map_filter_size_;
 
             Eigen::Vector3f dis_2_center = points_near[0].getVector3fMap() - center;
 
-            if (fabs(dis_2_center.x()) > 0.5 * map_filter_size_ && fabs(dis_2_center.y()) > 0.5 * map_filter_size_ &&
-                fabs(dis_2_center.z()) > 0.5 * map_filter_size_) {
+            if (fabs(dis_2_center.x()) > 0.5 * param->map_filter_size_ && fabs(dis_2_center.y()) > 0.5 * param->map_filter_size_ &&
+                fabs(dis_2_center.z()) > 0.5 * param->map_filter_size_) {
                 point_no_need_downsample.emplace_back(point_world);
                 return;
             }
@@ -363,7 +363,7 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
                     ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
                     point_selected_surf_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
                     if (point_selected_surf_[i]) {
-                        point_selected_surf_[i] = esti_plane(plane_coef_[i], points_near, esti_plane_thr);
+                        point_selected_surf_[i] = esti_plane(plane_coef_[i], points_near, param->esti_plane_thr);
                     }
                 }
 
@@ -413,33 +413,16 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
             ekfom_data.h.resize(effect_feat_num_);
 
             index.resize(effect_feat_num_);
-            const Mat3f off_R = s.R_il.toRotationMatrix().cast<float>();
-            const Vec3f off_t = s.t_il.cast<float>();
             const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
 
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 Vec3f point_this_be = corr_pts_[i].head<3>();
                 Mat3f point_be_crossmat = Hat(point_this_be);
-                Vec3f point_this = point_this_be;
-                Mat3f point_crossmat = Hat(point_this);
 
-                /*** get the normal vector of closest surface/corner ***/
                 Vec3f norm_vec = corr_norm_[i].head<3>();
-
-                /*** calculate the Measurement Jacobian matrix H ***/
-                Vec3f C(Rt * norm_vec);
-                Vec3f A(point_crossmat * C);
-
-                if (extrinsic_est_en_) {
-                    Vec3f B(point_be_crossmat * off_R.transpose() * C);
-                    ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], B[0],
-                        B[1], B[2], C[0], C[1], C[2];
-                } else {
-                    ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], 0.0,
+                Vec3f A(point_be_crossmat * Rt * norm_vec);
+                ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], 0.0,
                         0.0, 0.0, 0.0, 0.0, 0.0;
-                }
-
-                /*** Measurement: distance to the closest surface/corner ***/
                 ekfom_data.h(i) = -corr_pts_[i][3];
             });
         },

@@ -12,7 +12,7 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
             double timestamp = msg->header.stamp.toSec();
 
             // time offset
-            timestamp += lidar_time_offset_;
+            timestamp += param->lidar_time_offset_;
 
             // loop
             if (timestamp < last_timestamp_lidar_) {
@@ -21,9 +21,8 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
             last_timestamp_lidar_ = timestamp;
 
             // set start offset
-            if (if_first_scan_) {
+            if (std::isnan(first_scan_time_)) {
                 first_scan_time_ = timestamp;
-                if_first_scan_ = false;
             }
 
             timestamp = timestamp - first_scan_time_;
@@ -45,7 +44,7 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
             double timestamp = msg->header.stamp.toSec();
 
             // time offset
-            timestamp += lidar_time_offset_;
+            timestamp += param->lidar_time_offset_;
 
             // loop
             if (timestamp < last_timestamp_lidar_) {
@@ -54,9 +53,8 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
             last_timestamp_lidar_ = timestamp;
 
             // set start offset
-            if (if_first_scan_) {
+            if (std::isnan(first_scan_time_)) {
                 first_scan_time_ = timestamp;
-                if_first_scan_ = false;
             }
 
             timestamp = timestamp - first_scan_time_;
@@ -83,7 +81,7 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     last_timestamp_imu_ = timestamp;
 
     // set start offset
-    if (if_first_scan_) {
+    if (std::isnan(first_scan_time_)) {
         return;
     } else {
         timestamp = timestamp - first_scan_time_;
@@ -104,7 +102,7 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
 void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     static int img_count = 0;
-    if (img_count % image_skip_ == 0) {
+    if (img_count % param->image_skip_ == 0) {
         cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
         Image image;
         image.timestamp_ = msg_in->header.stamp.toSec();
@@ -116,7 +114,7 @@ void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) 
 
 void LaserMapping::ImageCallBack(Image &image) {
     // time offset
-    image.timestamp_ += camera_time_offset_;
+    image.timestamp_ += param->camera_time_offset_;
 
     // loop
     if (image.timestamp_ < last_timestamp_camera_) {
@@ -126,7 +124,7 @@ void LaserMapping::ImageCallBack(Image &image) {
     last_timestamp_camera_ = image.timestamp_;
 
     // set start offset
-    if (if_first_scan_)
+    if (std::isnan(first_scan_time_))
         return;
     else
         image.timestamp_ = image.timestamp_ - first_scan_time_;
@@ -138,7 +136,7 @@ void LaserMapping::ImageCallBack(Image &image) {
 void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     static int img_count = 0;
-    if (img_count % image_skip_ == 0) {
+    if (img_count % param->image_skip_ == 0) {
         cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
         Image image;
         image.timestamp_ = msg_in->header.stamp.toSec();

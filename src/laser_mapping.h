@@ -1,6 +1,6 @@
 #ifndef FASTER_LIO_LASER_MAPPING_H
 #define FASTER_LIO_LASER_MAPPING_H
-
+#include "laser_mapping_param.h"
 #include "livox_ros_driver/CustomMsg.h"
 #include <nav_msgs/Path.h>
 #include <pcl/filters/voxel_grid.h>
@@ -68,26 +68,15 @@ class LaserMapping {
     void MapIncremental();
 
     void SubAndPubToROS(ros::NodeHandle &nh);
-    bool LoadParamsFromYAML(const std::string &yaml);
 
     void PrintState(const state_ikfom &s);
 
    public:
     /// modules
-    IVoxType::Options ivox_options_;
     std::shared_ptr<IVoxType> ivox_ = nullptr;                    // localmap in ivox
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
     std::shared_ptr<ImuProcess> p_imu_ = nullptr;                 // imu process
     std::shared_ptr<GlobalOptimizor> mapper = nullptr;
-
-    /// local map related
-    float det_range_ = 300.0f;
-    double cube_len_ = 0;
-    double map_filter_size_ = 0;
-
-    /// params
-    Pose3 extrin_il_ = Pose3::Identity();
-    Pose3 extrin_ic_ = Pose3::Identity();
 
     /// point clouds data
     PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
@@ -101,18 +90,6 @@ class LaserMapping {
     std::vector<char> point_selected_surf_;              // selected points
     std::vector<Vec4f> plane_coef_;                            // plane coeffs
 
-    /// topics
-    std::string lidar_topic_;
-    std::string imu_topic_;
-    std::string camera_topic_;
-    bool camera_enable_;
-    double lidar_time_offset_ = 0.;
-    double camera_time_offset_ = 0.;
-    int image_skip_ = 3;
-
-    std::shared_ptr<CamModel> camera_;
-
-    /// ros pub and sub stuffs
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
     ros::Subscriber sub_img_;
@@ -120,11 +97,8 @@ class LaserMapping {
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
-    std::string tf_imu_frame_;
-    std::string tf_world_frame_;
 
-    double first_scan_time_;
-    bool if_first_scan_ = true;
+    double first_scan_time_ = std::numeric_limits<double>::quiet_NaN();
 
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;
@@ -134,30 +108,21 @@ class LaserMapping {
     double last_timestamp_lidar_ = 0;
     double last_timestamp_imu_ = -1.0;
     double last_timestamp_camera_ = 0.0;
-    double scan_interval_ = 0.1;
     double lidar_end_time_ = 0;
-    float esti_plane_thr = 0.1;
-    int max_iteraions = 4;
     bool if_local_map_init_ = true;
     int effect_feat_num_ = 0;
 
-    ///////////////////////// EKF inputs and output ///////////////////////////////////////////////////////
-    MeasureGroup measures_;                    // sync IMU and lidar scan
-    esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;  // esekf
-    state_ikfom state_point_;                          // ekf current state
-    bool extrinsic_est_en_ = true;
-
-    /////////////////////////  debug show / save /////////////////////////////////////////////////////////
-    bool pcd_save_en_ = false;
-    bool image_save_en_ = false;
-    int pcd_save_interval_ = -1;
+    MeasureGroup measures_;
+    esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;
+    state_ikfom state_point_;
     int pcd_idx = 0;
-    bool path_save_en_ = false;
-
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
     nav_msgs::Path path_;
     Trajectory trajectory_;
     sfm_data sfm_data_;
+
+
+    std::shared_ptr<LaserMappingParam> param;
    public:
     std::string output_dir;
 };

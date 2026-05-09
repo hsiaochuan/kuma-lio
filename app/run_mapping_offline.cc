@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     rosbag::View view(bag, start_time, end_time);
     for (const rosbag::MessageInstance &m : view) {
         auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>();
-        if (m.getTopic() == laser_mapping->lidar_topic_ && livox_msg) {
+        if (m.getTopic() == laser_mapping->param->lidar_topic_ && livox_msg) {
             faster_lio::Timer::Evaluate(
                 [&laser_mapping, &livox_msg]() {
                     laser_mapping->LivoxPCLCallBack(livox_msg);
@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
         }
 
         auto point_cloud_msg = m.instantiate<sensor_msgs::PointCloud2>();
-        if (m.getTopic() == laser_mapping->lidar_topic_ && point_cloud_msg) {
+        if (m.getTopic() == laser_mapping->param->lidar_topic_ && point_cloud_msg) {
             faster_lio::Timer::Evaluate(
                 [&laser_mapping, &point_cloud_msg]() {
                     laser_mapping->StandardPCLCallBack(point_cloud_msg);
@@ -87,18 +87,18 @@ int main(int argc, char **argv) {
         }
 
         auto imu_msg = m.instantiate<sensor_msgs::Imu>();
-        if (m.getTopic() == laser_mapping->imu_topic_ && imu_msg) {
+        if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
             laser_mapping->IMUCallBack(imu_msg);
             continue;
         }
 
         auto img_msg = m.instantiate<sensor_msgs::Image>();
-        if (laser_mapping->camera_enable_ && m.getTopic() == laser_mapping->camera_topic_ && img_msg) {
+        if (laser_mapping->param->camera_enable_ && m.getTopic() == laser_mapping->param->camera_topic_ && img_msg) {
             laser_mapping->ImageMsgCallBack(img_msg);
             continue;
         }
         auto compress_img = m.instantiate<sensor_msgs::CompressedImage>();
-        if (laser_mapping->camera_enable_ && m.getTopic() == laser_mapping->camera_topic_ && compress_img) {
+        if (laser_mapping->param->camera_enable_ && m.getTopic() == laser_mapping->param->camera_topic_ && compress_img) {
             laser_mapping->CompressedImageCallBack(compress_img);
             continue;
         }
