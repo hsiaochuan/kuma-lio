@@ -46,9 +46,8 @@ class ImuProcess {
     Vec3 cov_bias_acc_;
 
     void AccuImu(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
-    void PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                      PointCloud::Ptr distort_points, PointCloud& undistort_points);
-
+    void PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
+    void UndistortPoints(esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloud::Ptr distort_points, PointCloud& undistort_points);
     Imu last_imu_;
     std::vector<PoseWithVel> imu_poses_;
 

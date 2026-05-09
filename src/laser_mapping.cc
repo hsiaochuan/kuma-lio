@@ -28,7 +28,8 @@ void LaserMapping::Run() {
     }
 
     Timer::Evaluate([&, this]() {
-        p_imu_->PredictAndUndistort(measures_, kf_, scan_body, *scan_undistort_);
+        p_imu_->PredictAndUndistort(measures_, kf_);
+        p_imu_->UndistortPoints(kf_, scan_body, *scan_undistort_);
     }, "Undistort Pcl");
 
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {

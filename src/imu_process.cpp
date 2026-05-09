@@ -36,18 +36,13 @@ void ImuProcess::AccuImu(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 1
     }
 }
 
-void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
-                              PointCloud::Ptr distort_points, PointCloud &undistort_points) {
+
+void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state) {
     /*** add the imu_ of the last frame-tail to the of current frame-head ***/
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
     const double &imu_end_time = v_imu.back().timestamp;
     const double &pcl_end_time = meas.end_time_;
-
-    /*** sort point clouds by offset time ***/
-    undistort_points = *distort_points;
-    std::sort(undistort_points.points.begin(), undistort_points.points.end(),
-              [](const faster_lio::Point &x, const faster_lio::Point &y) { return (x.timestamp < y.timestamp); });
 
     /*** Initialize IMU pose ***/
     state_ikfom imu_state = kf_state.get_x();
@@ -56,9 +51,7 @@ void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<st
                             imu_state.rot.toRotationMatrix(), omega_last);
 
     /*** forward propagation at each imu_ point ***/
-    Vec3 omega_i, acc_avr, acc_i, vel_i, pos_i;
-    Mat3 R_i;
-
+    Vec3 omega_i, acc_avr;
     double dt = 0;
 
     input_ikfom in;
@@ -106,18 +99,26 @@ void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<st
     dt = note * (pcl_end_time - imu_end_time);
     kf_state.predict(dt, Q_, in);
 
-    imu_state = kf_state.get_x();
     last_imu_ = meas.imu_.back();
     last_lidar_end_time_ = pcl_end_time;
 
+
+}
+void ImuProcess::UndistortPoints(esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state,
+    PointCloud::Ptr distort_points, PointCloud& undistort_points) {
+    undistort_points = *distort_points;
+    std::sort(undistort_points.points.begin(), undistort_points.points.end(),
+          [](const faster_lio::Point &x, const faster_lio::Point &y) { return (x.timestamp < y.timestamp); });
+    Mat3 R_i;
+    Vec3 vel_i, pos_i, acc_i,omega_i;
+    double dt;
     /*** undistort each lidar point (backward propagation) ***/
     if (undistort_points.points.empty()) {
         return;
     }
     auto it_k = undistort_points.points.end() - 1;
-    Pose3 extrin_il(imu_state.R_il, imu_state.t_il);
-    Pose3 extrin_li = extrin_il.GetInverse();
-    Pose3 body_world_end = Pose3(imu_state.rot, imu_state.pos).GetInverse();
+    state_ikfom end_state = kf_state.get_x();
+    Pose3 body_world_end = Pose3(end_state.rot, end_state.pos).GetInverse();
     for (auto imu_i = imu_poses_.end() - 1; imu_i != imu_poses_.begin(); imu_i--) {
         auto head = imu_i - 1;
         auto tail = imu_i;
@@ -146,7 +147,6 @@ void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<st
         }
     }
 }
-
 void ImuProcess::InertialInitialize(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state) {
     CHECK(!meas.imu_.empty());
     CHECK(meas.lidar_ != nullptr);
