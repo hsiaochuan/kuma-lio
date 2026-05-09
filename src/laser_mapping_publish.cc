@@ -22,7 +22,7 @@ void LaserMapping::PublishPath() {
     msg_body_pose.pose.orientation.y = state_point_.rot.coeffs()[1];
     msg_body_pose.pose.orientation.z = state_point_.rot.coeffs()[2];
     msg_body_pose.pose.orientation.w = state_point_.rot.coeffs()[3];
-    msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time_);
+    msg_body_pose.header.stamp = ros::Time().fromSec(end_time_);
     msg_body_pose.header.frame_id = "world";
 
     /*** if path is too large, the rvis will crash ***/
@@ -34,7 +34,7 @@ void LaserMapping::PublishOdometry() {
     nav_msgs::Odometry odom_aft_mapped;
     odom_aft_mapped.header.frame_id = "world";
     odom_aft_mapped.child_frame_id = "body";
-    odom_aft_mapped.header.stamp = ros::Time().fromSec(lidar_end_time_);  // ros::Time().fromSec(lidar_end_time_);
+    odom_aft_mapped.header.stamp = ros::Time().fromSec(end_time_);  // ros::Time().fromSec(lidar_end_time_);
     odom_aft_mapped.pose.pose.position.x = state_point_.pos(0);
     odom_aft_mapped.pose.pose.position.y = state_point_.pos(1);
     odom_aft_mapped.pose.pose.position.z = state_point_.pos(2);
@@ -73,7 +73,7 @@ void LaserMapping::PublishFrameWorld() const {
 
     sensor_msgs::PointCloud2 scan_msg;
     pcl::toROSMsg(*scan_world, scan_msg);
-    scan_msg.header.stamp = ros::Time().fromSec(lidar_end_time_);
+    scan_msg.header.stamp = ros::Time().fromSec(end_time_);
     scan_msg.header.frame_id = "world";
     pub_laser_cloud_world_.publish(scan_msg);
 }
@@ -87,7 +87,7 @@ void LaserMapping::PublishFrameEffectWorld() {
     }
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud, laserCloudmsg);
-    laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time_);
+    laserCloudmsg.header.stamp = ros::Time().fromSec(end_time_);
     laserCloudmsg.header.frame_id = "world";
     pub_laser_cloud_effect_world_.publish(laserCloudmsg);
 }

@@ -14,6 +14,7 @@ namespace fs = boost::filesystem;
 namespace faster_lio {
 
 void LaserMapping::Run() {
+    // sync the lidar and imu data, if no data or not synced, return true
     if (!SyncPackages()) {
         return;
     }
@@ -63,11 +64,8 @@ void LaserMapping::Run() {
     // ICP and iterated Kalman filter update
     Timer::Evaluate(
         [&, this]() {
-            // iterated state estimation
             double solve_H_time = 0;
-            // update the observation model, will call nn and point-to-plane residual computation
             kf_.update_iterated_dyn_share_modified(options::LASER_POINT_COV, solve_H_time);
-            // save the state
             state_point_ = kf_.get_x();
         },
         "IEKF Solve and Update");
@@ -75,7 +73,7 @@ void LaserMapping::Run() {
     // update local map
     Timer::Evaluate([&, this]() {
         MapIncremental();
-    }, "    Incremental Mapping");
+    }, "Incremental Mapping");
 
     LOG(INFO) << "[ mapping ]: In num: " << scan_undistort_->points.size() << " downsamp " << cur_pts
               << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << effect_feat_num_;
@@ -84,35 +82,33 @@ void LaserMapping::Run() {
     static scan_t scan_id = 1;
     ScanFrame::Ptr scan = std::make_shared<ScanFrame>(scan_id);
     std::stringstream stamp_string;
-    stamp_string << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.lidar_end_time_;
+    stamp_string << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.end_time_;
     scan->cloud_fname = output_dir + "/scans/" + stamp_string.str() + ".pcd";
     scan->world_from_body = Pose3(state_point_.rot, state_point_.pos);
-    scan->timestamp = measures_.lidar_end_time_;
+    scan->timestamp = measures_.end_time_;
     mapper->AddScan(scan);
     scan_id++;
 
-    // publish or save map pcd
-    if (pub_laser_cloud_world_) {
+    // publish
+    if (pub_laser_cloud_world_)
         PublishFrameWorld();
-    }
-    if (pub_path_) {
+    if (pub_path_)
         PublishPath();
-    }
-    if (pub_odom_aft_mapped_) {
+    if (pub_odom_aft_mapped_)
         PublishOdometry();
-    }
-    if (pub_laser_cloud_effect_world_) {
+    if (pub_laser_cloud_effect_world_)
         PublishFrameEffectWorld();
-    }
 
+    // save to trajectory
     Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
-    trajectory_.emplace_back(lidar_end_time_, body_pose.Isometry3d());
+    trajectory_.emplace_back(end_time_, body_pose.Isometry3d());
 
+    // save the pcd
     if (param->image_save_en_ && !measures_.img_.empty()) {
         // construct the image
-        image_t im_id = scan_id;
+        image_t im_id = scan->scan_id;
         Image::Ptr im = std::make_shared<Image>();
-        im->timestamp_ = measures_.lidar_end_time_;
+        im->timestamp_ = measures_.end_time_;
         im->image_id_ = im_id;
         // the name not include the dir path, only the filename
         im->name_ = stamp_string.str() + ".jpg";
@@ -127,12 +123,10 @@ void LaserMapping::Run() {
         static auto once = fs::create_directories(output_dir + "/images");
         cv::imwrite(output_dir + "/images/" + im->name_, measures_.img_);
     }
-
     if (param->pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");
         pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
     }
-
     if (param->pcd_save_en_) {
         *pcl_wait_save_ += *scan_down_world_;
         static int scan_wait_num = 0;
@@ -166,47 +160,49 @@ bool LaserMapping::SyncPackages() {
         return false;
 
     // set the measure end timestamp
-    if (lidar_end_time_ == 0) {
+    if (std::isnan(end_time_)) {
         // for first time
         if (param->camera_enable_) {
-            lidar_end_time_ = image_buffer_.front().timestamp_;
+            end_time_ = image_buffer_.front().timestamp_;
             measures_.img_ = image_buffer_.front().image_data_;
             image_buffer_.pop_front();
         } else
-            lidar_end_time_ = points_buffer_.front().timestamp + param->scan_interval_;
-    } else if (measures_.lidar_end_time_ == lidar_end_time_) {
+            end_time_ = points_buffer_.front().timestamp + param->scan_interval_;
+    } else if (measures_.end_time_ == end_time_) {
         // after the update, incre the end time
         if (param->camera_enable_) {
-            lidar_end_time_ = image_buffer_.front().timestamp_;
+            end_time_ = image_buffer_.front().timestamp_;
             measures_.img_ = image_buffer_.front().image_data_;
             image_buffer_.pop_front();
         } else
-            lidar_end_time_ = lidar_end_time_ + param->scan_interval_;
+            end_time_ = end_time_ + param->scan_interval_;
     } else {
         // the measure is not synced, no need to set the lidar end time
-        lidar_end_time_ = lidar_end_time_;
+        end_time_ = end_time_;
     }
 
-    if (imu_buffer_.back().timestamp < lidar_end_time_) return false;
-    if (points_buffer_.back().timestamp < lidar_end_time_) return false;
+    if (imu_buffer_.back().timestamp < end_time_) return false;
+    if (points_buffer_.back().timestamp < end_time_) return false;
 
     // push the imu data
     measures_.imu_.clear();
-    while (imu_buffer_.front().timestamp < lidar_end_time_ && !imu_buffer_.empty()) {
+    while (imu_buffer_.front().timestamp < end_time_ && !imu_buffer_.empty()) {
         measures_.imu_.emplace_back(imu_buffer_.front());
         imu_buffer_.pop_front();
     }
 
     // push the lidar points
     measures_.lidar_->clear();
-    while (points_buffer_.front().timestamp < lidar_end_time_ && !points_buffer_.empty()) {
+    while (points_buffer_.front().timestamp < end_time_ && !points_buffer_.empty()) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
     }
 
-    measures_.lidar_end_time_ = lidar_end_time_;
-    if (measures_.lidar_->empty() || measures_.imu_.empty())
+    measures_.end_time_ = end_time_;
+    if (measures_.lidar_->empty() || measures_.imu_.empty()) {
+        std::cout << "Empty lidar or imu data, skip this measure" << std::endl;
         return false;
+    }
     return true;
 }
 

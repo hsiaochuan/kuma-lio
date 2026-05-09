@@ -108,7 +108,7 @@ class LaserMapping {
     double last_timestamp_lidar_ = 0;
     double last_timestamp_imu_ = -1.0;
     double last_timestamp_camera_ = 0.0;
-    double lidar_end_time_ = 0;
+    double end_time_ = std::numeric_limits<double>::quiet_NaN();
     bool if_local_map_init_ = true;
     int effect_feat_num_ = 0;
 

@@ -99,7 +99,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
     const double &imu_end_time = v_imu.back().timestamp;
-    const double &pcl_end_time = meas.lidar_end_time_;
+    const double &pcl_end_time = meas.end_time_;
 
     /*** sort point clouds by offset time ***/
     undistort_points = *distort_points;
