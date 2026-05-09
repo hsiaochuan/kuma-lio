@@ -414,9 +414,12 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 Vec3f point_this_be = corr_pts_[i].head<3>();
                 Mat3f point_be_crossmat = Hat(point_this_be);
+                Vec3f point_this = point_this_be;
+                Mat3f point_crossmat = Hat(point_this);
 
                 Vec3f norm_vec = corr_norm_[i].head<3>();
-                Vec3f A(point_be_crossmat * Rt * norm_vec);
+                Vec3f C(Rt * norm_vec);
+                Vec3f A(point_crossmat * C);
                 ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], 0.0,
                         0.0, 0.0, 0.0, 0.0, 0.0;
                 ekfom_data.h(i) = -corr_pts_[i][3];
