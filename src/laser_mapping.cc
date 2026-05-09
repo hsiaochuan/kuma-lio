@@ -22,7 +22,15 @@ void LaserMapping::Run() {
     /// IMU process, kf prediction, undistortion
     PointCloud::Ptr scan_body(new PointCloud);
     pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
-    p_imu_->Process(measures_, kf_, scan_body, *scan_undistort_);
+    if (!p_imu_->inertial_initialized) {
+        p_imu_->InertialInitialize(measures_, kf_);
+        return;
+    }
+
+    Timer::Evaluate([&, this]() {
+        p_imu_->PredictAndUndistort(measures_, kf_, scan_body, *scan_undistort_);
+    }, "Undistort Pcl");
+
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {
         LOG(WARNING) << "No point, skip this scan!";
         return;
