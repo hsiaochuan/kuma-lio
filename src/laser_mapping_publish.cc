@@ -102,6 +102,10 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
     }
     std::string cam_traj_file = fs::path(traj_file).parent_path().string() + "/cam_traj_log.txt";
     TrajectoryGenerator::save_to_tumtxt(cam_traj, cam_traj_file);
+    if (cam_traj.empty()) {
+        std::cout << "No camera trajectory to save." << std::endl;
+        return;
+    }
     TrajectoryGenerator::save_to_pcd(cam_traj, fs::path(traj_file).parent_path().string() + "/cam_traj_log.ply");
 }
 

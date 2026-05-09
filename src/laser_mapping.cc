@@ -75,8 +75,16 @@ void LaserMapping::Run() {
         MapIncremental();
     }, "Incremental Mapping");
 
-    LOG(INFO) << "[ mapping ]: In num: " << scan_undistort_->points.size() << " downsamp " << cur_pts
+    LOG(INFO) << "Raw scan: " << scan_undistort_->points.size() << " downsample " << cur_pts
               << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << effect_feat_num_;
+
+    PublishROSMsg();
+    PostUpdate();
+}
+void LaserMapping::PostUpdate() {
+    // save to trajectory
+    Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
+    trajectory_.emplace_back(end_time_, body_pose.Isometry3d());
 
     // add scan frame to global optimize
     static scan_t scan_id = 1;
@@ -88,20 +96,6 @@ void LaserMapping::Run() {
     scan->timestamp = measures_.end_time_;
     mapper->AddScan(scan);
     scan_id++;
-
-    // publish
-    if (pub_laser_cloud_world_)
-        PublishFrameWorld();
-    if (pub_path_)
-        PublishPath();
-    if (pub_odom_aft_mapped_)
-        PublishOdometry();
-    if (pub_laser_cloud_effect_world_)
-        PublishFrameEffectWorld();
-
-    // save to trajectory
-    Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
-    trajectory_.emplace_back(end_time_, body_pose.Isometry3d());
 
     // save the pcd
     if (param->image_save_en_ && !measures_.img_.empty()) {
@@ -150,7 +144,17 @@ void LaserMapping::Run() {
         }
     }
 }
-
+void LaserMapping::PublishROSMsg() {
+    // publish
+    if (pub_laser_cloud_world_)
+        PublishFrameWorld();
+    if (pub_path_)
+        PublishPath();
+    if (pub_odom_aft_mapped_)
+        PublishOdometry();
+    if (pub_laser_cloud_effect_world_)
+        PublishFrameEffectWorld();
+}
 bool LaserMapping::SyncPackages() {
     if (points_buffer_.empty() || imu_buffer_.empty()) {
         return false;
