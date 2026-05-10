@@ -37,7 +37,7 @@ void ImuProcess::AccuImu(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 1
 }
 
 
-void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state) {
+void ImuProcess::Predict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf) {
     /*** add the imu_ of the last frame-tail to the of current frame-head ***/
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
@@ -45,7 +45,7 @@ void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<st
     const double &pcl_end_time = meas.end_time_;
 
     /*** Initialize IMU pose ***/
-    state_ikfom imu_state = kf_state.get_x();
+    state_ikfom imu_state = kf.get_x();
     imu_poses_.clear();
     imu_poses_.emplace_back(last_lidar_end_time_, imu_state.pos, imu_state.vel, acc_last,
                             imu_state.rot.toRotationMatrix(), omega_last);
@@ -80,10 +80,10 @@ void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<st
         Q_.block<3, 3>(3, 3).diagonal() = cov_acc_;
         Q_.block<3, 3>(6, 6).diagonal() = cov_bias_gyr_;
         Q_.block<3, 3>(9, 9).diagonal() = cov_bias_acc_;
-        kf_state.predict(dt, Q_, in);
-
+        kf.predict(dt, Q_, in);
+        *state_point_ = kf.get_x();
         /* save the poses at each IMU measurements */
-        imu_state = kf_state.get_x();
+        imu_state = kf.get_x();
         omega_last = omega_i - imu_state.bg;
         acc_last = imu_state.rot * (acc_avr - imu_state.ba);
         for (int i = 0; i < 3; i++) {
@@ -97,8 +97,8 @@ void ImuProcess::PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<st
     /*** calculated the pos and attitude prediction at the frame-end ***/
     double note = pcl_end_time > imu_end_time ? 1.0 : -1.0;
     dt = note * (pcl_end_time - imu_end_time);
-    kf_state.predict(dt, Q_, in);
-
+    kf.predict(dt, Q_, in);
+    *state_point_ = kf.get_x();
     last_imu_ = meas.imu_.back();
     last_lidar_end_time_ = pcl_end_time;
 
@@ -172,6 +172,7 @@ void ImuProcess::InertialInitialize(const MeasureGroup &meas, esekfom::esekf<sta
         init_P(18, 18) = init_P(19, 19) = init_P(20, 20) = 0.001;
         init_P(21, 21) = init_P(22, 22) = 0.00001;
         kf_state.change_P(init_P);
+        *state_point_ = kf_state.get_x();
         inertial_initialized = true;
         LOG(INFO) << "IMU Initial Done";
     }

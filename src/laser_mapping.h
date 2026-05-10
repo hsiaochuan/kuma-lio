@@ -115,7 +115,7 @@ class LaserMapping {
 
     MeasureGroup measures_;
     esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;
-    state_ikfom state_point_;
+    std::shared_ptr<state_ikfom> state_point_;
     int pcd_idx = 0;
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
     nav_msgs::Path path_;

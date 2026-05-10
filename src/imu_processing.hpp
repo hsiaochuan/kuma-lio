@@ -40,13 +40,11 @@ class ImuProcess {
     Eigen::Matrix<double, 12, 12> Q_;
     Vec3 cov_acc_;
     Vec3 cov_gyr_;
-    Vec3 cov_acc_scale_;
-    Vec3 cov_gyr_scale_;
     Vec3 cov_bias_gyr_;
     Vec3 cov_bias_acc_;
 
     void AccuImu(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
-    void PredictAndUndistort(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
+    void Predict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf);
     void UndistortPoints(esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloud::Ptr distort_points, PointCloud& undistort_points);
     Imu last_imu_;
     std::vector<PoseWithVel> imu_poses_;
@@ -62,6 +60,7 @@ class ImuProcess {
     double last_lidar_end_time_ = 0;
     int imu_accu_count = 0;
     bool inertial_initialized = false;
+    std::shared_ptr<state_ikfom> state_point_;
 };
 
 }  // namespace faster_lio

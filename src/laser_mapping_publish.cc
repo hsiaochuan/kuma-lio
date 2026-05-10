@@ -15,13 +15,13 @@ namespace faster_lio {
 
 void LaserMapping::PublishPath() {
     geometry_msgs::PoseStamped msg_body_pose;
-    msg_body_pose.pose.position.x = state_point_.pos(0);
-    msg_body_pose.pose.position.y = state_point_.pos(1);
-    msg_body_pose.pose.position.z = state_point_.pos(2);
-    msg_body_pose.pose.orientation.x = state_point_.rot.coeffs()[0];
-    msg_body_pose.pose.orientation.y = state_point_.rot.coeffs()[1];
-    msg_body_pose.pose.orientation.z = state_point_.rot.coeffs()[2];
-    msg_body_pose.pose.orientation.w = state_point_.rot.coeffs()[3];
+    msg_body_pose.pose.position.x = state_point_->pos(0);
+    msg_body_pose.pose.position.y = state_point_->pos(1);
+    msg_body_pose.pose.position.z = state_point_->pos(2);
+    msg_body_pose.pose.orientation.x = state_point_->rot.coeffs()[0];
+    msg_body_pose.pose.orientation.y = state_point_->rot.coeffs()[1];
+    msg_body_pose.pose.orientation.z = state_point_->rot.coeffs()[2];
+    msg_body_pose.pose.orientation.w = state_point_->rot.coeffs()[3];
     msg_body_pose.header.stamp = ros::Time().fromSec(end_time_);
     msg_body_pose.header.frame_id = "world";
 
@@ -35,13 +35,13 @@ void LaserMapping::PublishOdometry() {
     odom_aft_mapped.header.frame_id = "world";
     odom_aft_mapped.child_frame_id = "body";
     odom_aft_mapped.header.stamp = ros::Time().fromSec(end_time_);  // ros::Time().fromSec(lidar_end_time_);
-    odom_aft_mapped.pose.pose.position.x = state_point_.pos(0);
-    odom_aft_mapped.pose.pose.position.y = state_point_.pos(1);
-    odom_aft_mapped.pose.pose.position.z = state_point_.pos(2);
-    odom_aft_mapped.pose.pose.orientation.x = state_point_.rot.coeffs()[0];
-    odom_aft_mapped.pose.pose.orientation.y = state_point_.rot.coeffs()[1];
-    odom_aft_mapped.pose.pose.orientation.z = state_point_.rot.coeffs()[2];
-    odom_aft_mapped.pose.pose.orientation.w = state_point_.rot.coeffs()[3];
+    odom_aft_mapped.pose.pose.position.x = state_point_->pos(0);
+    odom_aft_mapped.pose.pose.position.y = state_point_->pos(1);
+    odom_aft_mapped.pose.pose.position.z = state_point_->pos(2);
+    odom_aft_mapped.pose.pose.orientation.x = state_point_->rot.coeffs()[0];
+    odom_aft_mapped.pose.pose.orientation.y = state_point_->rot.coeffs()[1];
+    odom_aft_mapped.pose.pose.orientation.z = state_point_->rot.coeffs()[2];
+    odom_aft_mapped.pose.pose.orientation.w = state_point_->rot.coeffs()[3];
     pub_odom_aft_mapped_.publish(odom_aft_mapped);
     auto P = kf_.get_P();
     for (int i = 0; i < 6; i++) {
@@ -83,7 +83,7 @@ void LaserMapping::PublishFrameEffectWorld() {
     laser_cloud->resize(corr_pts_.size());
     for (int i = 0; i < corr_pts_.size(); i++) {
         laser_cloud->at(i).getVector3fMap() =
-            (state_point_.rot * corr_pts_[i].head<3>().cast<double>() + state_point_.pos).cast<float>();
+            (state_point_->rot * corr_pts_[i].head<3>().cast<double>() + state_point_->pos).cast<float>();
     }
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud, laserCloudmsg);

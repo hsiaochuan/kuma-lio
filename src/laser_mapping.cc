@@ -28,7 +28,7 @@ void LaserMapping::Run() {
     }
 
     Timer::Evaluate([&, this]() {
-        p_imu_->PredictAndUndistort(measures_, kf_);
+        p_imu_->Predict(measures_, kf_);
         p_imu_->UndistortPoints(kf_, scan_body, *scan_undistort_);
     }, "Undistort Pcl");
 
@@ -39,11 +39,10 @@ void LaserMapping::Run() {
 
     /// the first scan
     if (if_local_map_init_) {
-        state_point_ = kf_.get_x();
         scan_down_world_->resize(scan_undistort_->size());
         for (int i = 0; i < scan_undistort_->size(); i++) {
             scan_down_world_->at(i).getVector3fMap() =
-                (state_point_.rot * scan_undistort_->at(i).getVector3fMap().cast<double>() + state_point_.pos)
+                (state_point_->rot * scan_undistort_->at(i).getVector3fMap().cast<double>() + state_point_->pos)
                     .cast<float>();
         }
         ivox_->AddPoints(scan_down_world_->points);
@@ -75,7 +74,7 @@ void LaserMapping::Run() {
         [&, this]() {
             double solve_H_time = 0;
             kf_.update_iterated_dyn_share_modified(options::LASER_POINT_COV, solve_H_time);
-            state_point_ = kf_.get_x();
+            *state_point_ = kf_.get_x();
         },
         "IEKF Solve and Update");
 
@@ -92,7 +91,7 @@ void LaserMapping::Run() {
 }
 void LaserMapping::PostUpdate() {
     // save to trajectory
-    Pose3 body_pose = Pose3(state_point_.rot, state_point_.pos);
+    Pose3 body_pose = Pose3(state_point_->rot, state_point_->pos);
     trajectory_.emplace_back(end_time_, body_pose.Isometry3d());
 
     // add scan frame to global optimize
@@ -101,7 +100,7 @@ void LaserMapping::PostUpdate() {
     std::stringstream stamp_string;
     stamp_string << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.end_time_;
     scan->cloud_fname = output_dir + "/scans/" + stamp_string.str() + ".pcd";
-    scan->world_from_body = Pose3(state_point_.rot, state_point_.pos);
+    scan->world_from_body = Pose3(state_point_->rot, state_point_->pos);
     scan->timestamp = measures_.end_time_;
     mapper->AddScan(scan);
     scan_id++;
@@ -240,7 +239,7 @@ void LaserMapping::MapIncremental() {
     std::for_each(std::execution::unseq, index.begin(), index.end(), [&](const size_t &i) {
         /* transform to world frame */
         scan_down_world_->at(i).getVector3fMap() =
-            (state_point_.rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_.pos).cast<float>();
+            (state_point_->rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_->pos).cast<float>();
 
         /* decide if need add to map */
         Point &point_world = scan_down_world_->points[i];

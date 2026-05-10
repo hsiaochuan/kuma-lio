@@ -11,6 +11,8 @@ namespace faster_lio {
 LaserMapping::LaserMapping() {
     preprocess_ = std::make_shared<PointCloudPreprocess>();
     p_imu_ = std::make_shared<ImuProcess>();
+    state_point_ = std::make_shared<state_ikfom>();
+    p_imu_->state_point_ = state_point_;
 }
 
 bool LaserMapping::Init(const std::string &config_fname) {
