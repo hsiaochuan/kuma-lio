@@ -172,8 +172,8 @@ void Calibration::Projection(const Eigen::Matrix3d &rot, const Eigen::Vector3d &
     cv::Mat image_project = cv::Mat::zeros(camera_->h(), camera_->w(), CV_16UC1);
     cv::Mat rgb_image_project = cv::Mat::zeros(camera_->h(), camera_->w(), CV_8UC3);
     for (size_t i = 0; i < pts_3d.size(); ++i) {
-        Eigen::Vector2d point_2d = camera_->project(rot * pts_3d[i] + tran);
-        if (!camera_->valid(point_2d.cast<int>())) {
+        auto point_2d = camera_->project_and_valid(rot * pts_3d[i] + tran);
+        if (!point_2d) {
             continue;
         }
 
@@ -183,7 +183,7 @@ void Calibration::Projection(const Eigen::Matrix3d &rot, const Eigen::Vector3d &
         } else {
             intensity = intensity / 150.0 * 65535;
         }
-        image_project.at<ushort>(point_2d.y(), point_2d.x()) = intensity;
+        image_project.at<ushort>(point_2d->y(), point_2d->x()) = intensity;
     }
     cv::Mat grey_image_projection;
     cv::cvtColor(rgb_image_project, grey_image_projection, cv::COLOR_BGR2GRAY);
@@ -301,7 +301,7 @@ void Calibration::BuildVPnp(const Eigen::Matrix3d &rot, const Eigen::Vector3d &t
     PointCloud::Ptr lidar_edge_cloud_2d(new PointCloud);
     for (size_t i = 0; i < lidar_edge_ps_2d.size(); i++) {
         lidar_edge_ps_2d[i] = camera_->project(rot * lidar_edge_ps_3d[i] + tran);
-        if (!camera_->valid(lidar_edge_ps_2d[i].cast<int>()))
+        if (!camera_->valid(lidar_edge_ps_2d[i]))
             continue;
         double x = lidar_edge_ps_2d[i].x();
         double y = lidar_edge_ps_2d[i].y();

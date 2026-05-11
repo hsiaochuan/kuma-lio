@@ -63,12 +63,21 @@ class CamModel {
 
     // -- Projection ----------------------------------------------------------
 
-    bool valid(const Eigen::Vector2i& uv) const {
+    template <typename Scalar>
+    bool valid(const Eigen::Matrix<Scalar,2,1>& uv) const {
         if (uv.x() < 0 || uv.x() >= w() || uv.y() < 0 || uv.y() >= h()) return false;
         return true;
     }
     bool positive_z(const Vec3& X) const { return X.z() > 0; }
-
+    std::optional<Vec2> project_and_valid(const Vec3& X) {
+        if (!positive_z(X))
+            return std::nullopt;
+        Vec2 p_im = project(X);
+        if (valid(p_im))
+            return p_im;
+        else
+            return std::nullopt;
+    }
     virtual Vec2 cam2ima(const Vec2& p) const = 0;
     virtual Vec2 ima2cam(const Vec2& p) const = 0;
 

@@ -101,10 +101,10 @@ int main(int argc, char **argv) {
             ColorPoint &color_point = color_points->points[point_id];
             Eigen::Vector3d point_world = color_point.getVector3fMap().cast<double>();
             Eigen::Vector3d point_cam = image->CameraFromWorld() * point_world;
-            Eigen::Vector2d uv = camera->project(point_cam);
-            if (camera->valid(uv.cast<int>())) {
-                int u = uv(0);
-                int v = uv(1);
+            auto uv = camera->project_and_valid(point_cam);
+            if (uv) {
+                int u = uv->x();
+                int v = uv->y();
                 cv::Vec3b color = image->image_data_.at<cv::Vec3b>(v, u);
                 color_point.r = color[0];
                 color_point.g = color[1];
