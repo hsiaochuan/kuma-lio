@@ -80,10 +80,14 @@ void LaserMapping::PublishFrameWorld() const {
 
 void LaserMapping::PublishFrameEffectWorld() {
     PointCloud::Ptr laser_cloud(new PointCloud);
-    laser_cloud->resize(corr_pts_.size());
-    for (int i = 0; i < corr_pts_.size(); i++) {
-        laser_cloud->at(i).getVector3fMap() =
-            (state_point_->rot * corr_pts_[i].head<3>().cast<double>() + state_point_->pos).cast<float>();
+    laser_cloud->resize(eff_num_);
+    int j =0;
+    for (int i = 0; i < eff_num_; i++) {
+        if (eff_mask_[i]) {
+            laser_cloud->at(j).getVector3fMap() =
+                (state_point_->rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_->pos).cast<float>();
+            j++;
+        }
     }
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laser_cloud, laserCloudmsg);

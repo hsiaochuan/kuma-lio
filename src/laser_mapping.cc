@@ -58,16 +58,15 @@ void LaserMapping::Run() {
         },
         "Downsample PointCloud");
 
-    int cur_pts = scan_down_body_->size();
-    if (cur_pts < 5) {
+
+    if (scan_down_body_->size() < 5) {
         LOG(WARNING) << "Too few points, skip this scan!" << scan_undistort_->size() << ", " << scan_down_body_->size();
         return;
     }
-    scan_down_world_->resize(cur_pts);
-    nearest_points_.resize(cur_pts);
-    residuals_.resize(cur_pts, 0);
-    point_selected_surf_.resize(cur_pts, true);
-    plane_coef_.resize(cur_pts, Vec4f::Zero());
+    scan_down_world_->resize(scan_down_body_->size());
+    nearest_points_.resize(scan_down_body_->size());
+    eff_mask_.resize(scan_down_body_->size(), true);
+    plane_coef_.resize(scan_down_body_->size(), Vec4f::Zero());
 
     // ICP and iterated Kalman filter update
     Timer::Evaluate(
@@ -83,8 +82,8 @@ void LaserMapping::Run() {
         MapIncremental();
     }, "Incremental Mapping");
 
-    LOG(INFO) << "Raw scan: " << scan_undistort_->points.size() << " downsample " << cur_pts
-              << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << effect_feat_num_;
+    LOG(INFO) << "Raw scan: " << scan_undistort_->points.size() << " downsample " << scan_down_body_->size()
+              << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << eff_num_;
 
     PublishROSMsg();
     PostUpdate();
@@ -342,9 +341,9 @@ static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector
     return true;
 }
 void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) {
-    int cnt_pts = scan_down_body_->size();
 
-    std::vector<size_t> index(cnt_pts);
+    std::vector<float> residuals_(scan_down_body_->size(), 0.0);
+    std::vector<size_t> index(scan_down_body_->size());
     for (size_t i = 0; i < index.size(); ++i) {
         index[i] = i;
     }
@@ -369,46 +368,48 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
                     /** Find the closest surfaces in the map **/
                     points_near.clear();
                     ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
-                    point_selected_surf_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
-                    if (point_selected_surf_[i]) {
-                        point_selected_surf_[i] = esti_plane(plane_coef_[i], points_near, param->esti_plane_thr);
+                    eff_mask_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
+                    if (eff_mask_[i]) {
+                        eff_mask_[i] = esti_plane(plane_coef_[i], points_near, param->esti_plane_thr);
                     }
                 }
 
-                if (point_selected_surf_[i]) {
+                if (eff_mask_[i]) {
                     auto temp = point_world.getVector4fMap();
                     temp[3] = 1.0;
                     float pd2 = plane_coef_[i].dot(temp);
 
                     bool valid_corr = p_body.norm() > 81 * pd2 * pd2;
                     if (valid_corr) {
-                        point_selected_surf_[i] = true;
+                        eff_mask_[i] = true;
                         residuals_[i] = pd2;
                     } else {
-                        point_selected_surf_[i] = false;
+                        eff_mask_[i] = false;
                     }
                 }
             });
         },
         "    ObsModel (Lidar Match)");
 
-    effect_feat_num_ = 0;
+    eff_num_ = 0;
 
-    corr_pts_.resize(cnt_pts);
-    corr_norm_.resize(cnt_pts);
-    for (int i = 0; i < cnt_pts; i++) {
-        if (point_selected_surf_[i]) {
-            corr_norm_[effect_feat_num_] = plane_coef_[i];
-            corr_pts_[effect_feat_num_] = scan_down_body_->points[i].getVector4fMap();
-            corr_pts_[effect_feat_num_][3] = residuals_[i];
+    std::vector<Vec4f> match_point_;                              // inlier pts
+    std::vector<Vec4f> match_plane_coeff_;                             // inlier plane norms
+    match_point_.resize(scan_down_body_->size());
+    match_plane_coeff_.resize(scan_down_body_->size());
+    for (int i = 0; i < scan_down_body_->size(); i++) {
+        if (eff_mask_[i]) {
+            match_plane_coeff_[eff_num_] = plane_coef_[i];
+            match_point_[eff_num_] = scan_down_body_->points[i].getVector4fMap();
+            match_point_[eff_num_][3] = residuals_[i];
 
-            effect_feat_num_++;
+            eff_num_++;
         }
     }
-    corr_pts_.resize(effect_feat_num_);
-    corr_norm_.resize(effect_feat_num_);
+    match_point_.resize(eff_num_);
+    match_plane_coeff_.resize(eff_num_);
 
-    if (effect_feat_num_ < 1) {
+    if (eff_num_ < 1) {
         ekfom_data.valid = false;
         LOG(WARNING) << "No Effective Points!";
         return;
@@ -417,24 +418,24 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
     Timer::Evaluate(
         [&, this]() {
             /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
-            ekfom_data.h_x = Eigen::MatrixXd::Zero(effect_feat_num_, 12);  // 23
-            ekfom_data.h.resize(effect_feat_num_);
+            ekfom_data.h_x = Eigen::MatrixXd::Zero(eff_num_, 12);  // 23
+            ekfom_data.h.resize(eff_num_);
 
-            index.resize(effect_feat_num_);
+            index.resize(eff_num_);
             const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
 
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
-                Vec3f point_this_be = corr_pts_[i].head<3>();
+                Vec3f point_this_be = match_point_[i].head<3>();
                 Mat3f point_be_crossmat = Hat(point_this_be);
                 Vec3f point_this = point_this_be;
                 Mat3f point_crossmat = Hat(point_this);
 
-                Vec3f norm_vec = corr_norm_[i].head<3>();
+                Vec3f norm_vec = match_plane_coeff_[i].head<3>();
                 Vec3f C(Rt * norm_vec);
                 Vec3f A(point_crossmat * C);
                 ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], 0.0,
                         0.0, 0.0, 0.0, 0.0, 0.0;
-                ekfom_data.h(i) = -corr_pts_[i][3];
+                ekfom_data.h(i) = -match_point_[i][3];
             });
         },
         "    ObsModel (IEKF Build Jacobian)");

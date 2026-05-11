@@ -84,11 +84,8 @@ class LaserMapping {
     PointCloud::Ptr scan_down_body_{new PointCloud()};   // downsampled scan in body
     PointCloud::Ptr scan_down_world_{new PointCloud()};  // downsampled scan in world
     std::vector<PointVector> nearest_points_;            // nearest points of current scan
-    std::vector<Vec4f> corr_pts_;                              // inlier pts
-    std::vector<Vec4f> corr_norm_;                             // inlier plane norms
     pcl::VoxelGrid<Point> scan_sampler_;             // voxel filter for current scan
-    std::vector<float> residuals_;                       // point-to-plane residuals
-    std::vector<char> point_selected_surf_;              // selected points
+    std::vector<char> eff_mask_;              // selected points
     std::vector<Vec4f> plane_coef_;                            // plane coeffs
 
     ros::Subscriber sub_pcl_;
@@ -111,7 +108,7 @@ class LaserMapping {
     double last_timestamp_camera_ = 0.0;
     double end_time_ = std::numeric_limits<double>::quiet_NaN();
     bool if_local_map_init_ = true;
-    int effect_feat_num_ = 0;
+    int eff_num_ = 0;
 
     MeasureGroup measures_;
     esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;
