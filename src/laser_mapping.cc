@@ -13,6 +13,31 @@
 namespace fs = boost::filesystem;
 namespace faster_lio {
 
+void CalcBodyCov(Vec3 &pb, const float dist_noise, const float dir_degree, Mat3 &cov)
+{
+    float d = pb.norm();
+    Vec3 w(pb);
+    w.normalize();
+
+    // sigma
+    float sigma_d = dist_noise * dist_noise;
+    float dir_rad = DEG2RAD(dir_degree);
+    Eigen::Matrix2d sigma_w = Eigen::Matrix2d::Identity() * dir_rad * dir_rad;
+
+    // construct N
+    Vec3 n1(1, 1, -(w(0) + w(1)) / w(2));
+    n1.normalize();
+    Vec3 n2 = n1.cross(w);
+    n2.normalize();
+    Eigen::Matrix<double, 3, 2> N;
+    N.col(0) = n1;
+    N.col(1) = n2;
+
+    // cov
+    Eigen::Matrix<double, 3, 2> dw = d * Hat(w) * N;
+    cov = w * sigma_d * w.transpose() +
+        dw * sigma_w * dw.transpose();
+}
 void LaserMapping::Run() {
     // sync the lidar and imu data, if no data or not synced, return true
     if (!SyncPackages()) {
