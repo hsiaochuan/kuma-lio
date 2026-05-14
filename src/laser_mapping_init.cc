@@ -76,7 +76,10 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     if (preprocess_->GetLidarType() == LidarType::LIVOX) {
         sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
             param->lidar_topic_, 200000, [this](const livox_ros_driver::CustomMsg::ConstPtr &msg) { LivoxPCLCallBack(msg); });
-    } else {
+    } else if (preprocess_->GetLidarType() == LidarType::VELODYNE_SCAN) {
+        sub_pcl_ = nh.subscribe<velodyne_msgs::VelodyneScan>(
+            param->lidar_topic_, 200000, [this](const velodyne_msgs::VelodyneScan::ConstPtr &msg) { VelodyneScanCallBack(msg); });
+    }else {
         sub_pcl_ = nh.subscribe<sensor_msgs::PointCloud2>(
             param->lidar_topic_, 200000, [this](const sensor_msgs::PointCloud2::ConstPtr &msg) { StandardPCLCallBack(msg); });
     }

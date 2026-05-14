@@ -34,7 +34,7 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
                 points_buffer_.emplace_back(scan->points[i]);
             }
         },
-        "Preprocess (Standard)");
+        "Preprocess");
 }
 
 void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
@@ -66,7 +66,38 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
                 points_buffer_.emplace_back(scan->points[i]);
             }
         },
-        "Preprocess (Livox)");
+        "Preprocess");
+}
+void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg) {
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    Timer::Evaluate(
+        [&, this]() {
+            double timestamp = msg->header.stamp.toSec();
+
+            // time offset
+            timestamp += param->lidar_time_offset_;
+
+            // loop
+            if (timestamp < last_timestamp_lidar_) {
+                LOG(ERROR) << "lidar loop back, clear buffer";
+            }
+            last_timestamp_lidar_ = timestamp;
+
+            // set start offset
+            if (std::isnan(first_scan_time_)) {
+                first_scan_time_ = timestamp;
+            }
+
+            timestamp = timestamp - first_scan_time_;
+
+            // push to buffer
+            PointCloud::Ptr scan(new PointCloud());
+            preprocess_->Process(msg, scan, timestamp);
+            for (int i = 0; i < scan->size(); ++i) {
+                points_buffer_.emplace_back(scan->points[i]);
+            }
+        },
+        "Preprocess");
 }
 
 void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {

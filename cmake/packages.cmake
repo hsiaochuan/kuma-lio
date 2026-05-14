@@ -26,6 +26,8 @@ find_package(catkin REQUIRED COMPONENTS
         tf
         eigen_conversions
         cv_bridge
+        velodyne_pointcloud
+        velodyne_msgs
         )
 
 find_package(Eigen3 REQUIRED)

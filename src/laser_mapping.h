@@ -47,6 +47,7 @@ class LaserMapping {
     // callbacks of lidar and imu
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
+    void VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
     void ImageCallBack(Image& image);
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);

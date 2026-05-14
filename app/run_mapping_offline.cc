@@ -86,6 +86,16 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        auto vel_msg = m.instantiate<velodyne_msgs::VelodyneScan>();
+        if (m.getTopic() == laser_mapping->param->lidar_topic_ && vel_msg) {
+            faster_lio::Timer::Evaluate(
+                [&laser_mapping, &vel_msg]() {
+                    laser_mapping->VelodyneScanCallBack(vel_msg);
+                    laser_mapping->Run();
+                },
+                "Laser Mapping Single Run");
+            continue;
+        }
         auto imu_msg = m.instantiate<sensor_msgs::Imu>();
         if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
             laser_mapping->IMUCallBack(imu_msg);

@@ -1,0 +1,59 @@
+common:
+  lid_topic: "/velodyne_packets"
+  imu_topic: "/imu/data"
+  camera_topic: ""
+  camera_enable: false
+  scan_interval: 0.1
+  lidar_time_offset: 0
+  camera_time_offset: 0
+  image_skip: 1
+preprocess:
+  lidar_type: VELODYNE_SCAN
+  blind: 4
+
+mapping:
+  acc_cov:       6.0e-2
+  gyr_cov:       5.0e-3
+  b_acc_cov:     8.0e-5
+  b_gyr_cov:     3.0e-6
+  fov_degree:    360
+  det_range:     100.0
+  extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
+  extrin_t_il: [ 0, 0, -0.28 ]
+  extrin_R_il: [ 2.67949e-08, -1, 0, 1, 2.67949e-08, 0, 0, 0, 1 ]
+
+path_save_en: true                 # 保存轨迹，用于精度计算和比较
+
+pcd_save:
+  pcd_save_en: true
+  interval: 500                 # how many LiDAR frames saved in each pcd file;
+  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+image_save_en: true
+
+feature_extract_enable: false
+point_filter_num: 1
+max_iteration: 3
+scan_filter_size: 0.2
+map_filter_size: 0.2             # 暂时未用到，代码中为0， 即倾向于将降采样后的scan中的所有点加入map
+cube_side_length: 1000
+
+ivox_grid_resolution: 0.2        # default=0.2
+ivox_nearby_type: 18             # 6, 18, 26
+esti_plane_threshold: 0.1        # default=0.1
+
+global:
+  lc_enable: false
+  loop_weight: 1.0
+
+  ba_enable: false
+  ba_iters: 3
+
+  keyframe_dist_threshold: 1.0
+  keyframe_angle_threshold: 8.0
+  keyframe_time_threshold: 3.0
+
+  output_all_loop_reigster_result: false
+  lc_detect_dist_thr: 5.0
+  lc_detect_temporal_dist_thr: 30
+  sub_map_interval: 5

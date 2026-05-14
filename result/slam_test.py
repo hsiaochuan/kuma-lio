@@ -471,7 +471,16 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2]
+
+    urban_loco = DatasetConfig(
+        name="urban_loco",
+        config="../config/urban_loco.yaml",
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/urban_loco/test2.bag",
+        ],
+        run_mode=RunMode.OFFLINE,
+    )
+    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2, urban_loco]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
