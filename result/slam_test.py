@@ -489,7 +489,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022"],
+                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022", "urban_loco"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")

@@ -29,7 +29,16 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
 
             // push to buffer
             PointCloud::Ptr scan(new PointCloud());
-            preprocess_->Process(msg, scan, timestamp);
+            switch (LidarTypeFromString(param->lidar_type)) {
+                case LidarType::OUSTER:
+                    scan = preprocess_->OusterHandler(msg, timestamp);
+                    break;
+                case LidarType::HESAI:
+                    scan = preprocess_->HesaiHandler(msg, timestamp);
+                    break;
+                default:
+                    throw std::logic_error("unknown lidar type");
+            }
             for (int i = 0; i < scan->size(); ++i) {
                 points_buffer_.emplace_back(scan->points[i]);
             }
@@ -60,8 +69,8 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
             timestamp = timestamp - first_scan_time_;
 
             // push to buffer
-            PointCloud::Ptr scan(new PointCloud());
-            preprocess_->Process(msg, scan, timestamp);
+            PointCloud::Ptr scan;
+            scan = preprocess_->LivoxHandler(msg, timestamp);
             for (int i = 0; i < scan->size(); ++i) {
                 points_buffer_.emplace_back(scan->points[i]);
             }
@@ -72,7 +81,9 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     Timer::Evaluate(
         [&, this]() {
-            double timestamp = msg->header.stamp.toSec();
+            CHECK(!msg->packets.empty()) << "VelodyneScan message is empty!";
+            // the msg->header.stamp is 100 ms later than the msg->packets front
+            double timestamp = msg->packets.front().stamp.toSec();
 
             // time offset
             timestamp += param->lidar_time_offset_;
@@ -92,7 +103,7 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
 
             // push to buffer
             PointCloud::Ptr scan(new PointCloud());
-            preprocess_->Process(msg, scan, timestamp);
+            preprocess_->VelodyneScanHandler(msg, timestamp);
             for (int i = 0; i < scan->size(); ++i) {
                 points_buffer_.emplace_back(scan->points[i]);
             }

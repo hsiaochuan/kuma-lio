@@ -125,11 +125,6 @@ class PointCloudPreprocess {
 
     }
     ~PointCloudPreprocess() = default;
-
-    /// processors
-    void Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start);
-    void Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start);
-    void Process(const velodyne_msgs::VelodyneScan::ConstPtr &msg, PointCloud::Ptr &pcl_out, double scan_start);
     void Set(LidarType lid_type, double bld, int pfilt_num);
 
     // accessors
@@ -138,12 +133,10 @@ class PointCloudPreprocess {
     LidarType GetLidarType() const { return lidar_type_; }
     void SetLidarType(LidarType lt) { lidar_type_ = lt; }
 
-   private:
-    void LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
-    void OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
-    void HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
-    void VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, double scan_start);
-    PointCloud cloud_full_, cloud_out_;
+    PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
+    PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
+    PointCloud::Ptr HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
+    PointCloud::Ptr VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, double scan_start);
     velodyne_rawdata::RawData raw_data;
     LidarType lidar_type_ = LidarType::LIVOX;
     int point_filter_num_ = 1;

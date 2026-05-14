@@ -11,45 +11,16 @@ void PointCloudPreprocess::Set(LidarType lid_type, double bld, int pfilt_num) {
     point_filter_num_ = pfilt_num;
 }
 
-void PointCloudPreprocess::Process(const velodyne_msgs::VelodyneScan::ConstPtr &msg, PointCloud::Ptr &pcl_out,
-                                   double scan_start) {
-    VelodyneScanHandler(msg, scan_start);
-    *pcl_out = cloud_out_;
-}
-
-void PointCloudPreprocess::Process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloud::Ptr &pcl_out,
-                                   double scan_start) {
-    LivoxHandler(msg, scan_start);
-    *pcl_out = cloud_out_;
-}
-
-void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloud::Ptr &pcl_out,
-                                   double scan_start) {
-    switch (lidar_type_) {
-        case LidarType::OUSTER:
-            OusterHandler(msg, scan_start);
-            break;
-        case LidarType::HESAI:
-            HesaiHandler(msg, scan_start);
-            break;
-        default:
-            LOG(ERROR) << "Error LiDAR Type";
-            break;
-    }
-    *pcl_out = cloud_out_;
-}
-
-void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start) {
-    cloud_out_.clear();
-    cloud_full_.clear();
-    cloud_out_.reserve(msg->point_num);
+PointCloud::Ptr PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg,
+                                                   double scan_start) {
+    PointCloud::Ptr cloud_out(new PointCloud);
+    cloud_out->reserve(msg->point_num);
     for (int i = 0; i < msg->point_num; i++) {
         if ((msg->points[i].tag & 0x30) != 0x10 && (msg->points[i].tag & 0x30) != 0x00) continue;
-        if (i % point_filter_num_ != 0) continue;
 
+        if (i % point_filter_num_ != 0) continue;
         double range = msg->points[i].x * msg->points[i].x + msg->points[i].y * msg->points[i].y +
                        msg->points[i].z * msg->points[i].z;
-
         if (range < (blind_ * blind_)) continue;
 
         faster_lio::Point added_pt;
@@ -60,24 +31,20 @@ void PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::Const
         // unit of offset_time: nanosecond
         added_pt.timestamp = scan_start + msg->points[i].offset_time / 1e9;
 
-        cloud_out_.points.push_back(added_pt);
+        cloud_out->points.push_back(added_pt);
     }
+    return cloud_out;
 }
 
-void PointCloudPreprocess::OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
-    cloud_out_.clear();
-    cloud_full_.clear();
+PointCloud::Ptr PointCloudPreprocess::OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
     pcl::PointCloud<ouster_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
-    int plsize = pl_orig.size();
-    cloud_out_.reserve(plsize);
-
+    PointCloud::Ptr cloud_out(new PointCloud);
+    cloud_out->reserve(pl_orig.size());
     for (int i = 0; i < pl_orig.points.size(); i++) {
         if (i % point_filter_num_ != 0) continue;
-
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                        pl_orig.points[i].z * pl_orig.points[i].z;
-
         if (range < (blind_ * blind_)) continue;
 
         Eigen::Vector3d pt_vec;
@@ -89,15 +56,16 @@ void PointCloudPreprocess::OusterHandler(const sensor_msgs::PointCloud2::ConstPt
         // unit of offset_time: nanosecond
         added_pt.timestamp = scan_start + pl_orig.points[i].t / 1e9;
 
-        cloud_out_.points.push_back(added_pt);
+        cloud_out->points.push_back(added_pt);
     }
+    return cloud_out;
 }
-void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
+PointCloud::Ptr PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
     pcl::PointCloud<hesai_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
 
-    cloud_out_.clear();
-    cloud_out_.reserve(pl_orig.size());
+    PointCloud::Ptr cloud_out(new PointCloud);
+    cloud_out->reserve(pl_orig.size());
     double base_time = msg->header.stamp.toSec();
     for (int i = 0; i < pl_orig.points.size(); i++) {
         if (i % point_filter_num_ != 0) continue;
@@ -112,10 +80,11 @@ void PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr
         added_pt.z = pl_orig.points[i].z;
         added_pt.intensity = pl_orig.points[i].intensity;
         added_pt.timestamp = scan_start + pl_orig.points[i].timestamp - base_time;
-        cloud_out_.points.push_back(added_pt);
     }
+    return cloud_out;
 }
-void PointCloudPreprocess::VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, double scan_start) {
+PointCloud::Ptr PointCloudPreprocess::VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg,
+                                                          double scan_start) {
     raw_data.setParameters(0.0, 200.0, 0.0, 2.0 * M_PI);
     velodyne_pointcloud::PointcloudXYZIRT container(200.0, 0.0, "", "", raw_data.scansPerPacket());
     container.setup(msg);
@@ -126,8 +95,8 @@ void PointCloudPreprocess::VelodyneScanHandler(const velodyne_msgs::VelodyneScan
     pcl::PointCloud<velodyne_ros::Point> pl_orig;
     pcl::fromROSMsg(cloud_msg, pl_orig);
 
-    cloud_out_.clear();
-    cloud_out_.reserve(pl_orig.size());
+    PointCloud::Ptr cloud_out(new PointCloud);
+    cloud_out->reserve(pl_orig.size());
     for (int i = 0; i < pl_orig.points.size(); i++) {
         if (i % point_filter_num_ != 0) continue;
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
@@ -141,9 +110,10 @@ void PointCloudPreprocess::VelodyneScanHandler(const velodyne_msgs::VelodyneScan
         added_pt.z = pl_orig.points[i].z;
         added_pt.intensity = pl_orig.points[i].intensity;
         added_pt.timestamp = scan_start + pl_orig.points[i].time;
-        cloud_out_.points.push_back(added_pt);
+        cloud_out->points.push_back(added_pt);
     }
-    cloud_out_.width = cloud_out_.points.size();
-    cloud_out_.height = 1;
+    cloud_out->width = cloud_out->points.size();
+    cloud_out->height = 1;
+    return cloud_out;
 }
 }  // namespace faster_lio
