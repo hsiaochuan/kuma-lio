@@ -103,7 +103,7 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
 
             // push to buffer
             PointCloud::Ptr scan(new PointCloud());
-            preprocess_->VelodyneScanHandler(msg, timestamp);
+            scan = preprocess_->VelodyneScanHandler(msg, timestamp);
             for (int i = 0; i < scan->size(); ++i) {
                 points_buffer_.emplace_back(scan->points[i]);
             }
