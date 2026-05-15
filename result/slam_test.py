@@ -15,7 +15,6 @@ from pathlib import Path
 from enum import Enum
 import shutil
 import colmap
-import pandas as pd
 
 # ──────────────────────────────────────────────
 # Data Structures
@@ -259,17 +258,39 @@ class SLAMTestRunner:
                 if proc:
                     proc.terminate()
     def run_time_analysis(self, time_log: str, time_cost_summ_f: str):
-        result_f = open(time_cost_summ_f, "w")
-        df = pd.read_csv(time_log, engine="python", skipinitialspace=True)
-        df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.loc[:, [c for c in df.columns if c != ""]]
-        for c in df:
-            x = pd.to_numeric(df[c], errors="coerce")
-            x = x[x.notna()]  # remove nan
-            fmt = "%-35s: num=%d, ave=%f, std=%f, max=%f, min=%f\n"
-            result_f.write(fmt % (c, len(x), x.mean(), x.std(), x.max(), x.min()))
-        result_f.close()
+        with open(time_log, "r", encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle if line.strip()]
+
+        if not lines:
+            return
+
+        headers = [h.strip() for h in lines[0].split(",") if h.strip()]
+        if not headers:
+            return
+
+        columns = {name: [] for name in headers}
+        for line in lines[1:]:
+            parts = [part.strip() for part in line.split(",")]
+            for idx, name in enumerate(headers):
+                if idx >= len(parts):
+                    continue
+                try:
+                    value = float(parts[idx]) if parts[idx] else None
+                except ValueError:
+                    value = None
+                if value is None:
+                    continue
+                columns[name].append(value)
+
+        with open(time_cost_summ_f, "w", encoding="utf-8") as result_f:
+            for name, values in columns.items():
+                if not values:
+                    continue
+                avg = sum(values) / len(values)
+                var = sum((v - avg) ** 2 for v in values) / len(values)
+                std = var ** 0.5
+                fmt = "%-35s: num=%d, ave=%f, std=%f, max=%f, min=%f\n"
+                result_f.write(fmt % (name, len(values), avg, std, max(values), min(values)))
     def run_single(self,
                    bag_file: str,
                    config: str,
