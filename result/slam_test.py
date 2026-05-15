@@ -15,7 +15,7 @@ from pathlib import Path
 from enum import Enum
 import shutil
 import colmap
-
+import pandas as pd
 
 # ──────────────────────────────────────────────
 # Data Structures
@@ -258,7 +258,18 @@ class SLAMTestRunner:
             for proc in [online_proc, rviz, roscore]:
                 if proc:
                     proc.terminate()
-
+    def run_time_analysis(self, time_log: str, time_cost_summ_f: str):
+        result_f = open(time_cost_summ_f, "w")
+        df = pd.read_csv(time_log, engine="python", skipinitialspace=True)
+        df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.loc[:, [c for c in df.columns if c != ""]]
+        for c in df:
+            x = pd.to_numeric(df[c], errors="coerce")
+            x = x[x.notna()]  # remove nan
+            fmt = "%-35s: num=%d, ave=%f, std=%f, max=%f, min=%f\n"
+            result_f.write(fmt % (c, len(x), x.mean(), x.std(), x.max(), x.min()))
+        result_f.close()
     def run_single(self,
                    bag_file: str,
                    config: str,
@@ -280,6 +291,7 @@ class SLAMTestRunner:
                 self._run_offline(bag_file, config, output_dir, start, duration)
             else:
                 self._run_online(bag_file, config, output_dir)
+            self.run_time_analysis(os.path.join(output_dir, "time_log.txt"), os.path.join(output_dir, "time_cost_summ.txt"))
         if self.if_postprocess:
             self.run_post_process(output_dir)
         if os.path.exists(os.path.join(output_dir, "images")) and self.if_lvba:

@@ -12,15 +12,11 @@ int ComputeChildIndex(const Eigen::Vector3d &point, const double center[3], int 
     return 4 * xyz[0] + 2 * xyz[1] + xyz[2];
 }
 
-OctoTree *EnsureChildNode(OctoTree *parent, int leaf_idx, const int (&xyz)[3])
+OctoTree::Ptr EnsureChildNode(const OctoTree::Ptr &parent, int leaf_idx, const int (&xyz)[3])
 {
-    if (parent->leaves_[leaf_idx] != nullptr) return parent->leaves_[leaf_idx];
+    if (parent->leaves_[leaf_idx]) return parent->leaves_[leaf_idx];
 
-    OctoTree *child = new OctoTree(
-        parent->max_layer_, parent->layer_ + 1,
-        parent->layer_init_num_[parent->layer_ + 1],
-        parent->max_points_num_, parent->planer_threshold_);
-    child->layer_init_num_  = parent->layer_init_num_;
+    OctoTree::Ptr child = std::make_shared<OctoTree>(parent->layer_ + 1);
     child->voxel_center_[0] = parent->voxel_center_[0] + (2 * xyz[0] - 1) * parent->quater_length_;
     child->voxel_center_[1] = parent->voxel_center_[1] + (2 * xyz[1] - 1) * parent->quater_length_;
     child->voxel_center_[2] = parent->voxel_center_[2] + (2 * xyz[2] - 1) * parent->quater_length_;
@@ -29,40 +25,46 @@ OctoTree *EnsureChildNode(OctoTree *parent, int leaf_idx, const int (&xyz)[3])
     return child;
 }
 
-constexpr double kSigmaFloor = 1e-12;
+
 } // namespace
 
 // ============================================================================
 // OctoTree
 // ============================================================================
-
-OctoTree::OctoTree(int max_layer, int layer,
-                   int points_size_threshold, int max_points_num,
-                   float planer_threshold)
-    : max_layer_(max_layer),
-      layer_(layer),
-      points_size_threshold_(points_size_threshold),
-      max_points_num_(max_points_num),
-      planer_threshold_(planer_threshold)
+HashOctreeConfig OctoTree::config_{};
+int OctoTree::GetLayerInitNum(int layer)
 {
-    octo_state_           = 0;
-    new_points_           = 0;
-    update_size_threshold_ = 5;
-    init_octo_            = false;
-    update_enable_        = true;
+    if (config_.layer_init_num.empty()) return 0;
+    if (layer < 0) return config_.layer_init_num.front();
+    if (static_cast<size_t>(layer) >= config_.layer_init_num.size())
+        return config_.layer_init_num.back();
+    return config_.layer_init_num[static_cast<size_t>(layer)];
+}
+
+void OctoTree::SetParams(const HashOctreeConfig &config)
+{
+    config_ = config;
+    if (config_.layer_init_num.empty())
+        config_.layer_init_num.push_back(5);
+    if (static_cast<int>(config_.layer_init_num.size()) <= config_.max_layer)
+        config_.layer_init_num.resize(config_.max_layer + 1, config_.layer_init_num.back());
+}
+
+OctoTree::OctoTree(int layer)
+    : layer_(layer)
+{
     plane_ptr_            = new VoxelPlane;
     for (int i = 0; i < 8; i++) leaves_[i] = nullptr;
 }
 
 OctoTree::~OctoTree()
 {
-    for (int i = 0; i < 8; i++) delete leaves_[i];
     delete plane_ptr_;
 }
 
 // ---------------------------------------------------------------------------
 // Fit a plane to a set of points and propagate covariance.
-// Sets plane->is_plane = true when min eigenvalue < planer_threshold_.
+// Sets plane->is_plane = true when min eigenvalue < config_.planer_threshold.
 // ---------------------------------------------------------------------------
 void OctoTree::InitPlane(const std::vector<PointWithCov> &points, VoxelPlane *plane)
 {
@@ -91,7 +93,7 @@ void OctoTree::InitPlane(const std::vector<PointWithCov> &points, VoxelPlane *pl
     evals_real.rowwise().sum().maxCoeff(&eval_max_idx);
     int eval_mid_idx = 3 - static_cast<int>(eval_min_idx) - static_cast<int>(eval_max_idx);
 
-    if (evals_real(eval_min_idx) < planer_threshold_)
+    if (evals_real(eval_min_idx) < config_.planer_threshold)
     {
         // Propagate point covariances into plane uncertainty
         Eigen::Matrix3d J_Q = Eigen::Matrix3d::Identity() / plane->points_size;
@@ -130,79 +132,49 @@ void OctoTree::InitPlane(const std::vector<PointWithCov> &points, VoxelPlane *pl
         plane->d         = static_cast<float>(
             -(plane->normal.dot(plane->center)));
         plane->is_plane  = true;
-        //plane->is_update = true;
-        plane->is_init   = true;
     }
     else
     {
         plane->is_plane  = false;
-        //plane->is_update = true;
     }
 }
 
-// ---------------------------------------------------------------------------
-// Try to initialise this node once enough points have been collected.
-// ---------------------------------------------------------------------------
-void OctoTree::InitOctoTree()
-{
-    if (static_cast<int>(temp_points_.size()) <= points_size_threshold_) return;
-
-    InitPlane(temp_points_, plane_ptr_);
-
-    if (plane_ptr_->is_plane)
-    {
-        octo_state_ = 0; // leaf
-        if (static_cast<int>(temp_points_.size()) > max_points_num_)
-        {
-            update_enable_ = false;
-            std::vector<PointWithCov>().swap(temp_points_);
-            new_points_    = 0;
-        }
-    }
-    else
-    {
-        octo_state_ = 1; // branch
-        CutOctoTree();
-    }
-    init_octo_  = true;
-    new_points_ = 0;
-}
 
 // ---------------------------------------------------------------------------
 // Subdivide: redistribute buffered points into 8 child octants.
 // ---------------------------------------------------------------------------
 void OctoTree::CutOctoTree()
 {
-    if (layer_ >= max_layer_)
+    if (layer_ >= config_.max_layer)
     {
         octo_state_ = 0;
         return;
     }
 
-    for (const auto &pv : temp_points_)
+    for (const auto &pv : points_)
     {
         int xyz[3] = {0, 0, 0};
         int leaf_idx = ComputeChildIndex(pv.point, voxel_center_, xyz);
-        OctoTree *leaf = EnsureChildNode(this, leaf_idx, xyz);
-        leaf->temp_points_.push_back(pv);
-        leaf->new_points_++;
+        OctoTree::Ptr leaf = EnsureChildNode(shared_from_this(), leaf_idx, xyz);
+        leaf->points_.push_back(pv);
+        leaf->new_cnt++;
     }
 
     for (int i = 0; i < 8; i++)
     {
-        OctoTree *leaf = leaves_[i];
-        if (leaf == nullptr) continue;
-        if (static_cast<int>(leaf->temp_points_.size()) <= leaf->points_size_threshold_) continue;
+        OctoTree::Ptr leaf = leaves_[i];
+        if (!leaf) continue;
+        if (static_cast<int>(leaf->points_.size()) <= GetLayerInitNum(leaf->layer_)) continue;
 
-        InitPlane(leaf->temp_points_, leaf->plane_ptr_);
+        InitPlane(leaf->points_, leaf->plane_ptr_);
         if (leaf->plane_ptr_->is_plane)
         {
             leaf->octo_state_ = 0;
-            if (static_cast<int>(leaf->temp_points_.size()) > leaf->max_points_num_)
+            if (static_cast<int>(leaf->points_.size()) > config_.max_points_num)
             {
                 leaf->update_enable_ = false;
-                std::vector<PointWithCov>().swap(leaf->temp_points_);
-                leaf->new_points_    = 0;
+                std::vector<PointWithCov>().swap(leaf->points_);
+                leaf->new_cnt    = 0;
             }
         }
         else
@@ -211,7 +183,7 @@ void OctoTree::CutOctoTree()
             leaf->CutOctoTree();
         }
         leaf->init_octo_  = true;
-        leaf->new_points_ = 0;
+        leaf->new_cnt = 0;
     }
 }
 
@@ -220,13 +192,24 @@ void OctoTree::CutOctoTree()
 // ---------------------------------------------------------------------------
 void OctoTree::Update(const PointWithCov &pv)
 {
-    if (!init_octo_)
-    {
+    if (!init_octo_){
         // Still accumulating: buffer the point, init when threshold reached
-        new_points_++;
-        temp_points_.push_back(pv);
-        if (static_cast<int>(temp_points_.size()) > points_size_threshold_)
-            InitOctoTree();
+        new_cnt++;
+        points_.push_back(pv);
+        if (points_.size() > static_cast<size_t>(GetLayerInitNum(layer_))) {
+            InitPlane(points_, plane_ptr_);
+            new_cnt = 0;
+            if (plane_ptr_->is_plane)
+                Fix();
+
+            if (plane_ptr_->is_plane){
+                octo_state_ = 0; // leaf
+            }else{
+                octo_state_ = 1; // branch
+                CutOctoTree();
+            }
+            init_octo_  = true;
+        }
         return;
     }
 
@@ -234,92 +217,62 @@ void OctoTree::Update(const PointWithCov &pv)
     {
         // Leaf with a valid plane: keep re-fitting until max_points_num_ reached
         if (!update_enable_) return;
+        new_cnt++;
+        points_.push_back(pv);
+        if (new_cnt > config_.update_size_threshold){
+            InitPlane(points_, plane_ptr_);
+            new_cnt = 0;
+        }
+        if (points_.size() >= static_cast<size_t>(config_.max_points_num))
+            Fix();
 
-        new_points_++;
-        temp_points_.push_back(pv);
-        if (new_points_ > update_size_threshold_)
-        {
-            InitPlane(temp_points_, plane_ptr_);
-            new_points_ = 0;
-        }
-        if (static_cast<int>(temp_points_.size()) >= max_points_num_)
-        {
-            update_enable_ = false;
-            std::vector<PointWithCov>().swap(temp_points_);
-            new_points_    = 0;
-        }
         return;
     }
 
     // Branch: route point to the correct child octant
-    if (layer_ < max_layer_)
+    if (layer_ < config_.max_layer)
     {
         int xyz[3] = {0, 0, 0};
         int leaf_idx = ComputeChildIndex(pv.point, voxel_center_, xyz);
-        OctoTree *leaf = EnsureChildNode(this, leaf_idx, xyz);
+        OctoTree::Ptr leaf = EnsureChildNode(shared_from_this(), leaf_idx, xyz);
         leaf->Update(pv);
         return;
     }
 
     // At max layer, treat as leaf regardless
     if (!update_enable_) return;
-
-    new_points_++;
-    temp_points_.push_back(pv);
-    if (new_points_ > update_size_threshold_)
-    {
-        InitPlane(temp_points_, plane_ptr_);
-        new_points_ = 0;
+    new_cnt++;
+    points_.push_back(pv);
+    if (new_cnt > config_.update_size_threshold){
+        InitPlane(points_, plane_ptr_);
+        new_cnt = 0;
     }
-    if (static_cast<int>(temp_points_.size()) > max_points_num_)
-    {
-        update_enable_ = false;
-        std::vector<PointWithCov>().swap(temp_points_);
-        new_points_    = 0;
-    }
+    if (points_.size() >= static_cast<size_t>(config_.max_points_num))
+        Fix();
 }
 
 // ============================================================================
 // VoxelMap
 // ============================================================================
-
-HashOctree::HashOctree(const HashOctreeConfig &config) : config_(config) {}
+HashOctree::HashOctree(const HashOctreeConfig &config) : config_(config)
+{
+    OctoTree::SetParams(config_);
+}
 
 HashOctree::~HashOctree()
 {
-    for (auto &kv : map_) delete kv.second;
-}
-
-// ---------------------------------------------------------------------------
-// Convert a world-frame point to its integer voxel key.
-// ---------------------------------------------------------------------------
-VOXEL_LOCATION HashOctree::ToKey(const Eigen::Vector3d &p) const
-{
-    float s = static_cast<float>(config_.voxel_size);
-    auto  coord = [&](double v) -> int64_t
-    {
-        float f = static_cast<float>(v) / s;
-        if (f < 0.f) f -= 1.f;
-        return static_cast<int64_t>(f);
-    };
-    return VOXEL_LOCATION(coord(p.x()), coord(p.y()), coord(p.z()));
 }
 
 // ---------------------------------------------------------------------------
 // Look up or create the root octree node for a given key.
 // ---------------------------------------------------------------------------
-OctoTree *HashOctree::GetOrCreateNode(const VOXEL_LOCATION &key)
+OctoTree::Ptr HashOctree::GetOrCreateNode(const VOXEL_LOCATION &key)
 {
     auto it = map_.find(key);
     if (it != map_.end()) return it->second;
 
     float vs = static_cast<float>(config_.voxel_size);
-    OctoTree *node = new OctoTree(
-        config_.max_layer, 0,
-        config_.layer_init_num[0],
-        config_.max_points_num,
-        static_cast<float>(config_.planer_threshold));
-    node->layer_init_num_  = config_.layer_init_num;
+    OctoTree::Ptr node = std::make_shared<OctoTree>(0);
     node->quater_length_   = vs / 4.f;
     node->voxel_center_[0] = (0.5 + key.x) * vs;
     node->voxel_center_[1] = (0.5 + key.y) * vs;
@@ -335,8 +288,8 @@ void HashOctree::AddPoints(const std::vector<PointWithCov> &points)
 {
     for (const auto &pv : points)
     {
-        VOXEL_LOCATION key  = ToKey(pv.point);
-        OctoTree *node = GetOrCreateNode(key);
+        VOXEL_LOCATION key(pv.point, config_.voxel_size);
+        OctoTree::Ptr node = GetOrCreateNode(key);
         node->Update(pv);
     }
 }
@@ -347,7 +300,7 @@ void HashOctree::AddPoints(const std::vector<PointWithCov> &points)
 // only if the distance is within sigma_num standard deviations.
 // ---------------------------------------------------------------------------
 void HashOctree::BuildSingleResidual(const PointWithCov &pv,
-                                   const OctoTree     *octo,
+                                   const OctoTree::Ptr &octo,
                                    int                 layer,
                                    bool               &success,
                                    double             &prob,
@@ -377,6 +330,7 @@ void HashOctree::BuildSingleResidual(const PointWithCov &pv,
         J_nq.block<1, 3>(0, 3) = -plane.normal.transpose();
         double sigma_l = (J_nq * plane.plane_var * J_nq.transpose())(0, 0)
                        + plane.normal.transpose() * pv.cov * plane.normal;
+        constexpr double kSigmaFloor = 1e-12;
         sigma_l = std::max(sigma_l, kSigmaFloor);
 
         if (std::fabs(dis_to_plane) >= sigma_num * std::sqrt(sigma_l)) return;
@@ -403,7 +357,7 @@ void HashOctree::BuildSingleResidual(const PointWithCov &pv,
     {
         for (int i = 0; i < 8; i++)
         {
-            if (octo->leaves_[i] != nullptr)
+            if (octo->leaves_[i])
                 BuildSingleResidual(pv, octo->leaves_[i], layer + 1, success, prob, match);
         }
     }
@@ -429,7 +383,7 @@ std::vector<PlaneMatch> HashOctree::Match(const std::vector<PointWithCov> &query
     for (int i = 0; i < static_cast<int>(query_points.size()); i++)
     {
         const PointWithCov &pv  = query_points[i];
-        VOXEL_LOCATION            key = ToKey(pv.point);
+        VOXEL_LOCATION key(pv.point, config_.voxel_size);
 
         auto it = map_.find(key);
         if (it == map_.end()) continue;
@@ -443,7 +397,7 @@ std::vector<PlaneMatch> HashOctree::Match(const std::vector<PointWithCov> &query
         // If no match in primary voxel, try the nearest neighbouring voxel
         if (!success)
         {
-            const OctoTree *root = it->second;
+            OctoTree::Ptr root = it->second;
             VOXEL_LOCATION near_key    = key;
 
             auto nudge = [&](int axis, double center, double quarter)
@@ -486,4 +440,23 @@ std::vector<PlaneMatch> HashOctree::Match(const std::vector<PointWithCov> &query
         if (valid[i]) result.push_back(all_matches[i]);
 
     return result;
+}
+int HashOctree::RemoveVoxelOutOfBounds(const Vec3 &pos_w, double bound_x, double bound_y, double bound_z) {
+    int remove_count = 0;
+    for (auto it = map_.begin(); it != map_.end();) {
+        const VOXEL_LOCATION &key = it->first;
+        float voxel_center_x = (0.5 + key.x) * config_.voxel_size;
+        float voxel_center_y = (0.5 + key.y) * config_.voxel_size;
+        float voxel_center_z = (0.5 + key.z) * config_.voxel_size;
+
+        if (std::fabs(voxel_center_x - pos_w.x()) > bound_x ||
+            std::fabs(voxel_center_y - pos_w.y()) > bound_y ||
+            std::fabs(voxel_center_z - pos_w.z()) > bound_z) {
+            it = map_.erase(it);
+            remove_count++;
+        } else {
+            ++it;
+        }
+    }
+    return remove_count;
 }

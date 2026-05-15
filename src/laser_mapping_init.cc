@@ -11,7 +11,7 @@ namespace faster_lio {
 LaserMapping::LaserMapping() {
     preprocess_ = std::make_shared<PointCloudPreprocess>();
     p_imu_ = std::make_shared<ImuProcess>();
-    state_point_ = std::make_shared<state_ikfom>();
+    state_point_ = std::make_shared<StatePoint>();
     p_imu_->state_point_ = state_point_;
 }
 
@@ -55,13 +55,6 @@ bool LaserMapping::Init(const std::string &config_fname) {
         camera_t cam_id = 1;
         sfm_data_.cameras_[cam_id] = param->camera_;
     }
-
-    // esekf init
-    std::vector<double> epsi(23, 0.001);
-    kf_.init_dyn_share(
-        get_f, df_dx, df_dw,
-        [this](state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) { ObsModel(s, ekfom_data); },
-        param->max_iteraions, epsi.data());
 
     if (std::is_same<IVoxType, IVox<3, IVoxNodeType::PHC, pcl::PointXYZI>>::value == true) {
         LOG(INFO) << "using phc ivox";

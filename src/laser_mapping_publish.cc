@@ -43,7 +43,7 @@ void LaserMapping::PublishOdometry() {
     odom_aft_mapped.pose.pose.orientation.z = state_point_->rot.coeffs()[2];
     odom_aft_mapped.pose.pose.orientation.w = state_point_->rot.coeffs()[3];
     pub_odom_aft_mapped_.publish(odom_aft_mapped);
-    auto P = kf_.get_P();
+    auto P = state_point_->cov;
     for (int i = 0; i < 6; i++) {
         int k = i < 3 ? i + 3 : i - 3;
         odom_aft_mapped.pose.covariance[i * 6 + 0] = P(k, 3);

@@ -10,6 +10,7 @@
 #include <sensor_msgs/CompressedImage.h>
 
 // Heavy dependencies are forward-declared below to reduce rebuilds.
+#include "eskf.h"
 #include "imu_processing.hpp"
 #include "ivox3d/ivox3d.h"
 #include "pointcloud_preprocess.h"
@@ -56,8 +57,8 @@ class LaserMapping {
     // sync lidar with imu
     bool SyncPackages();
 
-    /// interface of mtk, customized obseravtion model
-    void ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data);
+    /// custom observation model for IEKF update
+    bool BuildLidarObservation(const StatePoint &s, bool recompute, LidarObservation &obs);
 
     ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
     void PublishPath();
@@ -71,7 +72,7 @@ class LaserMapping {
 
     void SubAndPubToROS(ros::NodeHandle &nh);
 
-    void PrintState(const state_ikfom &s);
+    void PrintState(const StatePoint &s);
 
    public:
     /// modules
@@ -112,8 +113,7 @@ class LaserMapping {
     int eff_num_ = 0;
 
     MeasureGroup measures_;
-    esekfom::esekf<state_ikfom, 12, input_ikfom> kf_;
-    std::shared_ptr<state_ikfom> state_point_;
+    std::shared_ptr<StatePoint> state_point_;
     int pcd_idx = 0;
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
     nav_msgs::Path path_;

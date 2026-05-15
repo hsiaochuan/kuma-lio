@@ -4,12 +4,9 @@
 #include <unordered_map>
 #include <vector>
 #include <mutex>
+#include <array>
+#include <memory>
 #include "common_lib.h"
-// ---------------------------------------------------------------------------
-// Hash map constants
-// ---------------------------------------------------------------------------
-#define VOXEL_HASH_P   116101LL
-#define VOXEL_MAX_N    10000000000LL
 
 // ---------------------------------------------------------------------------
 // Core data types
@@ -54,7 +51,6 @@ struct VoxelPlane
 
     int  points_size = 0;
     bool is_plane    = false;
-    bool is_init     = false;
 
     VoxelPlane()
     {
@@ -65,49 +61,6 @@ struct VoxelPlane
 
 
 // ---------------------------------------------------------------------------
-// Octree node
-// ---------------------------------------------------------------------------
-class OctoTree
-{
-public:
-    OctoTree(int max_layer, int layer,
-             int points_size_threshold, int max_points_num,
-             float planer_threshold);
-    ~OctoTree();
-
-    // Incrementally add one point; re-fits plane when enough points accumulate.
-    void Update(const PointWithCov &pv);
-
-    // Internal helpers
-    void InitPlane(const std::vector<PointWithCov> &points, VoxelPlane *plane);
-    void InitOctoTree();
-    void CutOctoTree();
-
-    // Data
-    std::vector<PointWithCov> temp_points_;
-    VoxelPlane               *plane_ptr_;
-    OctoTree                 *leaves_[8];
-
-    double voxel_center_[3];
-    float  quater_length_;
-
-    std::vector<int> layer_init_num_;
-
-    int  layer_;
-    int  octo_state_;         ///< 0 = leaf (has/fits plane), 1 = branch
-    int  max_layer_;
-    int  max_points_num_;
-    int  points_size_threshold_;
-    int  update_size_threshold_;
-    int  new_points_;
-
-    float planer_threshold_;
-
-    bool init_octo_;
-    bool update_enable_;
-};
-
-// ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 struct HashOctreeConfig
@@ -116,9 +69,56 @@ struct HashOctreeConfig
     int              max_layer        = 2;
     std::vector<int> layer_init_num   = {5, 5, 5, 5, 5}; ///< min points to fit plane per layer
     int              max_points_num   = 50;
+    int              update_size_threshold = 5;
     double           planer_threshold = 0.01;   ///< min-eigenvalue threshold for plane detection
     double           sigma_num        = 3.0;    ///< Mahalanobis gate for match acceptance
 };
+
+// ---------------------------------------------------------------------------
+// Octree node
+// ---------------------------------------------------------------------------
+class OctoTree : public std::enable_shared_from_this<OctoTree>
+{
+public:
+    OctoTree(int layer);
+    ~OctoTree();
+
+    using Ptr = std::shared_ptr<OctoTree>;
+
+    // Initialize shared octree parameters once per map.
+    static void SetParams(const HashOctreeConfig &config);
+
+    // Incrementally add one point; re-fits plane when enough points accumulate.
+    void Update(const PointWithCov &pv);
+
+    // Internal helpers
+    void InitPlane(const std::vector<PointWithCov> &points, VoxelPlane *plane);
+    void Fix() {
+        update_enable_ = false;
+        points_.clear();
+        new_cnt    = 0;
+    }
+    void CutOctoTree();
+
+    // Data
+    std::vector<PointWithCov> points_;
+    VoxelPlane               *plane_ptr_;
+    std::array<Ptr, 8>        leaves_{};
+
+    double voxel_center_[3];
+    float  quater_length_;
+    int  layer_;
+    int  octo_state_ = 0;         ///< 0 = leaf (has/fits plane), 1 = branch
+    bool init_octo_ = false;
+    int  new_cnt = 0;
+    bool update_enable_ = true;
+
+private:
+    static HashOctreeConfig config_;
+    static int GetLayerInitNum(int layer);
+
+};
+
 
 // ---------------------------------------------------------------------------
 // Public map interface
@@ -135,16 +135,16 @@ public:
     /// For each query point find the best-fit plane in the map.
     /// Returns only the points that produced a valid match.
     std::vector<PlaneMatch> Match(const std::vector<PointWithCov> &query_points);
+    int RemoveVoxelOutOfBounds(const Vec3 &pos_w, double bound_x, double bound_y, double bound_z);
 
 private:
     HashOctreeConfig config_;
-    std::unordered_map<VOXEL_LOCATION, OctoTree *> map_;
+    std::unordered_map<VOXEL_LOCATION, OctoTree::Ptr> map_;
 
-    VOXEL_LOCATION   ToKey(const Eigen::Vector3d &p) const;
-    OctoTree  *GetOrCreateNode(const VOXEL_LOCATION &key);
+    OctoTree::Ptr GetOrCreateNode(const VOXEL_LOCATION &key);
 
     void BuildSingleResidual(const PointWithCov &pv,
-                             const OctoTree    *octo,
+                             const OctoTree::Ptr &octo,
                              int                layer,
                              bool              &success,
                              double            &prob,

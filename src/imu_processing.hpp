@@ -5,7 +5,7 @@
 #include <cmath>
 #include <deque>
 #include "common_lib.h"
-#include "use-ikfom.hpp"
+#include "eskf.h"
 
 namespace faster_lio {
 
@@ -35,7 +35,7 @@ class ImuProcess {
     void SetAccCov(const Vec3 &scaler);
     void SetGyrBiasCov(const Vec3 &b_g);
     void SetAccBiasCov(const Vec3 &b_a);
-    void InertialInitialize(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
+    void InertialInitialize(const MeasureGroup &meas, StatePoint &state_point);
 
     Eigen::Matrix<double, 12, 12> Q_;
     Vec3 cov_acc_;
@@ -43,9 +43,9 @@ class ImuProcess {
     Vec3 cov_bias_gyr_;
     Vec3 cov_bias_acc_;
 
-    void AccuImu(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
-    void Predict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf);
-    void UndistortPoints(esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloud::Ptr distort_points, PointCloud& undistort_points);
+    void AccuImu(const MeasureGroup &meas);
+    void Predict(const MeasureGroup &meas, StatePoint &state);
+    void UndistortPoints(StatePoint &state_point, PointCloud::Ptr distort_points, PointCloud &undistort_points);
     Imu last_imu_;
     std::vector<PoseWithVel> imu_poses_;
 
@@ -60,7 +60,7 @@ class ImuProcess {
     double last_lidar_end_time_ = 0;
     int imu_accu_count = 0;
     bool inertial_initialized = false;
-    std::shared_ptr<state_ikfom> state_point_;
+    std::shared_ptr<StatePoint> state_point_;
 };
 
 }  // namespace faster_lio

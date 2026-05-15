@@ -48,13 +48,13 @@ void LaserMapping::Run() {
     PointCloud::Ptr scan_body(new PointCloud);
     pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
     if (!p_imu_->inertial_initialized) {
-        p_imu_->InertialInitialize(measures_, kf_);
+        p_imu_->InertialInitialize(measures_, *state_point_);
         return;
     }
 
     Timer::Evaluate([&, this]() {
-        p_imu_->Predict(measures_, kf_);
-        p_imu_->UndistortPoints(kf_, scan_body, *scan_undistort_);
+        p_imu_->Predict(measures_, *state_point_);
+        p_imu_->UndistortPoints(*state_point_, scan_body, *scan_undistort_);
     }, "Undistort Pcl");
 
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {
@@ -96,9 +96,12 @@ void LaserMapping::Run() {
     // ICP and iterated Kalman filter update
     Timer::Evaluate(
         [&, this]() {
-            double solve_H_time = 0;
-            kf_.update_iterated_dyn_share_modified(options::LASER_POINT_COV, solve_H_time);
-            *state_point_ = kf_.get_x();
+            IESKF::IterativeUpdate(
+                [this](const StatePoint &s, bool recompute, LidarObservation &obs) {
+                    return BuildLidarObservation(s, recompute, obs);
+                },
+                options::LASER_POINT_COV,
+                param->max_iteraions, *state_point_);
         },
         "IEKF Solve and Update");
 
@@ -242,9 +245,8 @@ bool LaserMapping::SyncPackages() {
     return true;
 }
 
-void LaserMapping::PrintState(const state_ikfom &s) {
-    LOG(INFO) << "state r: " << s.rot.coeffs().transpose() << ", t: " << s.pos.transpose()
-              << ", off r: " << s.R_il.coeffs().transpose() << ", t: " << s.t_il.transpose();
+void LaserMapping::PrintState(const StatePoint &s) {
+    LOG(INFO) << "state r: " << s.rot.coeffs().transpose() << ", t: " << s.pos.transpose();
 }
 
 void LaserMapping::MapIncremental() {
@@ -263,7 +265,8 @@ void LaserMapping::MapIncremental() {
     std::for_each(std::execution::unseq, index.begin(), index.end(), [&](const size_t &i) {
         /* transform to world frame */
         scan_down_world_->at(i).getVector3fMap() =
-            (state_point_->rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_->pos).cast<float>();
+            (state_point_->rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_->pos)
+                .cast<float>();
 
         /* decide if need add to map */
         Point &point_world = scan_down_world_->points[i];
@@ -365,7 +368,7 @@ static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector
     }
     return true;
 }
-void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) {
+bool LaserMapping::BuildLidarObservation(const StatePoint &s, bool recompute, LidarObservation &obs) {
 
     std::vector<float> residuals_(scan_down_body_->size(), 0.0);
     std::vector<size_t> index(scan_down_body_->size());
@@ -375,8 +378,8 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
     Timer::Evaluate(
         [&, this]() {
-            auto R_wl = (s.rot).cast<float>();
-            auto t_wl = (s.pos).cast<float>();
+            auto R_world_b = (s.rot).cast<float>();
+            auto pos_world_b = (s.pos).cast<float>();
 
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
@@ -385,11 +388,11 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
                 /* transform to world frame */
                 Vec3f p_body = point_body.getVector3fMap();
-                point_world.getVector3fMap() = R_wl * p_body + t_wl;
+                point_world.getVector3fMap() = R_world_b * p_body + pos_world_b;
                 point_world.intensity = point_body.intensity;
 
                 auto &points_near = nearest_points_[i];
-                if (ekfom_data.converge) {
+                if (recompute) {
                     /** Find the closest surfaces in the map **/
                     points_near.clear();
                     ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
@@ -435,16 +438,16 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
     match_plane_coeff_.resize(eff_num_);
 
     if (eff_num_ < 1) {
-        ekfom_data.valid = false;
+        obs.valid = false;
         LOG(WARNING) << "No Effective Points!";
-        return;
+        return false;
     }
 
     Timer::Evaluate(
         [&, this]() {
             /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
-            ekfom_data.h_x = Eigen::MatrixXd::Zero(eff_num_, 12);  // 23
-            ekfom_data.h.resize(eff_num_);
+            obs.H = Eigen::MatrixXd::Zero(eff_num_, StatePoint::STATE_DOF);
+            obs.r.resize(eff_num_);
 
             index.resize(eff_num_);
             const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
@@ -458,12 +461,14 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
                 Vec3f norm_vec = match_plane_coeff_[i].head<3>();
                 Vec3f C(Rt * norm_vec);
                 Vec3f A(point_crossmat * C);
-                ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], 0.0,
-                        0.0, 0.0, 0.0, 0.0, 0.0;
-                ekfom_data.h(i) = -match_point_[i][3];
+                obs.H.block<1, 3>(i, StatePoint::POS) << norm_vec[0], norm_vec[1], norm_vec[2];
+                obs.H.block<1, 3>(i, StatePoint::ROT) << A[0], A[1], A[2];
+                obs.r(i) = -match_point_[i][3];
             });
         },
         "    ObsModel (IEKF Build Jacobian)");
+    obs.valid = true;
+    return true;
 }
 
 }  // namespace faster_lio

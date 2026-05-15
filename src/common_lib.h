@@ -108,6 +108,7 @@ using Mat = Eigen::MatrixXd;
 using Vec = Eigen::VectorXd;
 
 using Vec2 = Eigen::Vector2d;
+using Mat2 = Eigen::Matrix2d;
 using Mat2X = Eigen::Matrix<double, 2, Eigen::Dynamic>;
 
 using Vec3 = Eigen::Vector3d;
@@ -116,6 +117,7 @@ using Mat3X = Eigen::Matrix<double, 3, Eigen::Dynamic>;
 using Mat3 = Eigen::Matrix<double, 3, 3>;
 using Mat3f = Eigen::Matrix<float, 3, 3>;
 using Mat34 = Eigen::Matrix<double, 3, 4>;
+using Mat32 = Eigen::Matrix<double, 3, 2>;
 
 using Vec4 = Eigen::Vector4d;
 using Vec4f = Eigen::Vector4f;
@@ -125,7 +127,7 @@ using PointCloud = pcl::PointCloud<faster_lio::Point>;
 using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
 using ColorPointCloud = pcl::PointCloud<faster_lio::ColorPoint>;
 
-constexpr double G_m_s2 = 9.81;  // Gravity const in GuangDong/China
+constexpr double GRAVITY_NORM = 9.81;  // Gravity const in GuangDong/China
 
 inline Vec3 VecFromArray(const std::vector<double> &v) {
     return Vec3(v[0], v[1], v[2]);
