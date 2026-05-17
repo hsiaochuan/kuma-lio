@@ -60,6 +60,28 @@ PointCloud::Ptr PointCloudPreprocess::OusterHandler(const sensor_msgs::PointClou
     }
     return cloud_out;
 }
+
+PointCloud::Ptr PointCloudPreprocess::VelodynePointsHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
+    pcl::PointCloud<velodyne_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    PointCloud::Ptr cloud_out(new PointCloud);
+    cloud_out->reserve(pl_orig.size());
+    for (int i = 0; i < pl_orig.points.size(); i++) {
+        if (i % point_filter_num_ != 0) continue;
+        double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
+                       pl_orig.points[i].z * pl_orig.points[i].z;
+        if (range < (blind_ * blind_)) continue;
+        faster_lio::Point added_pt;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        // unit of offset_time: nanosecond
+        added_pt.timestamp = scan_start + pl_orig.points[i].time;
+        cloud_out->points.push_back(added_pt);
+    }
+    return cloud_out;
+}
 PointCloud::Ptr PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start) {
     pcl::PointCloud<hesai_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);

@@ -31,10 +31,6 @@ class ImuProcess {
     ~ImuProcess();
 
     void SetExtrinsic(const Vec3 &transl, const Mat3 &rot);
-    void SetGyrCov(const Vec3 &scaler);
-    void SetAccCov(const Vec3 &scaler);
-    void SetGyrBiasCov(const Vec3 &b_g);
-    void SetAccBiasCov(const Vec3 &b_a);
     void InertialInitialize(const MeasureGroup &meas, StatePoint &state_point);
 
     Eigen::Matrix<double, 12, 12> Q_;

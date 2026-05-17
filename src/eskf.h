@@ -64,16 +64,15 @@ class IESKF {
     }
 
     static bool IterativeUpdate(
-        const std::function<bool(const StatePoint &, bool, LidarObservation &)> &build_obs,
+        const std::function<bool(const StatePoint &, LidarObservation &)> &build_obs,
         double measure_noise,
         int max_iter, StatePoint& state) {
         StatePoint old_state = state;
 
-        bool if_converge, if_stop = false;
+        bool if_stop = false;
         for (int iter = 0; iter < max_iter; ++iter) {
             LidarObservation obs;
-            const bool recompute = true;
-            if (!build_obs(state, recompute, obs)) {
+            if (!build_obs(state, obs)) {
                 LOG(WARNING) << "Failed to build observation!";
                 return false;
             }
@@ -83,7 +82,6 @@ class IESKF {
             }
 
             if_stop = false;
-            if_converge = false;
             const Mat &H = obs.H;
             const Vec &r = obs.r;
 
@@ -92,12 +90,6 @@ class IESKF {
             StatePoint::VectorN vec = old_state - state;
             StatePoint::VectorN solution = K * (r - H * vec ) + vec;
             state += solution;
-
-            auto rot_add = solution.block<3, 1>(StatePoint::ROT, 0);
-            auto pos_add = solution.block<3, 1>(StatePoint::POS, 0);
-            if ((rot_add.norm() * 57.3 < 0.01) && (pos_add.norm() * 100 < 0.015)) {
-                if_converge = true;
-            }
 
             if (iter == max_iter - 1) {
                 static StatePoint::MatrixN state_iden_mat = StatePoint::MatrixN::Identity();

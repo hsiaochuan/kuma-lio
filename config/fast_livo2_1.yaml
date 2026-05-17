@@ -3,6 +3,7 @@ common:
   imu_topic: "/livox/imu"
   camera_topic: "/left_camera/image"
   camera_enable: true
+  imu_enable: true
   scan_interval: 0.1
   lidar_time_offset: 0
   camera_time_offset: 0

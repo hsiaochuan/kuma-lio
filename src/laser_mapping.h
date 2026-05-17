@@ -53,12 +53,12 @@ class LaserMapping {
     void ImageCallBack(Image& image);
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
-
+    void AddScanToBuffer(const PointCloud::Ptr &scan);
     // sync lidar with imu
     bool SyncPackages();
 
     /// custom observation model for IEKF update
-    bool BuildLidarObservation(const StatePoint &s, bool recompute, LidarObservation &obs);
+    bool BuildLidarObservation(const StatePoint &s, LidarObservation &obs);
 
     ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
     void PublishPath();

@@ -92,6 +92,7 @@ enum class LidarType {
     OUSTER,
     HESAI,
     VELODYNE_SCAN,
+    VELODYNE_POINTCLOUD2,
 };
 inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
     if (lidar_type_str == "LIVOX") {
@@ -102,7 +103,9 @@ inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
         return LidarType::HESAI;
     } else if (lidar_type_str == "VELODYNE_SCAN") {
         return LidarType::VELODYNE_SCAN;
-    } else {
+    } else if (lidar_type_str == "VELODYNE_POINTCLOUD2") {
+        return LidarType::VELODYNE_POINTCLOUD2;
+    }else {
         LOG(ERROR) << "Unknown lidar type: " << lidar_type_str;
         return LidarType::LIVOX;
     }
@@ -136,6 +139,7 @@ class PointCloudPreprocess {
     PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
     PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
     PointCloud::Ptr HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
+    PointCloud::Ptr VelodynePointsHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
     PointCloud::Ptr VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, double scan_start);
     velodyne_rawdata::RawData raw_data;
     LidarType lidar_type_ = LidarType::LIVOX;

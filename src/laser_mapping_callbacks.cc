@@ -4,7 +4,29 @@
 #include "utils.h"
 
 namespace faster_lio {
+void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
+    if (scan->empty()) {
+        LOG(INFO) << "empty in scan, no points pushed into buffer";
+        return;
+    }
+    std::sort(scan->points.begin(), scan->points.end(), [](const Point &p1, const Point &p2) { return p1.timestamp < p2.timestamp; });
+    CHECK(scan->back().timestamp - scan->front().timestamp < 1.0) << "too big scan, check the timestamp";
 
+    int skip_scan_points = 0;
+    for (int i = 0; i < scan->size(); ++i) {
+        if (points_buffer_.empty()) {
+            points_buffer_.push_back(scan->at(i));
+            continue;
+        }
+        if (points_buffer_.back().timestamp <= scan->at(i).timestamp) {
+            points_buffer_.push_back(scan->at(i));
+        }else {
+            skip_scan_points++;
+        }
+    }
+    if (skip_scan_points != 0)
+        LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error";
+}
 void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     Timer::Evaluate(
@@ -36,12 +58,13 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
                 case LidarType::HESAI:
                     scan = preprocess_->HesaiHandler(msg, timestamp);
                     break;
+                case LidarType::VELODYNE_POINTCLOUD2:
+                    scan = preprocess_->VelodynePointsHandler(msg, timestamp);
+                    break;
                 default:
                     throw std::logic_error("unknown lidar type");
             }
-            for (int i = 0; i < scan->size(); ++i) {
-                points_buffer_.emplace_back(scan->points[i]);
-            }
+            AddScanToBuffer(scan);
         },
         "Preprocess");
 }
@@ -71,9 +94,7 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
             // push to buffer
             PointCloud::Ptr scan;
             scan = preprocess_->LivoxHandler(msg, timestamp);
-            for (int i = 0; i < scan->size(); ++i) {
-                points_buffer_.emplace_back(scan->points[i]);
-            }
+            AddScanToBuffer(scan);
         },
         "Preprocess");
 }
@@ -104,9 +125,7 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
             // push to buffer
             PointCloud::Ptr scan(new PointCloud());
             scan = preprocess_->VelodyneScanHandler(msg, timestamp);
-            for (int i = 0; i < scan->size(); ++i) {
-                points_buffer_.emplace_back(scan->points[i]);
-            }
+            AddScanToBuffer(scan);
         },
         "Preprocess");
 }

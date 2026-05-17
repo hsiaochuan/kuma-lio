@@ -84,6 +84,9 @@ target_link_libraries(points_color ${PROJECT_NAME} gflags)
 add_executable(offline_global_mapping ./src/offline_global_mapping.cpp)
 target_link_libraries(offline_global_mapping ${PROJECT_NAME} gflags)
 
+add_executable(kitti2bag ./src/kitti_to_bag.cpp)
+target_link_libraries(kitti2bag ${PROJECT_NAME} gflags)
+
 find_package(GTest REQUIRED)
 enable_testing()
 add_executable(camera_test src/camera_test.cpp)

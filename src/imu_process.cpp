@@ -10,11 +10,6 @@ void ImuProcess::SetExtrinsic(const Vec3 &transl, const Mat3 &rot) {
     Lidar_R_wrt_IMU_ = rot;
 }
 
-void ImuProcess::SetGyrCov(const Vec3 &scaler) { cov_gyr_ = scaler; }
-void ImuProcess::SetAccCov(const Vec3 &scaler) { cov_acc_ = scaler; }
-void ImuProcess::SetGyrBiasCov(const Vec3 &b_g) { cov_bias_gyr_ = b_g; }
-void ImuProcess::SetAccBiasCov(const Vec3 &b_a) { cov_bias_acc_ = b_a; }
-
 void ImuProcess::AccuImu(const MeasureGroup &meas) {
     /** 1. initializing the gravity_, gyro bias, acc and gyro covariance
      ** 2. normalize the acceleration measurenments to unit gravity_ **/
@@ -48,7 +43,7 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
                             imu_state.rot.toRotationMatrix(), omega_last);
 
     /*** forward propagation at each imu_ point ***/
-    Vec3 omega_i, acc_avr;
+    Vec3 omega_mid, acc_mid;
     double dt = 0;
 
     ImuInput in;
@@ -60,8 +55,8 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
             continue;
         }
 
-        omega_i = 0.5 * (head.angular_velocity + tail.angular_velocity);
-        acc_avr = 0.5 * (head.linear_acceleration + tail.linear_acceleration);
+        omega_mid = 0.5 * (head.angular_velocity + tail.angular_velocity);
+        acc_mid = 0.5 * (head.linear_acceleration + tail.linear_acceleration);
         // acc_avr = acc_avr * G_m_s2 / mean_acc_.norm();
         if (head.timestamp < last_lidar_end_time_) {
             dt = tail.timestamp - last_lidar_end_time_;
@@ -69,8 +64,8 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
             dt = tail.timestamp - head.timestamp;
         }
 
-        in.acc = acc_avr;
-        in.gyro = omega_i;
+        in.acc = acc_mid;
+        in.gyro = omega_mid;
         Q_.block<3, 3>(0, 0).diagonal() = cov_gyr_;
         Q_.block<3, 3>(3, 3).diagonal() = cov_acc_;
         Q_.block<3, 3>(6, 6).diagonal() = cov_bias_gyr_;
@@ -79,8 +74,8 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
 
         /* save the poses at each IMU measurements */
         imu_state = *state_point_;
-        omega_last = omega_i - imu_state.bias_g;
-        acc_last = imu_state.rot * (acc_avr - imu_state.bias_a);
+        omega_last = omega_mid - imu_state.bias_g;
+        acc_last = imu_state.rot * (acc_mid - imu_state.bias_a);
         acc_last += imu_state.gravity;
 
 

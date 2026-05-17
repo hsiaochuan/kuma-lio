@@ -44,6 +44,9 @@ void LaserMapping::Run() {
         return;
     }
 
+    if (!param->imu_enable_)
+        throw std::runtime_error("disable the imu is not support");
+
     /// IMU process, kf prediction, undistortion
     PointCloud::Ptr scan_body(new PointCloud);
     pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
@@ -76,12 +79,8 @@ void LaserMapping::Run() {
     }
 
     /// downsample
-    Timer::Evaluate(
-        [&, this]() {
-            scan_sampler_.setInputCloud(scan_undistort_);
-            scan_sampler_.filter(*scan_down_body_);
-        },
-        "Downsample PointCloud");
+    scan_sampler_.setInputCloud(scan_undistort_);
+    scan_sampler_.filter(*scan_down_body_);
 
 
     if (scan_down_body_->size() < 5) {
@@ -97,9 +96,7 @@ void LaserMapping::Run() {
     Timer::Evaluate(
         [&, this]() {
             IESKF::IterativeUpdate(
-                [this](const StatePoint &s, bool recompute, LidarObservation &obs) {
-                    return BuildLidarObservation(s, recompute, obs);
-                },
+            std::bind(&LaserMapping::BuildLidarObservation, this, std::placeholders::_1, std::placeholders::_2),
                 options::LASER_POINT_COV,
                 param->max_iteraions, *state_point_);
         },
@@ -191,10 +188,10 @@ void LaserMapping::PublishROSMsg() {
         PublishFrameEffectWorld();
 }
 bool LaserMapping::SyncPackages() {
-    if (points_buffer_.empty() || imu_buffer_.empty()) {
+    if (points_buffer_.empty())
         return false;
-    }
-
+    if (param->imu_enable_ && imu_buffer_.empty())
+        return false;
     if (param->camera_enable_ && image_buffer_.empty())
         return false;
 
@@ -220,25 +217,28 @@ bool LaserMapping::SyncPackages() {
         end_time_ = end_time_;
     }
 
-    if (imu_buffer_.back().timestamp < end_time_) return false;
+    if (param->imu_enable_)
+        if (imu_buffer_.back().timestamp < end_time_)
+            return false;
     if (points_buffer_.back().timestamp < end_time_) return false;
 
     // push the imu data
     measures_.imu_.clear();
-    while (imu_buffer_.front().timestamp < end_time_ && !imu_buffer_.empty()) {
+    while (!imu_buffer_.empty() && imu_buffer_.front().timestamp < end_time_) {
         measures_.imu_.emplace_back(imu_buffer_.front());
         imu_buffer_.pop_front();
     }
 
     // push the lidar points
     measures_.lidar_->clear();
-    while (points_buffer_.front().timestamp < end_time_ && !points_buffer_.empty()) {
+    while (!points_buffer_.empty() && points_buffer_.front().timestamp < end_time_) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
     }
 
     measures_.end_time_ = end_time_;
-    if (measures_.lidar_->empty() || measures_.imu_.empty()) {
+    if (measures_.lidar_->empty() ||
+        (param->imu_enable_ && measures_.imu_.empty())) {
         std::cout << "Empty lidar or imu data, skip this measure" << std::endl;
         return false;
     }
@@ -368,7 +368,7 @@ static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector
     }
     return true;
 }
-bool LaserMapping::BuildLidarObservation(const StatePoint &s, bool recompute, LidarObservation &obs) {
+bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &obs) {
 
     std::vector<float> residuals_(scan_down_body_->size(), 0.0);
     std::vector<size_t> index(scan_down_body_->size());
@@ -392,15 +392,15 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, bool recompute, Li
                 point_world.intensity = point_body.intensity;
 
                 auto &points_near = nearest_points_[i];
-                if (recompute) {
-                    /** Find the closest surfaces in the map **/
-                    points_near.clear();
-                    ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
-                    eff_mask_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
-                    if (eff_mask_[i]) {
-                        eff_mask_[i] = esti_plane(plane_coef_[i], points_near, param->esti_plane_thr);
-                    }
+
+                /** Find the closest surfaces in the map **/
+                points_near.clear();
+                ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
+                eff_mask_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
+                if (eff_mask_[i]) {
+                    eff_mask_[i] = esti_plane(plane_coef_[i], points_near, param->esti_plane_thr);
                 }
+
 
                 if (eff_mask_[i]) {
                     auto temp = point_world.getVector4fMap();

@@ -39,10 +39,10 @@ bool LaserMapping::Init(const std::string &config_fname) {
     scan_sampler_.setLeafSize(param->scan_filter_size, param->scan_filter_size, param->scan_filter_size);
 
     p_imu_->SetExtrinsic(param->extrin_il_.Trans(), param->extrin_il_.Mat3d());
-    p_imu_->SetGyrCov(Vec3(param->gyr_cov, param->gyr_cov, param->gyr_cov));
-    p_imu_->SetAccCov(Vec3(param->acc_cov, param->acc_cov, param->acc_cov));
-    p_imu_->SetGyrBiasCov(Vec3(param->b_gyr_cov, param->b_gyr_cov, param->b_gyr_cov));
-    p_imu_->SetAccBiasCov(Vec3(param->b_acc_cov, param->b_acc_cov, param->b_acc_cov));
+    p_imu_->cov_gyr_ = Vec3(param->gyr_cov, param->gyr_cov, param->gyr_cov);
+    p_imu_->cov_acc_ = Vec3(param->acc_cov, param->acc_cov, param->acc_cov);
+    p_imu_->cov_bias_gyr_ = Vec3(param->b_gyr_cov, param->b_gyr_cov, param->b_gyr_cov);
+    p_imu_->cov_bias_acc_ = Vec3(param->b_acc_cov, param->b_acc_cov, param->b_acc_cov);
 
     ivox_ = std::make_shared<IVoxType>(param->ivox_options_);
     mapper = std::make_shared<GlobalOptimizor>();
