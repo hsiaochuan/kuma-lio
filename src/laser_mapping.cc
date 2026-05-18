@@ -87,10 +87,7 @@ void LaserMapping::Run() {
         LOG(WARNING) << "Too few points, skip this scan!" << scan_undistort_->size() << ", " << scan_down_body_->size();
         return;
     }
-    scan_down_world_->resize(scan_down_body_->size());
-    nearest_points_.resize(scan_down_body_->size());
-    eff_mask_.resize(scan_down_body_->size(), true);
-    plane_coef_.resize(scan_down_body_->size(), Vec4f::Zero());
+
 
     // ICP and iterated Kalman filter update
     Timer::Evaluate(
@@ -369,27 +366,23 @@ static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector
     return true;
 }
 bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &obs) {
-
+    eff_mask_.resize(scan_down_body_->size(), false);
+    nearest_points_.resize(scan_down_body_->size());
+    std::vector<Vec4f> plane_coeffs(scan_down_body_->size());
     std::vector<float> residuals_(scan_down_body_->size(), 0.0);
     std::vector<size_t> index(scan_down_body_->size());
+    pcl::transformPointCloud(*scan_down_body_, *scan_down_world_, s.Isometry().cast<float>());
+
     for (size_t i = 0; i < index.size(); ++i) {
         index[i] = i;
     }
 
     Timer::Evaluate(
         [&, this]() {
-            auto R_world_b = (s.rot).cast<float>();
-            auto pos_world_b = (s.pos).cast<float>();
-
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 Point &point_body = scan_down_body_->points[i];
                 Point &point_world = scan_down_world_->points[i];
-
-                /* transform to world frame */
-                Vec3f p_body = point_body.getVector3fMap();
-                point_world.getVector3fMap() = R_world_b * p_body + pos_world_b;
-                point_world.intensity = point_body.intensity;
 
                 auto &points_near = nearest_points_[i];
 
@@ -398,16 +391,16 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
                 ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
                 eff_mask_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
                 if (eff_mask_[i]) {
-                    eff_mask_[i] = esti_plane(plane_coef_[i], points_near, param->esti_plane_thr);
+                    eff_mask_[i] = esti_plane(plane_coeffs[i], points_near, param->esti_plane_thr);
                 }
 
 
                 if (eff_mask_[i]) {
                     auto temp = point_world.getVector4fMap();
                     temp[3] = 1.0;
-                    float pd2 = plane_coef_[i].dot(temp);
+                    float pd2 = plane_coeffs[i].dot(temp);
 
-                    bool valid_corr = p_body.norm() > 81 * pd2 * pd2;
+                    bool valid_corr = point_body.getVector3fMap().norm() > 81 * pd2 * pd2;
                     if (valid_corr) {
                         eff_mask_[i] = true;
                         residuals_[i] = pd2;
@@ -427,10 +420,9 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
     match_plane_coeff_.resize(scan_down_body_->size());
     for (int i = 0; i < scan_down_body_->size(); i++) {
         if (eff_mask_[i]) {
-            match_plane_coeff_[eff_num_] = plane_coef_[i];
+            match_plane_coeff_[eff_num_] = plane_coeffs[i];
             match_point_[eff_num_] = scan_down_body_->points[i].getVector4fMap();
             match_point_[eff_num_][3] = residuals_[i];
-
             eff_num_++;
         }
     }
@@ -447,22 +439,18 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
         [&, this]() {
             /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
             obs.H = Eigen::MatrixXd::Zero(eff_num_, StatePoint::STATE_DOF);
-            obs.r.resize(eff_num_);
+            obs.r = Eigen::VectorXd::Zero(eff_num_);
 
             index.resize(eff_num_);
             const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
 
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
-                Vec3f point_this_be = match_point_[i].head<3>();
-                Mat3f point_be_crossmat = Hat(point_this_be);
-                Vec3f point_this = point_this_be;
-                Mat3f point_crossmat = Hat(point_this);
+                Vec3f point_this = match_point_[i].head<3>();
 
                 Vec3f norm_vec = match_plane_coeff_[i].head<3>();
-                Vec3f C(Rt * norm_vec);
-                Vec3f A(point_crossmat * C);
+                Vec3f J_rot(Hat(point_this) * Rt * norm_vec);
                 obs.H.block<1, 3>(i, StatePoint::POS) << norm_vec[0], norm_vec[1], norm_vec[2];
-                obs.H.block<1, 3>(i, StatePoint::ROT) << A[0], A[1], A[2];
+                obs.H.block<1, 3>(i, StatePoint::ROT) << J_rot[0], J_rot[1], J_rot[2];
                 obs.r(i) = -match_point_[i][3];
             });
         },

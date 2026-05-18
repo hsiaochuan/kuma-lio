@@ -88,7 +88,6 @@ class LaserMapping {
     std::vector<PointVector> nearest_points_;            // nearest points of current scan
     pcl::VoxelGrid<Point> scan_sampler_;             // voxel filter for current scan
     std::vector<char> eff_mask_;              // selected points
-    std::vector<Vec4f> plane_coef_;                            // plane coeffs
 
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
