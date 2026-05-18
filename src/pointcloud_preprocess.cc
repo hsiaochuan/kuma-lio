@@ -4,13 +4,6 @@
 #include <execution>
 
 namespace faster_lio {
-
-void PointCloudPreprocess::Set(LidarType lid_type, double bld, int pfilt_num) {
-    lidar_type_ = lid_type;
-    blind_ = bld;
-    point_filter_num_ = pfilt_num;
-}
-
 PointCloud::Ptr PointCloudPreprocess::LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg,
                                                    double scan_start) {
     PointCloud::Ptr cloud_out(new PointCloud);
@@ -21,7 +14,8 @@ PointCloud::Ptr PointCloudPreprocess::LivoxHandler(const livox_ros_driver::Custo
         if (i % point_filter_num_ != 0) continue;
         double range = msg->points[i].x * msg->points[i].x + msg->points[i].y * msg->points[i].y +
                        msg->points[i].z * msg->points[i].z;
-        if (range < (blind_ * blind_)) continue;
+        if (range < (blind_ * blind_) || range > (max_range * max_range))
+            continue;
 
         faster_lio::Point added_pt;
         added_pt.x = msg->points[i].x;
@@ -45,7 +39,8 @@ PointCloud::Ptr PointCloudPreprocess::OusterHandler(const sensor_msgs::PointClou
         if (i % point_filter_num_ != 0) continue;
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                        pl_orig.points[i].z * pl_orig.points[i].z;
-        if (range < (blind_ * blind_)) continue;
+        if (range < (blind_ * blind_) || range > (max_range * max_range))
+            continue;
 
         Eigen::Vector3d pt_vec;
         faster_lio::Point added_pt;
@@ -70,7 +65,8 @@ PointCloud::Ptr PointCloudPreprocess::VelodynePointsHandler(const sensor_msgs::P
         if (i % point_filter_num_ != 0) continue;
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                        pl_orig.points[i].z * pl_orig.points[i].z;
-        if (range < (blind_ * blind_)) continue;
+        if (range < (blind_ * blind_) || range > (max_range * max_range))
+            continue;
         faster_lio::Point added_pt;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
@@ -94,7 +90,8 @@ PointCloud::Ptr PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                        pl_orig.points[i].z * pl_orig.points[i].z;
 
-        if (range < blind_ * blind_) continue;
+        if (range < (blind_ * blind_) || range > (max_range * max_range))
+            continue;
 
         faster_lio::Point added_pt;
         added_pt.x = pl_orig.points[i].x;
@@ -124,7 +121,8 @@ PointCloud::Ptr PointCloudPreprocess::VelodyneScanHandler(const velodyne_msgs::V
         double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                        pl_orig.points[i].z * pl_orig.points[i].z;
 
-        if (range < blind_ * blind_) continue;
+        if (range < (blind_ * blind_) || range > (max_range * max_range))
+            continue;
 
         faster_lio::Point added_pt;
         added_pt.x = pl_orig.points[i].x;

@@ -18,38 +18,45 @@ class LaserMappingParam {
     using IVoxType = IVox<3, IVoxNodeType::DEFAULT, Point>;
 #endif
 
-    IVoxType::Options ivox_options_;
-    bool pcd_save_en_ = false;
-    bool image_save_en_ = false;
-    int pcd_save_interval_ = -1;
-    bool path_save_en_ = false;
-    std::string lidar_type;
-    int ivox_nearby_type;
-    double gyr_cov;
-    double acc_cov;
-    double b_gyr_cov;
-    double b_acc_cov;
-    double scan_filter_size;
-    float det_range_ = 300.0f;
-    double cube_len_ = 0;
-    double map_filter_size_ = 0;
-    Pose3 extrin_il_ = Pose3::Identity();
-    double scan_interval_ = 0.1;
-    float esti_plane_thr = 0.1;
-    int max_iteraions = 4;
+    // general
     std::string lidar_topic_;
     std::string imu_topic_;
     std::string camera_topic_;
     bool camera_enable_;
     bool imu_enable_;
+    Pose3 extrin_il_ = Pose3::Identity();
+    Pose3 extrin_ic_ = Pose3::Identity();
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
-    int image_skip_ = 3;
-    int point_filter_num = 1;
-    double blind = 2.0;
-
-    Pose3 extrin_ic_ = Pose3::Identity();
     std::shared_ptr<CamModel> camera_;
+    int image_skip_ = 3;
+
+    // lidar
+    std::string lidar_type;
+    float det_range_ = 300.0f;
+    double blind = 2.0;
+    int point_filter_num = 1;
+
+    // mapping
+    double scan_interval_ = 0.1;
+    int max_iteraions = 4;
+    int ivox_nearby_type;
+    IVoxType::Options ivox_options_;
+    double scan_filter_size;
+    double map_filter_size_ = 0;
+    float esti_plane_thr = 0.1;
+
+    // IMU
+    double gyr_cov;
+    double acc_cov;
+    double b_gyr_cov;
+    double b_acc_cov;
+
+    // output
+    bool path_save_en_ = false;
+    bool image_save_en_ = false;
+    bool pcd_save_en_ = false;
+    int pcd_save_interval_ = -1;
 
     bool LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
@@ -59,7 +66,6 @@ class LaserMappingParam {
             esti_plane_thr = yaml["esti_plane_threshold"].as<float>();
             scan_filter_size = yaml["scan_filter_size"].as<float>();
             map_filter_size_ = yaml["map_filter_size"].as<float>();
-            cube_len_ = yaml["cube_side_length"].as<int>();
             det_range_ = yaml["mapping"]["det_range"].as<float>();
             gyr_cov = yaml["mapping"]["gyr_cov"].as<float>();
             acc_cov = yaml["mapping"]["acc_cov"].as<float>();

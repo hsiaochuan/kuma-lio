@@ -20,9 +20,10 @@ bool LaserMapping::Init(const std::string &config_fname) {
     param = std::make_shared<LaserMappingParam>();
     if (!param->LoadFromYaml(config_fname))
         return false;
-    preprocess_->SetLidarType(LidarTypeFromString(param->lidar_type));
-    preprocess_->Blind() = param->blind;
-    preprocess_->PointFilterNum() = param->point_filter_num;
+    preprocess_->blind_ = param->blind;
+    preprocess_->point_filter_num_ = param->point_filter_num;
+    preprocess_->lidar_type_ = LidarTypeFromString(param->lidar_type);
+    preprocess_->max_range = param->det_range_;
     if (param->ivox_nearby_type == 0) {
         param->ivox_options_.nearby_type_ = IVoxType::NearbyType::CENTER;
     } else if (param->ivox_nearby_type == 6) {
@@ -66,10 +67,10 @@ bool LaserMapping::Init(const std::string &config_fname) {
 }
 
 void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
-    if (preprocess_->GetLidarType() == LidarType::LIVOX) {
+    if (preprocess_->lidar_type_ == LidarType::LIVOX) {
         sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
             param->lidar_topic_, 200000, [this](const livox_ros_driver::CustomMsg::ConstPtr &msg) { LivoxPCLCallBack(msg); });
-    } else if (preprocess_->GetLidarType() == LidarType::VELODYNE_SCAN) {
+    } else if (preprocess_->lidar_type_ == LidarType::VELODYNE_SCAN) {
         sub_pcl_ = nh.subscribe<velodyne_msgs::VelodyneScan>(
             param->lidar_topic_, 200000, [this](const velodyne_msgs::VelodyneScan::ConstPtr &msg) { VelodyneScanCallBack(msg); });
     }else {

@@ -106,8 +106,7 @@ inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
     } else if (lidar_type_str == "VELODYNE_POINTCLOUD2") {
         return LidarType::VELODYNE_POINTCLOUD2;
     }else {
-        LOG(ERROR) << "Unknown lidar type: " << lidar_type_str;
-        return LidarType::LIVOX;
+        throw std::runtime_error("unknown lidar type: " + lidar_type_str);
     }
 }
 
@@ -128,13 +127,6 @@ class PointCloudPreprocess {
 
     }
     ~PointCloudPreprocess() = default;
-    void Set(LidarType lid_type, double bld, int pfilt_num);
-
-    // accessors
-    double &Blind() { return blind_; }
-    int &PointFilterNum() { return point_filter_num_; }
-    LidarType GetLidarType() const { return lidar_type_; }
-    void SetLidarType(LidarType lt) { lidar_type_ = lt; }
 
     PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
     PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
@@ -144,7 +136,8 @@ class PointCloudPreprocess {
     velodyne_rawdata::RawData raw_data;
     LidarType lidar_type_ = LidarType::LIVOX;
     int point_filter_num_ = 1;
-    double blind_ = 0.01;
+    double blind_ = 1.0;
+    double max_range = std::numeric_limits<double>::max();
 };
 }  // namespace faster_lio
 
