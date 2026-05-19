@@ -104,7 +104,7 @@ void LaserMapping::Run() {
     }, "Incremental Mapping");
 
     LOG(INFO) << "Raw scan: " << scan_undistort_->points.size() << " downsample " << scan_down_body_->size()
-              << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << eff_num_;
+              << " Map grid num: " << ivox_->grids_map_.size() << " effect num : " << eff_num_;
 
     PublishROSMsg();
     PostUpdate();

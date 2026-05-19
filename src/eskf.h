@@ -82,11 +82,11 @@ class IESKF {
             }
 
             if_stop = false;
-            const Mat &H = obs.H;
-            const Vec &r = obs.r;
-            const Mat &HTRinv = obs.HTRinv;
+            const MatX &H = obs.H;
+            const VecX &r = obs.r;
+            const MatX &HTRinv = obs.HTRinv;
 
-            const Mat K = (HTRinv * H + state.cov.inverse()).inverse() * HTRinv;
+            const MatX K = (HTRinv * H + state.cov.inverse()).inverse() * HTRinv;
             StatePoint::VectorN vec = old_state - state;
             StatePoint::VectorN solution = K * (r - H * vec ) + vec;
             state += solution;
