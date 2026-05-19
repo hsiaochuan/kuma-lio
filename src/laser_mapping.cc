@@ -94,7 +94,6 @@ void LaserMapping::Run() {
         [&, this]() {
             IESKF::IterativeUpdate(
             std::bind(&LaserMapping::BuildLidarObservation, this, std::placeholders::_1, std::placeholders::_2),
-                options::LASER_POINT_COV,
                 param->max_iteraions, *state_point_);
         },
         "IEKF Solve and Update");
@@ -440,7 +439,7 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
             /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
             obs.H = Eigen::MatrixXd::Zero(eff_num_, StatePoint::STATE_DOF);
             obs.r = Eigen::VectorXd::Zero(eff_num_);
-
+            obs.HTRinv = Eigen::MatrixXd::Zero(StatePoint::STATE_DOF, eff_num_);
             index.resize(eff_num_);
             const Mat3f Rt = s.rot.toRotationMatrix().transpose().cast<float>();
 
@@ -451,6 +450,7 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
                 Vec3f J_rot(Hat(point_this) * Rt * norm_vec);
                 obs.H.block<1, 3>(i, StatePoint::POS) << norm_vec[0], norm_vec[1], norm_vec[2];
                 obs.H.block<1, 3>(i, StatePoint::ROT) << J_rot[0], J_rot[1], J_rot[2];
+                obs.HTRinv.col(i) = obs.H.row(i).transpose() / options::LASER_POINT_COV;
                 obs.r(i) = -match_point_[i][3];
             });
         },

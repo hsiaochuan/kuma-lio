@@ -17,6 +17,7 @@ struct ImuInput {
 struct LidarObservation {
     Eigen::MatrixXd H;
     Eigen::VectorXd r;
+    Eigen::MatrixXd HTRinv;
     bool valid = false;
 };
 
@@ -65,7 +66,6 @@ class IESKF {
 
     static bool IterativeUpdate(
         const std::function<bool(const StatePoint &, LidarObservation &)> &build_obs,
-        double measure_noise,
         int max_iter, StatePoint& state) {
         StatePoint old_state = state;
 
@@ -84,8 +84,8 @@ class IESKF {
             if_stop = false;
             const Mat &H = obs.H;
             const Vec &r = obs.r;
+            const Mat &HTRinv = obs.HTRinv;
 
-            const Mat HTRinv = H.transpose() * (1. / measure_noise);
             const Mat K = (HTRinv * H + state.cov.inverse()).inverse() * HTRinv;
             StatePoint::VectorN vec = old_state - state;
             StatePoint::VectorN solution = K * (r - H * vec ) + vec;
