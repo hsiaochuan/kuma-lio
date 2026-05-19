@@ -25,11 +25,7 @@ class LaserMapping {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 
-#ifdef IVOX_NODE_TYPE_PHC
-    using IVoxType = IVox<3, IVoxNodeType::PHC, PointType>;
-#else
-    using IVoxType = IVox<3, IVoxNodeType::DEFAULT, Point>;
-#endif
+    using IVoxType = IVox;
 
     LaserMapping();
     ~LaserMapping() {

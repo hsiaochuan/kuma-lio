@@ -57,11 +57,7 @@ bool LaserMapping::Init(const std::string &config_fname) {
         sfm_data_.cameras_[cam_id] = param->camera_;
     }
 
-    if (std::is_same<IVoxType, IVox<3, IVoxNodeType::PHC, pcl::PointXYZI>>::value == true) {
-        LOG(INFO) << "using phc ivox";
-    } else if (std::is_same<IVoxType, IVox<3, IVoxNodeType::DEFAULT, pcl::PointXYZI>>::value == true) {
-        LOG(INFO) << "using default ivox";
-    }
+    LOG(INFO) << "using linear ivox";
 
     return true;
 }

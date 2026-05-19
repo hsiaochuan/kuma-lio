@@ -12,11 +12,7 @@ using namespace faster_lio;
 class LaserMappingParam {
    public:
     // parameters
-#ifdef IVOX_NODE_TYPE_PHC
-    using IVoxType = IVox<3, IVoxNodeType::PHC, PointType>;
-#else
-    using IVoxType = IVox<3, IVoxNodeType::DEFAULT, Point>;
-#endif
+    using IVoxType = IVox;
 
     // general
     std::string lidar_topic_;

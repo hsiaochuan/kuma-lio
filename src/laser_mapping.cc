@@ -104,7 +104,7 @@ void LaserMapping::Run() {
     }, "Incremental Mapping");
 
     LOG(INFO) << "Raw scan: " << scan_undistort_->points.size() << " downsample " << scan_down_body_->size()
-              << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << eff_num_;
+              << " Map grid num: " << ivox_->grids_map_.size() << " effect num : " << eff_num_;
 
     PublishROSMsg();
     PostUpdate();
@@ -269,17 +269,20 @@ void LaserMapping::MapIncremental() {
         if (!nearest_points_[i].empty()) {
             const PointVector &points_near = nearest_points_[i];
 
+            // get the vox
             Eigen::Vector3f center =
                 ((point_world.getVector3fMap() / param->map_filter_size_).array().floor() + 0.5) * param->map_filter_size_;
 
+            // no near points in the vox, add this point
             Eigen::Vector3f dis_2_center = points_near[0].getVector3fMap() - center;
-
-            if (fabs(dis_2_center.x()) > 0.5 * param->map_filter_size_ && fabs(dis_2_center.y()) > 0.5 * param->map_filter_size_ &&
+            if (fabs(dis_2_center.x()) > 0.5 * param->map_filter_size_ &&
+                fabs(dis_2_center.y()) > 0.5 * param->map_filter_size_ &&
                 fabs(dis_2_center.z()) > 0.5 * param->map_filter_size_) {
                 point_no_need_downsample.emplace_back(point_world);
                 return;
             }
 
+            // have near point in the vox, if the point is near to center, add the point
             bool need_add = true;
             float dist = (point_world.getVector3fMap() - center).squaredNorm();
             if (points_near.size() >= options::NUM_MATCH_POINTS) {
