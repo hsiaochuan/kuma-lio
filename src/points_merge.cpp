@@ -46,7 +46,7 @@ bool LoadPoints(const std::string& points_fname, pcl::PointCloud<PointType>& poi
 int main(int argc, char** argv) {
     std::string trajectory_fname;
     std::string pcd_dir;
-    std::string output_pcd;
+    std::string output_fname;
     int start_idx = 0;
     int end_idx = -1;
     double voxel_size = 0.05;
@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
         ("help,h", "Show help message")
         ("trajectory,t", po::value<std::string>(&trajectory_fname)->required(), "Trajectory file (TUM format)")
         ("pcd_dir,p", po::value<std::string>(&pcd_dir)->required(), "Directory containing PCD files")
-        ("output,o", po::value<std::string>(&output_pcd)->required(), "Output merged PCD file")
+        ("output,o", po::value<std::string>(&output_fname), "Output merged PCD file")
         ("start_idx,s", po::value<int>(&start_idx)->default_value(0), "Start index for merging")
         ("end_idx,e", po::value<int>(&end_idx)->default_value(-1), "End index for merging (exclusive)")
         ("voxel_size,e", po::value<double>(&voxel_size)->default_value(-1), "Voxel size for downsampling (negative to disable)");
@@ -65,6 +65,8 @@ int main(int argc, char** argv) {
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
 
+    if (output_fname.empty())
+        output_fname = fs::path(pcd_dir).parent_path().string() + "/merged.pcd";
     std::vector<std::string> points_fnames;
     boost::filesystem::path pcd_path(pcd_dir);
     for (boost::filesystem::directory_iterator it(pcd_path); it != boost::filesystem::directory_iterator(); ++it) {
@@ -145,7 +147,7 @@ int main(int argc, char** argv) {
     }
     std::cout << "Merged " << merged_cloud->points.size() << " points from " << start_idx << " to " << end_idx
               << std::endl;
-    std::cout << "Saving " << merged_cloud->size() << " points to " << output_pcd << std::endl;
-    pcl::io::savePCDFileBinary(output_pcd, *merged_cloud);
+    std::cout << "Saving " << merged_cloud->size() << " points to " << output_fname << std::endl;
+    pcl::io::savePCDFileBinary(output_fname, *merged_cloud);
     return 0;
 }
