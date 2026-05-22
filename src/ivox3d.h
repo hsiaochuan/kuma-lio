@@ -8,15 +8,19 @@
 #include <glog/logging.h>
 #include <algorithm>
 #include <execution>
-#include <list>
 #include <limits>
+#include <list>
 #include <thread>
 
 #include "common_lib.h"
-#include "eigen_types.h"
 #include "eigen_type.h"
 
 namespace faster_lio {
+struct hash_vec {
+    inline size_t operator()(const Vec3i& v) const {
+        return size_t(((v[0]) * 73856093) ^ ((v[1]) * 471943) ^ ((v[2]) * 83492791)) % 10000000;
+    }
+};
 
 class IVox {
    public:
@@ -62,10 +66,9 @@ class IVox {
     Vec3i Pos2Grid(const Vec3f& pt) const;
 
     Options options_;
-    std::unordered_map<Vec3i, std::list<std::pair<Vec3i, Vox>>::iterator, hash_vec<3>>
-        grids_map_;                                        // voxel hash map
-    std::list<std::pair<Vec3i, Vox>> grids_cache_;  // voxel cache
-    std::vector<Vec3i> nearby_grids_;                    // nearbys
+    std::unordered_map<Vec3i, std::list<std::pair<Vec3i, Vox>>::iterator, hash_vec> grids_map_;  // voxel hash map
+    std::list<std::pair<Vec3i, Vox>> grids_cache_;                                               // voxel cache
+    std::vector<Vec3i> nearby_grids_;                                                            // nearbys
 };
 
 // squared distance of two pcl points
@@ -127,19 +130,17 @@ inline void IVox::GenerateNearbyGrids() {
         nearby_grids_ = {Vec3i(0, 0, 0),  Vec3i(-1, 0, 0), Vec3i(1, 0, 0), Vec3i(0, 1, 0),
                          Vec3i(0, -1, 0), Vec3i(0, 0, -1), Vec3i(0, 0, 1)};
     } else if (options_.nearby_type_ == NearbyType::NEARBY18) {
-        nearby_grids_ = {Vec3i(0, 0, 0),  Vec3i(-1, 0, 0), Vec3i(1, 0, 0),   Vec3i(0, 1, 0),
-                         Vec3i(0, -1, 0), Vec3i(0, 0, -1), Vec3i(0, 0, 1),   Vec3i(1, 1, 0),
-                         Vec3i(-1, 1, 0), Vec3i(1, -1, 0), Vec3i(-1, -1, 0), Vec3i(1, 0, 1),
-                         Vec3i(-1, 0, 1), Vec3i(1, 0, -1), Vec3i(-1, 0, -1), Vec3i(0, 1, 1),
-                         Vec3i(0, -1, 1), Vec3i(0, 1, -1), Vec3i(0, -1, -1)};
+        nearby_grids_ = {Vec3i(0, 0, 0),   Vec3i(-1, 0, 0), Vec3i(1, 0, 0),  Vec3i(0, 1, 0),  Vec3i(0, -1, 0),
+                         Vec3i(0, 0, -1),  Vec3i(0, 0, 1),  Vec3i(1, 1, 0),  Vec3i(-1, 1, 0), Vec3i(1, -1, 0),
+                         Vec3i(-1, -1, 0), Vec3i(1, 0, 1),  Vec3i(-1, 0, 1), Vec3i(1, 0, -1), Vec3i(-1, 0, -1),
+                         Vec3i(0, 1, 1),   Vec3i(0, -1, 1), Vec3i(0, 1, -1), Vec3i(0, -1, -1)};
     } else if (options_.nearby_type_ == NearbyType::NEARBY26) {
-        nearby_grids_ = {Vec3i(0, 0, 0),   Vec3i(-1, 0, 0),  Vec3i(1, 0, 0),   Vec3i(0, 1, 0),
-                         Vec3i(0, -1, 0),  Vec3i(0, 0, -1),  Vec3i(0, 0, 1),   Vec3i(1, 1, 0),
-                         Vec3i(-1, 1, 0),  Vec3i(1, -1, 0),  Vec3i(-1, -1, 0), Vec3i(1, 0, 1),
-                         Vec3i(-1, 0, 1),  Vec3i(1, 0, -1),  Vec3i(-1, 0, -1), Vec3i(0, 1, 1),
-                         Vec3i(0, -1, 1),  Vec3i(0, 1, -1),  Vec3i(0, -1, -1), Vec3i(1, 1, 1),
-                         Vec3i(-1, 1, 1),  Vec3i(1, -1, 1),  Vec3i(1, 1, -1),  Vec3i(-1, -1, 1),
-                         Vec3i(-1, 1, -1), Vec3i(1, -1, -1), Vec3i(-1, -1, -1)};
+        nearby_grids_ = {Vec3i(0, 0, 0),   Vec3i(-1, 0, 0),  Vec3i(1, 0, 0),  Vec3i(0, 1, 0),   Vec3i(0, -1, 0),
+                         Vec3i(0, 0, -1),  Vec3i(0, 0, 1),   Vec3i(1, 1, 0),  Vec3i(-1, 1, 0),  Vec3i(1, -1, 0),
+                         Vec3i(-1, -1, 0), Vec3i(1, 0, 1),   Vec3i(-1, 0, 1), Vec3i(1, 0, -1),  Vec3i(-1, 0, -1),
+                         Vec3i(0, 1, 1),   Vec3i(0, -1, 1),  Vec3i(0, 1, -1), Vec3i(0, -1, -1), Vec3i(1, 1, 1),
+                         Vec3i(-1, 1, 1),  Vec3i(1, -1, 1),  Vec3i(1, 1, -1), Vec3i(-1, -1, 1), Vec3i(-1, 1, -1),
+                         Vec3i(1, -1, -1), Vec3i(-1, -1, -1)};
     } else {
         LOG(ERROR) << "Unknown nearby_type!";
     }

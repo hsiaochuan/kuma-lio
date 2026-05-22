@@ -6,7 +6,7 @@
 #define FASTER_LIO_LASER_MAPPING_PARAM_H
 #include <yaml-cpp/yaml.h>
 #include "cameras/cameras.h"
-#include "ivox3d/ivox3d.h"
+#include "ivox3d.h"
 #include "pose3.h"
 using namespace faster_lio;
 class LaserMappingParam {

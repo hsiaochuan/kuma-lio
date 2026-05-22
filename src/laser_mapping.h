@@ -11,14 +11,14 @@
 
 // Heavy dependencies are forward-declared below to reduce rebuilds.
 #include "eskf.h"
+#include "global_optimizor.h"
 #include "imu_processing.hpp"
-#include "ivox3d/ivox3d.h"
+#include "ivox3d.h"
 #include "pointcloud_preprocess.h"
 #include "pose3.h"
-#include "types.h"
-#include "stamp_pose.h"
 #include "sfm_data.h"
-#include "global_optimizor.h"
+#include "stamp_pose.h"
+#include "types.h"
 namespace faster_lio {
 
 class LaserMapping {
