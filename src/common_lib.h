@@ -22,6 +22,9 @@
 #include "so3_math.h"
 #include <glog/logging.h>
 #include "eigen_type.h"
+
+#define S_TO_NS(x) (int64_t(x * 1e9))
+#define NS_TO_S(x) (x * 1e-9)
 namespace faster_lio {
 class VOXEL_LOCATION {
    public:

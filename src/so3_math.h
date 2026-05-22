@@ -5,6 +5,25 @@
 #include <cmath>
 
 namespace faster_lio {
+template <typename Scalar>
+struct Constants {
+    static Scalar Epsilon() {
+        return Scalar(1e-10);
+    }
+    static Scalar EpsilonSqrt() {
+        using std::sqrt;
+        return sqrt(Epsilon());
+    }
+};
+template <>
+struct Constants<float> {
+    static float Epsilon() {
+        return static_cast<float>(1e-5);
+    }
+    static float EpsilonSqrt() {
+        return std::sqrt(Epsilon());
+    }
+};
 
 template <typename Derived>
 inline Eigen::Matrix<typename Derived::Scalar, 3, 3> Hat(const Eigen::MatrixBase<Derived>& v) {
@@ -103,6 +122,157 @@ inline Eigen::Quaternion<typename Derived::Scalar> ExpQuat(const Eigen::MatrixBa
     }
 
     return Eigen::Quaternion<Scalar>(real, img * omega.x(), img * omega.y(), img * omega.z()).normalized();
+}
+
+template <typename Derived1, typename Derived2>
+inline void rightJacobianSO3(const Eigen::MatrixBase<Derived1> &phi,
+                             const Eigen::MatrixBase<Derived2> &J_phi) {
+    EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived1);
+    EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived2);
+    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived1, 3);
+    EIGEN_STATIC_ASSERT_MATRIX_SPECIFIC_SIZE(Derived2, 3, 3);
+
+    using Scalar = typename Derived1::Scalar;
+
+    Eigen::MatrixBase<Derived2> &J =
+        const_cast<Eigen::MatrixBase<Derived2> &>(J_phi);
+
+    Scalar phi_norm2 = phi.squaredNorm();
+    Eigen::Matrix<Scalar, 3, 3> phi_hat = Hat(phi);
+    Eigen::Matrix<Scalar, 3, 3> phi_hat2 = phi_hat * phi_hat;
+
+    J.setIdentity();
+
+    if (phi_norm2 > Constants<Scalar>::Epsilon()) {
+        Scalar phi_norm = std::sqrt(phi_norm2);
+        Scalar phi_norm3 = phi_norm2 * phi_norm;
+
+        J -= phi_hat * (1 - std::cos(phi_norm)) / phi_norm2;
+        J += phi_hat2 * (phi_norm - std::sin(phi_norm)) / phi_norm3;
+    } else {
+        // Taylor expansion around 0
+        J -= phi_hat / 2;
+        J += phi_hat2 / 6;
+    }
+}
+
+template <typename Derived1, typename Derived2>
+inline void rightJacobianInvSO3(const Eigen::MatrixBase<Derived1> &phi,
+                                const Eigen::MatrixBase<Derived2> &J_phi) {
+    EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived1);
+    EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived2);
+    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived1, 3);
+    EIGEN_STATIC_ASSERT_MATRIX_SPECIFIC_SIZE(Derived2, 3, 3);
+
+    using Scalar = typename Derived1::Scalar;
+
+    Eigen::MatrixBase<Derived2> &J =
+        const_cast<Eigen::MatrixBase<Derived2> &>(J_phi);
+
+    Scalar phi_norm2 = phi.squaredNorm();
+    Eigen::Matrix<Scalar, 3, 3> phi_hat = Hat(phi);
+    Eigen::Matrix<Scalar, 3, 3> phi_hat2 = phi_hat * phi_hat;
+
+    J.setIdentity();
+    J += phi_hat / 2;
+
+    if (phi_norm2 > Constants<Scalar>::Epsilon()) {
+        Scalar phi_norm = std::sqrt(phi_norm2);
+
+        // We require that the angle is in range [0, pi]. We check if we are close
+        // to pi and apply a Taylor expansion to scalar multiplier of phi_hat2.
+        // Technically, log(exp(phi)exp(epsilon)) is not continuous / differentiable
+        // at phi=pi, but we still aim to return a reasonable value for all valid
+        // inputs.
+
+        if (phi_norm < M_PI - Constants<Scalar>::EpsilonSqrt()) {
+            // regular case for range (0,pi)
+            J += phi_hat2 * (1 / phi_norm2 - (1 + std::cos(phi_norm)) /
+                                                 (2 * phi_norm * std::sin(phi_norm)));
+        } else {
+            // 0th-order Taylor expansion around pi
+            J += phi_hat2 / (M_PI * M_PI);
+        }
+    } else {
+        // Taylor expansion around 0
+        J += phi_hat2 / 12;
+    }
+}
+
+
+template <typename Derived1, typename Derived2>
+inline void leftJacobianSO3(const Eigen::MatrixBase<Derived1> &phi,
+                            const Eigen::MatrixBase<Derived2> &J_phi) {
+  EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived1);
+  EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived2);
+  EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived1, 3);
+  EIGEN_STATIC_ASSERT_MATRIX_SPECIFIC_SIZE(Derived2, 3, 3);
+
+  using Scalar = typename Derived1::Scalar;
+
+  Eigen::MatrixBase<Derived2> &J =
+      const_cast<Eigen::MatrixBase<Derived2> &>(J_phi);
+
+  Scalar phi_norm2 = phi.squaredNorm();
+  Eigen::Matrix<Scalar, 3, 3> phi_hat = Hat(phi);
+  Eigen::Matrix<Scalar, 3, 3> phi_hat2 = phi_hat * phi_hat;
+
+  J.setIdentity();
+
+  if (phi_norm2 > Constants<Scalar>::Epsilon()) {
+    Scalar phi_norm = std::sqrt(phi_norm2);
+    Scalar phi_norm3 = phi_norm2 * phi_norm;
+
+    J += phi_hat * (1 - std::cos(phi_norm)) / phi_norm2;
+    J += phi_hat2 * (phi_norm - std::sin(phi_norm)) / phi_norm3;
+  } else {
+    // Taylor expansion around 0
+    J += phi_hat / 2;
+    J += phi_hat2 / 6;
+  }
+}
+
+template <typename Derived1, typename Derived2>
+inline void leftJacobianInvSO3(const Eigen::MatrixBase<Derived1> &phi,
+                               const Eigen::MatrixBase<Derived2> &J_phi) {
+  EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived1);
+  EIGEN_STATIC_ASSERT_FIXED_SIZE(Derived2);
+  EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived1, 3);
+  EIGEN_STATIC_ASSERT_MATRIX_SPECIFIC_SIZE(Derived2, 3, 3);
+
+  using Scalar = typename Derived1::Scalar;
+
+  Eigen::MatrixBase<Derived2> &J =
+      const_cast<Eigen::MatrixBase<Derived2> &>(J_phi);
+
+  Scalar phi_norm2 = phi.squaredNorm();
+  Eigen::Matrix<Scalar, 3, 3> phi_hat = Hat(phi);
+  Eigen::Matrix<Scalar, 3, 3> phi_hat2 = phi_hat * phi_hat;
+
+  J.setIdentity();
+  J -= phi_hat / 2;
+
+  if (phi_norm2 > Constants<Scalar>::Epsilon()) {
+    Scalar phi_norm = std::sqrt(phi_norm2);
+
+    // We require that the angle is in range [0, pi]. We check if we are close
+    // to pi and apply a Taylor expansion to scalar multiplier of phi_hat2.
+    // Technically, log(exp(phi)exp(epsilon)) is not continuous / differentiable
+    // at phi=pi, but we still aim to return a reasonable value for all valid
+    // inputs.
+
+    if (phi_norm < M_PI - Constants<Scalar>::EpsilonSqrt()) {
+      // regular case for range (0,pi)
+      J += phi_hat2 * (1 / phi_norm2 - (1 + std::cos(phi_norm)) /
+                                           (2 * phi_norm * std::sin(phi_norm)));
+    } else {
+      // 0th-order Taylor expansion around pi
+      J += phi_hat2 / (M_PI * M_PI);
+    }
+  } else {
+    // Taylor expansion around 0
+    J += phi_hat2 / 12;
+  }
 }
 
 
