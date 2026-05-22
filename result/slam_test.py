@@ -175,7 +175,12 @@ class SLAMTestRunner:
         print(f"Building project (jobs={self.build_jobs}) ...")
         try:
             subprocess.run(
-                ["make", "-C", self.build_dir, "-j", str(self.build_jobs)],
+                ["make",
+                 "-C", self.build_dir,
+                 "run_mapping_offline",
+                 "run_mapping_online",
+                 "lvba",
+                 "-j", str(self.build_jobs)],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
