@@ -57,7 +57,8 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
 
         omega_mid = 0.5 * (head.angular_velocity + tail.angular_velocity);
         acc_mid = 0.5 * (head.linear_acceleration + tail.linear_acceleration);
-        // acc_avr = acc_avr * G_m_s2 / mean_acc_.norm();
+        // in case the acc is measured in normalized unit.
+        acc_mid = acc_mid * GRAVITY_NORM / mean_acc_.norm();
         if (head.timestamp < last_lidar_end_time_) {
             dt = tail.timestamp - last_lidar_end_time_;
         } else {
@@ -142,16 +143,19 @@ void ImuProcess::InertialInitialize(const MeasureGroup &meas, StatePoint &state_
     last_imu_ = meas.imu_.back();
     if (imu_accu_count > MAX_INI_COUNT) {
         // init_state.gravity = S2(-mean_acc_.normalized() * GRAVITY_NORM);
+        state_point.rot = Eigen::Quaterniond::Identity();
+        state_point.pos = Vec3::Zero();
+        state_point.vel_end = Vec3::Zero();
         state_point.gravity = -mean_acc_ / mean_acc_.norm() * GRAVITY_NORM;
         state_point.bias_g = mean_gyr_;
-
+        state_point.bias_a = Vec3::Zero();
         StatePoint::MatrixN init_P = StatePoint::MatrixN::Identity();
         init_P.block<3, 3>(StatePoint::ROT, StatePoint::ROT) = Mat3::Identity() * 1e-3;
         init_P.block<3, 3>(StatePoint::POS, StatePoint::POS) = Mat3::Identity() * 1e-6;
         init_P.block<3, 3>(StatePoint::VEL, StatePoint::VEL) = Mat3::Identity() * 1e-5;
         init_P.block<3, 3>(StatePoint::BIAS_G, StatePoint::BIAS_G) = Mat3::Identity() * 1e-5;
         init_P.block<3, 3>(StatePoint::BIAS_A, StatePoint::BIAS_A) = Mat3::Identity() * 1e-5;
-        init_P.block<2, 2>(StatePoint::GRAVITY, StatePoint::GRAVITY) = Mat2::Identity() * 1e-4;
+        init_P.block<3, 3>(StatePoint::GRAVITY, StatePoint::GRAVITY) = Mat3::Identity() * 1e-4;
         state_point.cov = init_P;
         inertial_initialized = true;
         LOG(INFO) << "IMU Initial Done";
