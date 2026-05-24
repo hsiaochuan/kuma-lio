@@ -140,9 +140,9 @@ void ImuProcess::InertialInitialize(const MeasureGroup &meas, StatePoint &state_
     /// The very first lidar frame
     AccuImu(meas);
     last_imu_ = meas.imu_.back();
+    state_point_->timestamp = meas.end_time_;
     if (imu_accu_count > MAX_INI_COUNT) {
         // init_state.gravity = S2(-mean_acc_.normalized() * GRAVITY_NORM);
-        state_point_->timestamp = meas.end_time_;
         state_point.rot = Eigen::Quaterniond::Identity();
         state_point.pos = Vec3::Zero();
         state_point.vel_end = Vec3::Zero();
