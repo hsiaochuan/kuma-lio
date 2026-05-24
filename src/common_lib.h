@@ -148,7 +148,7 @@ inline Mat3 RotationFromArray(const std::vector<double> &v) {
 /// sync imu and lidar measurements
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
-    double end_time_ = 0;
+    double end_time_ = std::numeric_limits<double>::quiet_NaN();
     cv::Mat img_;
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;

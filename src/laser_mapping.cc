@@ -112,7 +112,7 @@ void LaserMapping::Run() {
 void LaserMapping::PostUpdate() {
     // save to trajectory
     Pose3 body_pose = Pose3(state_point_->rot, state_point_->pos);
-    trajectory_.emplace_back(end_time_, body_pose.Isometry3d());
+    trajectory_.emplace_back(state_point_->timestamp, body_pose.Isometry3d());
 
     // add scan frame to global optimize
     static scan_t scan_id = 1;
@@ -192,47 +192,46 @@ bool LaserMapping::SyncPackages() {
         return false;
 
     // set the measure end timestamp
-    if (std::isnan(end_time_)) {
+    if (std::isnan(state_point_->timestamp)) {
         // for first time
         if (param->camera_enable_) {
-            end_time_ = image_buffer_.front().timestamp_;
+            measures_.end_time_ = image_buffer_.front().timestamp_;
             measures_.img_ = image_buffer_.front().image_data_;
             image_buffer_.pop_front();
         } else
-            end_time_ = points_buffer_.front().timestamp + param->scan_interval_;
-    } else if (measures_.end_time_ == end_time_) {
+            measures_.end_time_ = points_buffer_.front().timestamp + param->scan_interval_;
+    } else if (measures_.end_time_ == state_point_->timestamp) {
         // after the update, incre the end time
         if (param->camera_enable_) {
-            end_time_ = image_buffer_.front().timestamp_;
+            measures_.end_time_ = image_buffer_.front().timestamp_;
             measures_.img_ = image_buffer_.front().image_data_;
             image_buffer_.pop_front();
         } else
-            end_time_ = end_time_ + param->scan_interval_;
+            measures_.end_time_ = measures_.end_time_ + param->scan_interval_;
     } else {
         // the measure is not synced, no need to set the lidar end time
-        end_time_ = end_time_;
+        measures_.end_time_ = measures_.end_time_;
     }
 
     if (param->imu_enable_)
-        if (imu_buffer_.back().timestamp < end_time_)
+        if (imu_buffer_.back().timestamp < measures_.end_time_)
             return false;
-    if (points_buffer_.back().timestamp < end_time_) return false;
+    if (points_buffer_.back().timestamp < measures_.end_time_) return false;
 
     // push the imu data
     measures_.imu_.clear();
-    while (!imu_buffer_.empty() && imu_buffer_.front().timestamp < end_time_) {
+    while (!imu_buffer_.empty() && imu_buffer_.front().timestamp < measures_.end_time_) {
         measures_.imu_.emplace_back(imu_buffer_.front());
         imu_buffer_.pop_front();
     }
 
     // push the lidar points
     measures_.lidar_->clear();
-    while (!points_buffer_.empty() && points_buffer_.front().timestamp < end_time_) {
+    while (!points_buffer_.empty() && points_buffer_.front().timestamp < measures_.end_time_) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
     }
 
-    measures_.end_time_ = end_time_;
     if (measures_.lidar_->empty() ||
         (param->imu_enable_ && measures_.imu_.empty())) {
         std::cout << "Empty lidar or imu data, skip this measure" << std::endl;

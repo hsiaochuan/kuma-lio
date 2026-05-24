@@ -21,7 +21,7 @@ struct StatePoint {
         GRAVITY = 15,
     };
     StatePoint() {
-        timestamp = -1.0;
+        timestamp = std::numeric_limits<double>::quiet_NaN();
         this->rot = Eigen::Quaterniond::Identity();
         this->pos = Vec3::Zero();
         this->vel_end = Vec3::Zero();
