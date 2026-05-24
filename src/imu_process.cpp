@@ -33,13 +33,12 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
     /*** add the imu_ of the last frame-tail to the of current frame-head ***/
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
-    const double &imu_end_time = v_imu.back().timestamp;
-    const double &pcl_end_time = meas.end_time_;
-
+    const double &last_imu_time = v_imu.back().timestamp;
+    double last_end_time = state_point_->timestamp;
     /*** Initialize IMU pose ***/
     StatePoint imu_state = state;
     imu_poses_.clear();
-    imu_poses_.emplace_back(last_lidar_end_time_, imu_state.pos, imu_state.vel_end, acc_last,
+    imu_poses_.emplace_back(last_end_time, imu_state.pos, imu_state.vel_end, acc_last,
                             imu_state.rot.toRotationMatrix(), omega_last);
 
     /*** forward propagation at each imu_ point ***/
@@ -51,7 +50,7 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
         auto &&head = *(it_imu);
         auto &&tail = *(it_imu + 1);
 
-        if (tail.timestamp < last_lidar_end_time_) {
+        if (tail.timestamp < last_end_time) {
             continue;
         }
 
@@ -59,8 +58,8 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
         acc_mid = 0.5 * (head.linear_acceleration + tail.linear_acceleration);
         // in case the acc is measured in normalized unit.
         acc_mid = acc_mid * GRAVITY_NORM / mean_acc_.norm();
-        if (head.timestamp < last_lidar_end_time_) {
-            dt = tail.timestamp - last_lidar_end_time_;
+        if (head.timestamp < last_end_time) {
+            dt = tail.timestamp - last_end_time;
         } else {
             dt = tail.timestamp - head.timestamp;
         }
@@ -85,11 +84,11 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
     }
 
     /*** calculated the pos and attitude prediction at the frame-end ***/
-    double note = pcl_end_time > imu_end_time ? 1.0 : -1.0;
-    dt = note * (pcl_end_time - imu_end_time);
+    double note = meas.end_time_ > last_imu_time ? 1.0 : -1.0;
+    dt = note * (meas.end_time_ - last_imu_time);
     IESKF::Predict(dt, Q_, in, *state_point_);
+    state_point_->timestamp = meas.end_time_;
     last_imu_ = meas.imu_.back();
-    last_lidar_end_time_ = pcl_end_time;
 }
 void ImuProcess::PredictConstVel(const MeasureGroup &meas) {
     double dt = 0.1;
@@ -180,6 +179,7 @@ void ImuProcess::InertialInitialize(const MeasureGroup &meas, StatePoint &state_
     /// The very first lidar frame
     AccuImu(meas);
     last_imu_ = meas.imu_.back();
+    state_point_->timestamp = meas.end_time_;
     if (imu_accu_count > MAX_INI_COUNT) {
         // init_state.gravity = S2(-mean_acc_.normalized() * GRAVITY_NORM);
         state_point.rot = Eigen::Quaterniond::Identity();

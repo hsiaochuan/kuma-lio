@@ -55,7 +55,6 @@ class ImuProcess {
     Vec3 omega_last = Vec3::Zero();
     Vec3 acc_last = Vec3::Zero();
 
-    double last_lidar_end_time_ = 0;
     int imu_accu_count = 0;
     bool inertial_initialized = false;
     std::shared_ptr<StatePoint> state_point_;
