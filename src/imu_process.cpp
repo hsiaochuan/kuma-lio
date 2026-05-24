@@ -91,6 +91,45 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
     last_imu_ = meas.imu_.back();
     last_lidar_end_time_ = pcl_end_time;
 }
+void ImuProcess::PredictConstVel(const MeasureGroup &meas) {
+    double dt = 0.1;
+    StatePoint::MatrixN F = StatePoint::MatrixN::Identity();
+    StatePoint::MatrixN cov_w = StatePoint::MatrixN::Zero();
+
+    // in CV model, the bias g represent the omega
+    F.block<3, 3>(StatePoint::ROT, StatePoint::ROT) = ExpMat(state_point_->bias_g * (-dt));
+    F.block<3, 3>(StatePoint::ROT, StatePoint::BIAS_G) = Mat3::Identity() * dt;
+    F.block<3, 3>(StatePoint::POS, StatePoint::VEL) = Mat3::Identity() * dt;
+
+    cov_w.block<3, 3>(StatePoint::BIAS_G, StatePoint::BIAS_G).diagonal() = cov_gyr_ * dt * dt;
+    cov_w.block<3, 3>(StatePoint::VEL, StatePoint::VEL).diagonal() = cov_acc_ * dt * dt;
+
+    state_point_->cov = F * state_point_->cov * F.transpose() + cov_w;
+    state_point_->rot = (state_point_->rot * ExpQuat(state_point_->bias_g * dt)).normalized();
+    state_point_->pos += state_point_->vel_end * dt;
+}
+void ImuProcess::UndistortPointsConstVel(PointCloud::Ptr &distort_points, PointCloud &undistort_points) {
+    undistort_points = *distort_points;
+    std::sort(undistort_points.points.begin(), undistort_points.points.end(),
+              [](const faster_lio::Point &x, const faster_lio::Point &y) { return (x.timestamp < y.timestamp); });
+
+    if (undistort_points.points.empty()) return;
+
+    double end_time = undistort_points.points.back().timestamp;
+    auto it_k = undistort_points.points.end() - 1;
+    for (; it_k != undistort_points.points.begin(); it_k--) {
+        double dt = end_time - it_k->timestamp;
+        Mat3 R_ek(ExpMat(state_point_->bias_g * (-dt)));
+        Vec3 Pk(it_k->x, it_k->y, it_k->z);
+        Vec3 p_ek = -state_point_->rot.toRotationMatrix().transpose() * state_point_->vel_end * dt;
+
+        Vec3 P_e = R_ek * Pk + p_ek;
+
+        it_k->x = P_e(0);
+        it_k->y = P_e(1);
+        it_k->z = P_e(2);
+    }
+}
 void ImuProcess::UndistortPoints(StatePoint &state_point, PointCloud::Ptr distort_points, PointCloud &undistort_points) {
     undistort_points = *distort_points;
     std::sort(undistort_points.points.begin(), undistort_points.points.end(),
@@ -160,4 +199,23 @@ void ImuProcess::InertialInitialize(const MeasureGroup &meas, StatePoint &state_
         inertial_initialized = true;
         LOG(INFO) << "IMU Initial Done";
     }
+}
+void ImuProcess::Initialize(StatePoint &state_point) {
+    state_point.rot = Eigen::Quaterniond::Identity();
+    state_point.pos = Vec3::Zero();
+    state_point.vel_end = Vec3::Zero();
+    state_point.gravity = Vec3::Zero();
+    state_point.bias_g = Vec3::Zero();
+    state_point.bias_a = Vec3::Zero();
+
+    StatePoint::MatrixN init_P = StatePoint::MatrixN::Zero();
+    init_P.block<3, 3>(StatePoint::ROT, StatePoint::ROT) = Mat3::Identity() * 1e-3;
+    init_P.block<3, 3>(StatePoint::POS, StatePoint::POS) = Mat3::Identity() * 1e-6;
+    init_P.block<3, 3>(StatePoint::VEL, StatePoint::VEL) = Mat3::Identity() * 1e-5;
+    init_P.block<3, 3>(StatePoint::BIAS_G, StatePoint::BIAS_G) = Mat3::Identity() * 1e-5;
+    init_P.block<3, 3>(StatePoint::BIAS_A, StatePoint::BIAS_A) = Mat3::Identity() * 1e-5;
+    init_P.block<3, 3>(StatePoint::GRAVITY, StatePoint::GRAVITY) = Mat3::Identity() * 1e-4;
+    state_point.cov = init_P;
+    inertial_initialized = true;
+    LOG(INFO) << "No IMU Initial Done";
 }

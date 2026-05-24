@@ -518,7 +518,16 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2, urban_loco]
+
+    li_init = DatasetConfig(
+        name="li_init",
+        config="../config/li_init.yaml",
+        bag_files=[
+            "/home/hsiaochuan/Downloads/avia_apartment.bag",
+        ],
+        run_mode=RunMode.ONLINE,
+    )
+    all_datasets = [li_init, botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2, urban_loco]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
@@ -527,7 +536,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022", "urban_loco"],
+                        default=["li_init"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")

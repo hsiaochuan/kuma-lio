@@ -44,20 +44,29 @@ void LaserMapping::Run() {
         return;
     }
 
-    if (!param->imu_enable_)
-        throw std::runtime_error("disable the imu is not support");
-
     /// IMU process, kf prediction, undistortion
     PointCloud::Ptr scan_body(new PointCloud);
-    pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
+    if (param->imu_enable_)
+        pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
+    else
+        *scan_body = *measures_.lidar_;
+
     if (!p_imu_->inertial_initialized) {
-        p_imu_->InertialInitialize(measures_, *state_point_);
+        if (param->imu_enable_)
+            p_imu_->InertialInitialize(measures_, *state_point_);
+        else
+            p_imu_->Initialize(*state_point_);
         return;
     }
 
     Timer::Evaluate([&, this]() {
-        p_imu_->Predict(measures_, *state_point_);
-        p_imu_->UndistortPoints(*state_point_, scan_body, *scan_undistort_);
+        if (param->imu_enable_) {
+            p_imu_->Predict(measures_, *state_point_);
+            p_imu_->UndistortPoints(*state_point_, scan_body, *scan_undistort_);
+        }else {
+            p_imu_->PredictConstVel(measures_);
+            p_imu_->UndistortPointsConstVel(scan_body, *scan_undistort_);
+        }
     }, "Undistort Pcl");
 
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {
