@@ -49,7 +49,6 @@ class LaserMappingParam {
     double b_acc_cov;
 
     // output
-    bool path_save_en_ = false;
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;
     int pcd_save_interval_ = -1;
@@ -57,7 +56,6 @@ class LaserMappingParam {
     bool LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
         try {
-            path_save_en_ = yaml["path_save_en"].as<bool>();
             max_iteraions = yaml["max_iteration"].as<int>();
             esti_plane_thr = yaml["esti_plane_threshold"].as<float>();
             scan_filter_size = yaml["scan_filter_size"].as<float>();

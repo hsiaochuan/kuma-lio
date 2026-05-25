@@ -17,17 +17,13 @@ mapping:
   gyr_cov:       5.0e-3
   b_acc_cov:     8.0e-5
   b_gyr_cov:     3.0e-6
-  fov_degree:    360
   det_range:     100.0
   extrin_t_il: [ 0, 0, -0.28 ]
   extrin_R_il: [ 2.67949e-08, -1, 0, 1, 2.67949e-08, 0, 0, 0, 1 ]
 
-path_save_en: true                 # 保存轨迹，用于精度计算和比较
-
 pcd_save:
   pcd_save_en: true
-  interval: 500                 # how many LiDAR frames saved in each pcd file;
-  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+  interval: 500
 
 image_save_en: true
 
