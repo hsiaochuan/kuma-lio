@@ -55,7 +55,7 @@ void LaserMapping::Run() {
         if (param->imu_enable_)
             p_imu_->InertialInitialize(measures_, *state_point_);
         else
-            p_imu_->Initialize(*state_point_);
+            p_imu_->Initialize(measures_, *state_point_);
         return;
     }
 

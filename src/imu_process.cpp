@@ -91,7 +91,7 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
     last_imu_ = meas.imu_.back();
 }
 void ImuProcess::PredictConstVel(const MeasureGroup &meas) {
-    double dt = 0.1;
+    double dt = meas.end_time_ - state_point_->timestamp;
     StatePoint::MatrixN F = StatePoint::MatrixN::Identity();
     StatePoint::MatrixN cov_w = StatePoint::MatrixN::Zero();
 
@@ -106,6 +106,7 @@ void ImuProcess::PredictConstVel(const MeasureGroup &meas) {
     state_point_->cov = F * state_point_->cov * F.transpose() + cov_w;
     state_point_->rot = (state_point_->rot * ExpQuat(state_point_->bias_g * dt)).normalized();
     state_point_->pos += state_point_->vel_end * dt;
+    state_point_->timestamp = meas.end_time_;
 }
 void ImuProcess::UndistortPointsConstVel(PointCloud::Ptr &distort_points, PointCloud &undistort_points) {
     undistort_points = *distort_points;
@@ -200,7 +201,8 @@ void ImuProcess::InertialInitialize(const MeasureGroup &meas, StatePoint &state_
         LOG(INFO) << "IMU Initial Done";
     }
 }
-void ImuProcess::Initialize(StatePoint &state_point) {
+void ImuProcess::Initialize(const MeasureGroup &meas,StatePoint &state_point) {
+    state_point.timestamp = meas.end_time_;
     state_point.rot = Eigen::Quaterniond::Identity();
     state_point.pos = Vec3::Zero();
     state_point.vel_end = Vec3::Zero();

@@ -32,7 +32,7 @@ class ImuProcess {
 
     void SetExtrinsic(const Vec3 &transl, const Mat3 &rot);
     void InertialInitialize(const MeasureGroup &meas, StatePoint &state_point);
-    void Initialize(StatePoint &state_point);
+    void Initialize(const MeasureGroup &meas, StatePoint &state_point);
     Eigen::Matrix<double, 12, 12> Q_;
     Vec3 cov_acc_;
     Vec3 cov_gyr_;
