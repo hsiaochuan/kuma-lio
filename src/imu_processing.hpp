@@ -40,13 +40,11 @@ class ImuProcess {
     Vec3 cov_bias_acc_;
 
     void AccuImu(const MeasureGroup &meas);
-    void Predict(const MeasureGroup &meas, StatePoint &state);
+    void Predict(const MeasureGroup &meas);
     void UndistortPoints(StatePoint &state_point, PointCloud::Ptr distort_points, PointCloud &undistort_points);
     Imu last_imu_;
-    std::vector<PoseWithVel> imu_poses_;
+    std::vector<PoseWithVel> predict_states_;
 
-    Mat3 Lidar_R_wrt_IMU_ = Mat3::Identity();
-    Vec3 Lidar_T_wrt_IMU_ = Vec3::Zero();
     Vec3 mean_acc_ = Vec3::Zero();
     Vec3 mean_gyr_ = Vec3::Zero();
 

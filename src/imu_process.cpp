@@ -1,14 +1,9 @@
 #include "imu_processing.hpp"
 #include "utils.h"
 using namespace faster_lio;
-ImuProcess::ImuProcess() { Q_.setIdentity(); }
+ImuProcess::ImuProcess() = default;
 
-ImuProcess::~ImuProcess() {}
-
-void ImuProcess::SetExtrinsic(const Vec3 &transl, const Mat3 &rot) {
-    Lidar_T_wrt_IMU_ = transl;
-    Lidar_R_wrt_IMU_ = rot;
-}
+ImuProcess::~ImuProcess() = default;
 
 void ImuProcess::AccuImu(const MeasureGroup &meas) {
     /** 1. initializing the gravity_, gyro bias, acc and gyro covariance
@@ -28,44 +23,48 @@ void ImuProcess::AccuImu(const MeasureGroup &meas) {
     }
 }
 
-
-void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
-    /*** add the imu_ of the last frame-tail to the of current frame-head ***/
-    auto v_imu = meas.imu_;
-    v_imu.push_front(last_imu_);
-    const double &last_imu_time = v_imu.back().timestamp;
-    double last_end_time = state_point_->timestamp;
-    /*** Initialize IMU pose ***/
-    StatePoint imu_state = state;
-    imu_poses_.clear();
-    imu_poses_.emplace_back(last_end_time, imu_state.pos, imu_state.vel_end, acc_last,
-                            imu_state.rot.toRotationMatrix(), omega_last);
+void ImuProcess::Predict(const MeasureGroup &meas) {
+    CHECK(!meas.imu_.empty());
+    double last_end = state_point_->timestamp;
+    auto imu_meas = meas.imu_;
+    if (std::isnan(last_imu_.timestamp)) {
+        imu_meas.push_front(meas.imu_.front());
+        imu_meas.front().timestamp = last_end;
+    } else {
+        CHECK(last_imu_.timestamp <= last_end);
+        imu_meas.push_front(last_imu_);
+    }
+    // first imu ------- last end ------- second imu ----------- last imu ----------- meas end
+    predict_states_.clear();
+    predict_states_.emplace_back(state_point_->timestamp, state_point_->pos, state_point_->vel_end, acc_last,
+                                 state_point_->rot.toRotationMatrix(), omega_last);
 
     /*** forward propagation at each imu_ point ***/
     Vec3 omega_mid, acc_mid;
     double dt = 0;
 
     ImuInput in;
-    for (auto it_imu = v_imu.begin(); it_imu < (v_imu.end() - 1); it_imu++) {
-        auto &&head = *(it_imu);
-        auto &&tail = *(it_imu + 1);
+    for (int i = 0; i < imu_meas.size() - 1; i++) {
+        Imu &head = imu_meas[i];
+        Imu &tail = imu_meas[i + 1];
 
-        if (tail.timestamp < last_end_time) {
-            continue;
-        }
+        CHECK(tail.timestamp > last_end);
 
         omega_mid = 0.5 * (head.angular_velocity + tail.angular_velocity);
         acc_mid = 0.5 * (head.linear_acceleration + tail.linear_acceleration);
         // in case the acc is measured in normalized unit.
         acc_mid = acc_mid * GRAVITY_NORM / mean_acc_.norm();
-        if (head.timestamp < last_end_time) {
-            dt = tail.timestamp - last_end_time;
+
+        // the first imu is before the last end
+        if (head.timestamp < last_end) {
+            dt = tail.timestamp - last_end;
         } else {
             dt = tail.timestamp - head.timestamp;
         }
 
         in.acc = acc_mid;
         in.gyro = omega_mid;
+        Q_.setIdentity();
         Q_.block<3, 3>(0, 0).diagonal() = cov_gyr_;
         Q_.block<3, 3>(3, 3).diagonal() = cov_acc_;
         Q_.block<3, 3>(6, 6).diagonal() = cov_bias_gyr_;
@@ -73,29 +72,28 @@ void ImuProcess::Predict(const MeasureGroup &meas, StatePoint &state) {
         IESKF::Predict(dt, Q_, in, *state_point_);
 
         /* save the poses at each IMU measurements */
-        imu_state = *state_point_;
-        omega_last = omega_mid - imu_state.bias_g;
-        acc_last = imu_state.rot * (acc_mid - imu_state.bias_a);
-        acc_last += imu_state.gravity;
+        omega_last = omega_mid - state_point_->bias_g;
+        acc_last = state_point_->rot * (acc_mid - state_point_->bias_a) + state_point_->gravity;
 
-
-        imu_poses_.emplace_back(tail.timestamp, imu_state.pos, imu_state.vel_end, acc_last,
-                                imu_state.rot.toRotationMatrix(), omega_last);
+        predict_states_.emplace_back(tail.timestamp, state_point_->pos, state_point_->vel_end, acc_last,
+                                     state_point_->rot.toRotationMatrix(), omega_last);
     }
 
     /*** calculated the pos and attitude prediction at the frame-end ***/
-    double note = meas.end_time_ > last_imu_time ? 1.0 : -1.0;
-    dt = note * (meas.end_time_ - last_imu_time);
+    CHECK(imu_meas.back().timestamp < meas.end_time_);
+
+    dt = meas.end_time_ - imu_meas.back().timestamp;
     IESKF::Predict(dt, Q_, in, *state_point_);
     state_point_->timestamp = meas.end_time_;
     last_imu_ = meas.imu_.back();
 }
-void ImuProcess::UndistortPoints(StatePoint &state_point, PointCloud::Ptr distort_points, PointCloud &undistort_points) {
+void ImuProcess::UndistortPoints(StatePoint &state_point, PointCloud::Ptr distort_points,
+                                 PointCloud &undistort_points) {
     undistort_points = *distort_points;
     std::sort(undistort_points.points.begin(), undistort_points.points.end(),
-          [](const faster_lio::Point &x, const faster_lio::Point &y) { return (x.timestamp < y.timestamp); });
+              [](const faster_lio::Point &x, const faster_lio::Point &y) { return (x.timestamp < y.timestamp); });
     Mat3 R_i;
-    Vec3 vel_i, pos_i, acc_i,omega_i;
+    Vec3 vel_i, pos_i, acc_i, omega_i;
     double dt;
     /*** undistort each lidar point (backward propagation) ***/
     if (undistort_points.points.empty()) {
@@ -104,7 +102,7 @@ void ImuProcess::UndistortPoints(StatePoint &state_point, PointCloud::Ptr distor
     auto it_k = undistort_points.points.end() - 1;
 
     Pose3 body_world_end = Pose3(state_point.rot, state_point.pos).GetInverse();
-    for (auto imu_i = imu_poses_.end() - 1; imu_i != imu_poses_.begin(); imu_i--) {
+    for (auto imu_i = predict_states_.end() - 1; imu_i != predict_states_.begin(); imu_i--) {
         auto head = imu_i - 1;
         auto tail = imu_i;
         R_i = head->rot;

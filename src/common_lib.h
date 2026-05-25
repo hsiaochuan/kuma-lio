@@ -78,7 +78,7 @@ inline void U32ToRGB(uint32_t color, uint8_t &r, uint8_t &g, uint8_t &b) {
 }
 struct Imu {
     using Ptr = std::shared_ptr<Imu>;
-    double timestamp;
+    double timestamp = std::numeric_limits<double>::quiet_NaN();
     Eigen::Vector3d linear_acceleration;
     Eigen::Vector3d angular_velocity;
     Eigen::Vector3d orientation;

@@ -56,7 +56,7 @@ void LaserMapping::Run() {
     }
 
     Timer::Evaluate([&, this]() {
-        p_imu_->Predict(measures_, *state_point_);
+        p_imu_->Predict(measures_);
         p_imu_->UndistortPoints(*state_point_, scan_body, *scan_undistort_);
     }, "Undistort Pcl");
 
