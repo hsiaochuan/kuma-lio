@@ -332,7 +332,8 @@ def main():
     if args.skip < 0:
         print("[ERROR] --skip cannot be negative")
         sys.exit(1)
-
+    if args.output_dir is None:
+        args.output_dir = os.path.dirname(args.bag_file) + "_extracted"
     os.makedirs(args.output_dir, exist_ok=True)
 
     extract_images(
