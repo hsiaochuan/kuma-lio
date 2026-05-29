@@ -82,10 +82,9 @@ void LaserMapping::PublishFrameEffectWorld() {
     PointCloud::Ptr laser_cloud(new PointCloud);
     laser_cloud->resize(eff_num_);
     int j =0;
-    for (int i = 0; i < eff_num_; i++) {
+    for (int i = 0; i < scan_down_world_->size(); i++) {
         if (eff_mask_[i]) {
-            laser_cloud->at(j).getVector3fMap() =
-                (state_point_->rot * scan_down_body_->at(i).getVector3fMap().cast<double>() + state_point_->pos).cast<float>();
+            laser_cloud->points[j] = scan_down_world_->points[i];
             j++;
         }
     }

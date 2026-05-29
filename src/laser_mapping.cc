@@ -369,6 +369,8 @@ static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector
 bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &obs) {
     eff_mask_.resize(scan_down_body_->size(), false);
     nearest_points_.resize(scan_down_body_->size());
+    std::fill(eff_mask_.begin(), eff_mask_.end(), false);
+    std::fill(nearest_points_.begin(), nearest_points_.end(), PointVector());
     std::vector<Vec4f> plane_coeffs(scan_down_body_->size());
     std::vector<float> residuals_(scan_down_body_->size(), 0.0);
     std::vector<size_t> index(scan_down_body_->size());
@@ -385,9 +387,9 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
                 Point &point_body = scan_down_body_->points[i];
                 Point &point_world = scan_down_world_->points[i];
 
-                auto &points_near = nearest_points_[i];
 
                 /** Find the closest surfaces in the map **/
+                auto &points_near = nearest_points_[i];
                 points_near.clear();
                 ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
                 eff_mask_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
@@ -397,14 +399,11 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
 
 
                 if (eff_mask_[i]) {
-                    auto temp = point_world.getVector4fMap();
-                    temp[3] = 1.0;
-                    float pd2 = plane_coeffs[i].dot(temp);
-
-                    bool valid_corr = point_body.getVector3fMap().norm() > 81 * pd2 * pd2;
+                    float residual = plane_coeffs[i].dot(point_world.getVector3fMap().homogeneous());
+                    bool valid_corr = point_body.getVector3fMap().norm() > 81 * residual * residual;
                     if (valid_corr) {
                         eff_mask_[i] = true;
-                        residuals_[i] = pd2;
+                        residuals_[i] = residual;
                     } else {
                         eff_mask_[i] = false;
                     }

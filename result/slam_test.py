@@ -232,7 +232,7 @@ class SLAMTestRunner:
             '--database', os.path.join(output_dir, "database.db"),
             '--colmap_output', os.path.join(output_dir, "colmap_result"),
         ], check=True)
-    def _run_online(self, bag_file: str, config: str, output_dir: str) -> bool:
+    def _run_online(self, bag_file: str, config: str, output_dir: str, start: float, duration: float) -> bool:
         roscore = rviz = online_proc = None
         try:
             roscore = subprocess.Popen(
@@ -250,7 +250,10 @@ class SLAMTestRunner:
                  "--config_fname", config]
             )
             subprocess.run(
-                ["rosbag", "play", bag_file],
+                ["rosbag", "play",
+                 "--start", str(start),
+                 "--duration", str(duration),
+                 bag_file],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 check=True,
             )
@@ -316,7 +319,7 @@ class SLAMTestRunner:
             if run_mode == RunMode.OFFLINE:
                 self._run_offline(bag_file, config, output_dir, start, duration)
             else:
-                self._run_online(bag_file, config, output_dir)
+                self._run_online(bag_file, config, output_dir, start, duration)
             self.run_time_analysis(os.path.join(output_dir, "time_log.txt"), os.path.join(output_dir, "time_cost_summ.txt"))
         if self.if_postprocess:
             self.run_post_process(output_dir)
