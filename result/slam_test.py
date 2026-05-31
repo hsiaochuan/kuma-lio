@@ -249,11 +249,15 @@ class SLAMTestRunner:
                  "--output_dir", output_dir,
                  "--config_fname", config]
             )
+            bag_play_command = [
+                "rosbag", "play",
+                "--start", str(start),
+                bag_file,
+            ]
+            if duration > 0:
+                bag_play_command += ["--duration", str(duration)]
             subprocess.run(
-                ["rosbag", "play",
-                 "--start", str(start),
-                 "--duration", str(duration),
-                 bag_file],
+                bag_play_command,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 check=True,
             )
