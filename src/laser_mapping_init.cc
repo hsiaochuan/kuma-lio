@@ -87,6 +87,8 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_effect_world", 100000);
     pub_odom_aft_mapped_ = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
+    if (param->camera_enable_)
+        pub_image_ = nh.advertise<sensor_msgs::Image>("/image_raw", 100000);
 }
 
 }  // namespace faster_lio

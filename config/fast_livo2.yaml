@@ -25,7 +25,7 @@ pcd_save:
   pcd_save_en: true
   interval: 500                 # how many LiDAR frames saved in each pcd file;
 
-image_save_en: true
+image_save_en: false
 
 point_filter_num: 1
 max_iteration: 3

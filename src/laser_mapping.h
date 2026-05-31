@@ -61,6 +61,7 @@ class LaserMapping {
     void PublishOdometry();
     void PublishFrameWorld() const;
     void PublishFrameEffectWorld();
+    void PublishImage();
     void Savetrajectory(const std::string &traj_file);
 
     void Finish();
@@ -92,6 +93,7 @@ class LaserMapping {
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
+    ros::Publisher pub_image_;
 
     double first_scan_time_ = std::numeric_limits<double>::quiet_NaN();
 

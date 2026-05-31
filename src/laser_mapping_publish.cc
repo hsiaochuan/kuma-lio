@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <pcl/io/pcd_io.h>
 #include <sstream>
-
+#include <cv_bridge/cv_bridge.h>
 #include "global_optimizor.h"
 #include "laser_mapping.h"
 
@@ -93,6 +93,16 @@ void LaserMapping::PublishFrameEffectWorld() {
     laserCloudmsg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
     laserCloudmsg.header.frame_id = "world";
     pub_laser_cloud_effect_world_.publish(laserCloudmsg);
+}
+void LaserMapping::PublishImage() {
+    if (!measures_.img_.empty()) {
+        cv_bridge::CvImage image_msg;
+        image_msg.header.stamp = ros::Time().fromSec(measures_.end_time_);
+        image_msg.header.frame_id = "world";
+        image_msg.encoding = "bgr8";
+        image_msg.image = measures_.img_;
+        pub_image_.publish(*image_msg.toImageMsg());
+    }
 }
 
 void LaserMapping::Savetrajectory(const std::string &traj_file) {

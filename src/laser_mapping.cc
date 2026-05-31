@@ -182,6 +182,8 @@ void LaserMapping::PublishROSMsg() {
         PublishOdometry();
     if (pub_laser_cloud_effect_world_)
         PublishFrameEffectWorld();
+    if (pub_image_)
+        PublishImage();
 }
 bool LaserMapping::SyncPackages() {
     if (points_buffer_.empty())
