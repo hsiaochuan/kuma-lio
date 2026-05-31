@@ -278,7 +278,6 @@ Examples:
     )
     parser.add_argument(
         "--output_dir",
-        default="/mnt/data/home/hsiaochuan/data/MCD_VIRAL/raw/camera/tuhh_day_04_d455t_extract",
         help="output root directory (will be created if missing)",
     )
     parser.add_argument(
@@ -333,7 +332,7 @@ def main():
         print("[ERROR] --skip cannot be negative")
         sys.exit(1)
     if args.output_dir is None:
-        args.output_dir = os.path.dirname(args.bag_file) + "_extracted"
+        args.output_dir = args.bag_file + "_extracted"
     os.makedirs(args.output_dir, exist_ok=True)
 
     extract_images(

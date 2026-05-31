@@ -525,7 +525,37 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2, urban_loco]
+
+    geocode = DatasetConfig(
+        name="geocode",
+        config="../config/geocode_alpha.yaml",
+        config_map={
+            "alpha": "../config/geocode_alpha.yaml",
+            "gamma": "../config/geocode_gamma.yaml",
+        },
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/geode/Offroad3_alpha.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Offroad3_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Offroad7_alpha.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Offroad7_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Shield_tunnel1_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Shield_tunnel2_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Shield_tunnel3_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/stairs_alpha.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/stairs_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel2_alpha.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel2_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel3_alpha.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel3_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel4_alpha.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel4_gamma.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Urban_Tunnel01.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Urban_Tunnel02.bag",
+            "/mnt/data/home/hsiaochuan/data/geode/Urban_Tunnel03.bag"
+        ],
+        run_mode=RunMode.OFFLINE,
+    )
+    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2, urban_loco, geocode]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
@@ -534,7 +564,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022", "urban_loco"],
+                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022", "urban_loco", "geocode"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
