@@ -68,14 +68,18 @@ void LaserMapping::PublishOdometry() {
 }
 
 void LaserMapping::PublishFrameWorld() const {
-    PointCloud::Ptr scan_world;
-    scan_world = scan_down_world_;
+    static int frame_id = 0;
+    if (frame_id % 3 == 0) {
+        PointCloud::Ptr scan_world;
+        scan_world = scan_down_world_;
 
-    sensor_msgs::PointCloud2 scan_msg;
-    pcl::toROSMsg(*scan_world, scan_msg);
-    scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
-    scan_msg.header.frame_id = "world";
-    pub_laser_cloud_world_.publish(scan_msg);
+        sensor_msgs::PointCloud2 scan_msg;
+        pcl::toROSMsg(*scan_world, scan_msg);
+        scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+        scan_msg.header.frame_id = "world";
+        pub_laser_cloud_world_.publish(scan_msg);
+    }
+    frame_id++;
 }
 
 void LaserMapping::PublishFrameEffectWorld() {
