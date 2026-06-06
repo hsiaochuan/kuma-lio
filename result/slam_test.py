@@ -463,7 +463,15 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-
+    mcd_viral_ouster = DatasetConfig(
+        name="mcd_viral_ouster",
+        config="../config/mcd_viral_ouster.yaml",
+        bag_files=[
+            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/raw/tuhh_night_09_os1_64.bag",
+            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/raw/ntu_day_02_os1_128.bag",
+        ],
+        run_mode=RunMode.ONLINE,
+    )
     new_college = DatasetConfig(
         name="new_college",
         config="../config/new_college.yaml",
@@ -555,7 +563,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [botanic_garden, mcd_viral, new_college, hilti_2022, fast_livo2, urban_loco, geocode]
+    all_datasets = [botanic_garden, mcd_viral, mcd_viral_ouster, new_college, hilti_2022, fast_livo2, urban_loco, geocode]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
@@ -564,7 +572,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral", "botanic_garden", "new_college", "fast_livo2", "hilti_2022", "urban_loco", "geocode"],
+                        default=["mcd_viral", "mcd_viral_ouster","botanic_garden", "new_college", "fast_livo2", "hilti_2022", "urban_loco", "geocode"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
