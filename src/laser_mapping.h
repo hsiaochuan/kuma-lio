@@ -10,6 +10,8 @@
 #include <sensor_msgs/CompressedImage.h>
 
 // Heavy dependencies are forward-declared below to reduce rebuilds.
+#include <rosbag/bag.h>
+
 #include "eskf.h"
 #include "global_optimizor.h"
 #include "imu_processing.hpp"
@@ -32,6 +34,7 @@ class LaserMapping {
         scan_down_body_ = nullptr;
         scan_undistort_ = nullptr;
         scan_down_world_ = nullptr;
+        bag_.close();
         LOG(INFO) << "laser mapping deconstruct";
     }
 
@@ -57,9 +60,8 @@ class LaserMapping {
     bool BuildLidarObservation(const StatePoint &s, LidarObservation &obs);
 
     ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
-    void PublishPath();
     void PublishOdometry();
-    void PublishFrameWorld() const;
+    void PublishFrameWorld();
     void PublishFrameEffectWorld();
     void PublishImage();
     void Savetrajectory(const std::string &traj_file);
@@ -118,6 +120,7 @@ class LaserMapping {
 
 
     std::shared_ptr<LaserMappingParam> param;
+    rosbag::Bag bag_;
    public:
     std::string output_dir;
 };

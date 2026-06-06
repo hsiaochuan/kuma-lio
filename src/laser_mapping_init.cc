@@ -89,6 +89,10 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
     if (param->camera_enable_)
         pub_image_ = nh.advertise<sensor_msgs::Image>("/image_raw", 100000);
+    bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
+    if (!bag_.isOpen()) {
+        throw std::runtime_error("Could not open bag");
+    }
 }
 
 }  // namespace faster_lio

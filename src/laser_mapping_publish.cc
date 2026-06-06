@@ -13,90 +13,92 @@ namespace fs = boost::filesystem;
 
 namespace faster_lio {
 
-void LaserMapping::PublishPath() {
-    geometry_msgs::PoseStamped msg_body_pose;
-    msg_body_pose.pose.position.x = state_point_->pos(0);
-    msg_body_pose.pose.position.y = state_point_->pos(1);
-    msg_body_pose.pose.position.z = state_point_->pos(2);
-    msg_body_pose.pose.orientation.x = state_point_->rot.coeffs()[0];
-    msg_body_pose.pose.orientation.y = state_point_->rot.coeffs()[1];
-    msg_body_pose.pose.orientation.z = state_point_->rot.coeffs()[2];
-    msg_body_pose.pose.orientation.w = state_point_->rot.coeffs()[3];
-    msg_body_pose.header.stamp = ros::Time().fromSec(state_point_->timestamp);
-    msg_body_pose.header.frame_id = "world";
-
-    /*** if path is too large, the rvis will crash ***/
-    path_.poses.push_back(msg_body_pose);
-    pub_path_.publish(path_);
-}
-
 void LaserMapping::PublishOdometry() {
-    nav_msgs::Odometry odom_aft_mapped;
-    odom_aft_mapped.header.frame_id = "world";
-    odom_aft_mapped.child_frame_id = "body";
-    odom_aft_mapped.header.stamp = ros::Time().fromSec(state_point_->timestamp);
-    odom_aft_mapped.pose.pose.position.x = state_point_->pos(0);
-    odom_aft_mapped.pose.pose.position.y = state_point_->pos(1);
-    odom_aft_mapped.pose.pose.position.z = state_point_->pos(2);
-    odom_aft_mapped.pose.pose.orientation.x = state_point_->rot.coeffs()[0];
-    odom_aft_mapped.pose.pose.orientation.y = state_point_->rot.coeffs()[1];
-    odom_aft_mapped.pose.pose.orientation.z = state_point_->rot.coeffs()[2];
-    odom_aft_mapped.pose.pose.orientation.w = state_point_->rot.coeffs()[3];
-    pub_odom_aft_mapped_.publish(odom_aft_mapped);
+    nav_msgs::Odometry body_odometry;
+    geometry_msgs::PoseStamped pose_stamped;
+    pose_stamped.pose.position.x = state_point_->pos(0);
+    pose_stamped.pose.position.y = state_point_->pos(1);
+    pose_stamped.pose.position.z = state_point_->pos(2);
+    pose_stamped.pose.orientation.x = state_point_->rot.coeffs()[0];
+    pose_stamped.pose.orientation.y = state_point_->rot.coeffs()[1];
+    pose_stamped.pose.orientation.z = state_point_->rot.coeffs()[2];
+    pose_stamped.pose.orientation.w = state_point_->rot.coeffs()[3];
+    pose_stamped.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    pose_stamped.header.frame_id = "world";
+
+    body_odometry.header.frame_id = "world";
+    body_odometry.child_frame_id = "body";
+    body_odometry.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    body_odometry.pose.pose = pose_stamped.pose;
     auto P = state_point_->cov;
     for (int i = 0; i < 6; i++) {
         int k = i < 3 ? i + 3 : i - 3;
-        odom_aft_mapped.pose.covariance[i * 6 + 0] = P(k, 3);
-        odom_aft_mapped.pose.covariance[i * 6 + 1] = P(k, 4);
-        odom_aft_mapped.pose.covariance[i * 6 + 2] = P(k, 5);
-        odom_aft_mapped.pose.covariance[i * 6 + 3] = P(k, 0);
-        odom_aft_mapped.pose.covariance[i * 6 + 4] = P(k, 1);
-        odom_aft_mapped.pose.covariance[i * 6 + 5] = P(k, 2);
+        body_odometry.pose.covariance[i * 6 + 0] = P(k, 3);
+        body_odometry.pose.covariance[i * 6 + 1] = P(k, 4);
+        body_odometry.pose.covariance[i * 6 + 2] = P(k, 5);
+        body_odometry.pose.covariance[i * 6 + 3] = P(k, 0);
+        body_odometry.pose.covariance[i * 6 + 4] = P(k, 1);
+        body_odometry.pose.covariance[i * 6 + 5] = P(k, 2);
     }
+    // publish
+    if (pub_odom_aft_mapped_)
+        pub_odom_aft_mapped_.publish(body_odometry);
+    path_.poses.push_back(pose_stamped);
+    if (pub_path_)
+        pub_path_.publish(path_);
+    if (bag_.isOpen())
+        bag_.write("/Odometry", ros::Time().fromSec(state_point_->timestamp), body_odometry);
+    if (bag_.isOpen())
+        bag_.write("/path", ros::Time().fromSec(state_point_->timestamp), path_);
 
-    static tf::TransformBroadcaster br;
-    tf::Transform transform;
-    tf::Quaternion q;
-    transform.setOrigin(tf::Vector3(odom_aft_mapped.pose.pose.position.x, odom_aft_mapped.pose.pose.position.y,
-                                    odom_aft_mapped.pose.pose.position.z));
-    q.setW(odom_aft_mapped.pose.pose.orientation.w);
-    q.setX(odom_aft_mapped.pose.pose.orientation.x);
-    q.setY(odom_aft_mapped.pose.pose.orientation.y);
-    q.setZ(odom_aft_mapped.pose.pose.orientation.z);
-    transform.setRotation(q);
-    br.sendTransform(tf::StampedTransform(transform, odom_aft_mapped.header.stamp, "world", "body"));
+    // transform broadcast
+    if (ros::isInitialized()) {
+        static tf::TransformBroadcaster br;
+        tf::Transform transform;
+        tf::Quaternion q;
+        tf::Vector3 t;
+        t.setX(state_point_->pos.x());
+        t.setY(state_point_->pos.y());
+        t.setZ(state_point_->pos.z());
+        q.setX(state_point_->rot.x());
+        q.setY(state_point_->rot.y());
+        q.setZ(state_point_->rot.z());
+        q.setW(state_point_->rot.w());
+        transform.setOrigin(t);
+        transform.setRotation(q);
+        br.sendTransform(tf::StampedTransform(transform, body_odometry.header.stamp, "world", "body"));
+    }
 }
 
-void LaserMapping::PublishFrameWorld() const {
-    static int frame_id = 0;
-    if (frame_id % 3 == 0) {
-        PointCloud::Ptr scan_world;
-        scan_world = scan_down_world_;
-
-        sensor_msgs::PointCloud2 scan_msg;
-        pcl::toROSMsg(*scan_world, scan_msg);
-        scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
-        scan_msg.header.frame_id = "world";
+void LaserMapping::PublishFrameWorld() {
+    sensor_msgs::PointCloud2 scan_msg;
+    pcl::toROSMsg(*scan_down_world_, scan_msg);
+    scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    scan_msg.header.frame_id = "world";
+    if (pub_laser_cloud_world_)
         pub_laser_cloud_world_.publish(scan_msg);
-    }
-    frame_id++;
+    if (bag_.isOpen())
+        bag_.write("/cloud_registered", ros::Time().fromSec(state_point_->timestamp), scan_msg);
 }
 
 void LaserMapping::PublishFrameEffectWorld() {
-    PointCloud::Ptr laser_cloud(new PointCloud);
-    laser_cloud->resize(eff_num_);
+    PointCloud::Ptr eff_scan(new PointCloud);
+    eff_scan->resize(eff_num_);
     int j =0;
     for (int i = 0; i < scan_down_world_->size(); i++) {
         if (eff_mask_[i]) {
-            laser_cloud->points[j] = scan_down_world_->points[i];
+            eff_scan->points[j] = scan_down_world_->points[i];
             j++;
         }
     }
-    sensor_msgs::PointCloud2 laserCloudmsg;
-    pcl::toROSMsg(*laser_cloud, laserCloudmsg);
-    laserCloudmsg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
-    laserCloudmsg.header.frame_id = "world";
-    pub_laser_cloud_effect_world_.publish(laserCloudmsg);
+    sensor_msgs::PointCloud2 eff_scan_msg;
+    pcl::toROSMsg(*eff_scan, eff_scan_msg);
+    eff_scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    eff_scan_msg.header.frame_id = "world";
+    if (pub_laser_cloud_effect_world_)
+        pub_laser_cloud_effect_world_.publish(eff_scan_msg);
+    if (bag_.isOpen())
+        bag_.write("/cloud_registered_effect_world", ros::Time().fromSec(state_point_->timestamp), eff_scan_msg);
 }
 void LaserMapping::PublishImage() {
     if (!measures_.img_.empty()) {
@@ -105,7 +107,8 @@ void LaserMapping::PublishImage() {
         image_msg.header.frame_id = "world";
         image_msg.encoding = "bgr8";
         image_msg.image = measures_.img_;
-        pub_image_.publish(*image_msg.toImageMsg());
+        if (pub_image_)
+            pub_image_.publish(*image_msg.toImageMsg());
     }
 }
 
@@ -192,6 +195,7 @@ void LaserMapping::Finish() {
         LOG(INFO) << "Exporting COLMAP result to " << colmap_dir;
         sfm_data_.WriteCOLMAPText(colmap_dir);
     }
+    bag_.close();
 }
 
 }  // namespace faster_lio

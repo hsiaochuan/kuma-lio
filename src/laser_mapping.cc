@@ -174,16 +174,10 @@ void LaserMapping::PostUpdate() {
 }
 void LaserMapping::PublishROSMsg() {
     // publish
-    if (pub_laser_cloud_world_)
-        PublishFrameWorld();
-    if (pub_path_)
-        PublishPath();
-    if (pub_odom_aft_mapped_)
-        PublishOdometry();
-    if (pub_laser_cloud_effect_world_)
-        PublishFrameEffectWorld();
-    if (pub_image_)
-        PublishImage();
+    PublishOdometry();
+    PublishFrameWorld();
+    PublishFrameEffectWorld();
+    PublishImage();
 }
 bool LaserMapping::SyncPackages() {
     if (points_buffer_.empty())
