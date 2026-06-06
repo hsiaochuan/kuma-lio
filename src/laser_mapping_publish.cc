@@ -130,6 +130,7 @@ void LaserMapping::Savetrajectory(const std::string &traj_file) {
 }
 
 void LaserMapping::Finish() {
+    bag_.close();
     if (param->pcd_save_interval_ > 0) {
         static auto once = fs::create_directories(output_dir + "/maps");
 
@@ -195,7 +196,7 @@ void LaserMapping::Finish() {
         LOG(INFO) << "Exporting COLMAP result to " << colmap_dir;
         sfm_data_.WriteCOLMAPText(colmap_dir);
     }
-    bag_.close();
+
 }
 
 }  // namespace faster_lio
