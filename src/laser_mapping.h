@@ -114,7 +114,6 @@ class LaserMapping {
     std::shared_ptr<StatePoint> state_point_;
     int pcd_idx = 0;
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
-    nav_msgs::Path path_;
     Trajectory trajectory_;
     sfm_data sfm_data_;
 

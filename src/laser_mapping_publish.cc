@@ -41,15 +41,21 @@ void LaserMapping::PublishOdometry() {
         body_odometry.pose.covariance[i * 6 + 5] = P(k, 2);
     }
     // publish
+    static nav_msgs::Path path;
+    static int call_once = [&]() {
+        path.header.frame_id = "world";
+        path.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+        return 0;
+    }();
     if (pub_odom_aft_mapped_)
         pub_odom_aft_mapped_.publish(body_odometry);
-    path_.poses.push_back(pose_stamped);
+    path.poses.push_back(pose_stamped);
     if (pub_path_)
-        pub_path_.publish(path_);
+        pub_path_.publish(path);
     if (bag_.isOpen())
-        bag_.write("/Odometry", ros::Time().fromSec(state_point_->timestamp), body_odometry);
+        bag_.write("/Odometry", ros::Time().fromSec(state_point_->timestamp), pose_stamped);
     if (bag_.isOpen())
-        bag_.write("/path", ros::Time().fromSec(state_point_->timestamp), path_);
+        bag_.write("/path", ros::Time().fromSec(state_point_->timestamp), path);
 
     // transform broadcast
     if (ros::isInitialized()) {

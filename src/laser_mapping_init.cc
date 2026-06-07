@@ -82,9 +82,6 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     sub_img_ = nh.subscribe<sensor_msgs::Image>(param->camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr &msg) {
         ImageMsgCallBack(msg);
     });
-    // ROS publisher init
-    path_.header.stamp = ros::Time::now();
-    path_.header.frame_id = "world";
 
     pub_laser_cloud_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_effect_world", 100000);
