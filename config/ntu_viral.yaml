@@ -5,7 +5,7 @@ common:
   camera_enable: false
   imu_enable: true
   scan_interval: 0.1
-  lidar_time_offset: 0
+  lidar_time_offset: -0.1
   camera_time_offset: 0
   image_skip: 1
 preprocess:
