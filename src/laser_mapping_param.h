@@ -52,7 +52,7 @@ class LaserMappingParam {
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;
     int pcd_save_interval_ = -1;
-
+    bool bag_save_en_ = false;
     bool LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
         try {
@@ -68,9 +68,10 @@ class LaserMappingParam {
             blind = yaml["preprocess"]["blind"].as<double>();
             lidar_type = yaml["preprocess"]["lidar_type"].as<std::string>();
             point_filter_num = yaml["point_filter_num"].as<int>();
-            pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
+            pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
+            pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
+            bag_save_en_ = yaml["bag_save_en"].as<bool>();
             image_save_en_ = yaml["image_save_en"].as<bool>();
-            pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
             extrin_il_.q_ = RotationFromArray(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
             extrin_il_.t_ = VecFromArray(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
             ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();

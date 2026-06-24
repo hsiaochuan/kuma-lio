@@ -431,7 +431,8 @@ void GlobalOptimizor::SaveLoopToPcd(const std::string& save_fname) {
             key_points.push_back(point);
         }
     }
-    pcl::io::savePCDFile(save_fname, key_points);
+    if (key_points.size() > 0)
+        pcl::io::savePCDFile(save_fname, key_points);
 }
 
 void GlobalOptimizor::ExportMap(const std::string& save_fname) {
@@ -441,7 +442,8 @@ void GlobalOptimizor::ExportMap(const std::string& save_fname) {
         pcl::transformPointCloud(*scan->GetScan(), scan_world, scan->GetWorldFromBody().Mat4d());
         *whole_map += scan_world;
     }
-    pcl::io::savePCDFile(save_fname, *whole_map);
+    if (whole_map->size() > 0)
+        pcl::io::savePCDFile(save_fname, *whole_map);
     std::cout << "Export map to " << save_fname << std::endl;
 }
 

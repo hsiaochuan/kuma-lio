@@ -21,10 +21,9 @@ mapping:
   extrin_t_il: [ -0.006253, 0.011775, -0.028535 ]
   extrin_R_il: [ 0.0, 0.0, -1.0, 0.0 ] # (qx, qy, qz, qw)
 
-pcd_save:
-  pcd_save_en: true
-  interval: 500
-
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
 image_save_en: false
 
 point_filter_num: 1

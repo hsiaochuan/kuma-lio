@@ -147,7 +147,8 @@ void LaserMapping::PostUpdate() {
     }
     if (param->pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");
-        pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
+        if (scan_undistort_->size() > 0)
+            pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
     }
     if (param->pcd_save_en_) {
         *pcl_wait_save_ += *scan_down_world_;

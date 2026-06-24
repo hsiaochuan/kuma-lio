@@ -21,10 +21,9 @@ mapping:
   extrin_t_il: [0.04165, 0.02326, -0.0284]
   extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
-pcd_save:
-  pcd_save_en: true
-  interval: 500                 # how many LiDAR frames saved in each pcd file;
-
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
 image_save_en: false
 
 point_filter_num: 1

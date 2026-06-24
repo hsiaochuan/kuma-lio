@@ -23,10 +23,10 @@ mapping:
                  0.000, -1.000,  0.000,
                  0.000,  0.000, -1.000 ]
 
-pcd_save:
-  pcd_save_en: true
-  interval: 500
 
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
 image_save_en: false
 
 point_filter_num: 1

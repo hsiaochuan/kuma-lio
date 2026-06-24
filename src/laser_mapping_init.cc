@@ -56,9 +56,11 @@ bool LaserMapping::Init(const std::string &config_fname) {
         sfm_data_.cameras_[cam_id] = param->camera_;
     }
 
-    bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
-    if (!bag_.isOpen()) {
-        throw std::runtime_error("Could not open bag");
+    if (param->bag_save_en_) {
+        bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
+        if (!bag_.isOpen()) {
+            throw std::runtime_error("Could not open bag");
+        }
     }
 
     return true;

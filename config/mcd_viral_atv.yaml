@@ -23,10 +23,9 @@ mapping:
                   -0.00017111407692153792, -0.9999947058517530000,  0.0032494597148797887,
                   -0.01684302179448474500, -0.0032461167514232880, -0.9998528768488223000]
 
-pcd_save:
-  pcd_save_en: true
-  interval: 500                 # how many LiDAR frames saved in each pcd file;
-
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
 image_save_en: false
 
 point_filter_num: 1
