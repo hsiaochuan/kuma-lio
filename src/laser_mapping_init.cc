@@ -12,7 +12,9 @@ LaserMapping::LaserMapping() {
     preprocess_ = std::make_shared<PointCloudPreprocess>();
     p_imu_ = std::make_shared<ImuProcess>();
     state_point_ = std::make_shared<StatePoint>();
+    visual_manager = std::make_shared<VisualManager>();
     p_imu_->state_point_ = state_point_;
+    visual_manager->state_point_ = state_point_;
 }
 
 bool LaserMapping::Init(const std::string &config_fname) {
@@ -45,6 +47,10 @@ bool LaserMapping::Init(const std::string &config_fname) {
     p_imu_->cov_bias_acc_ = Vec3(param->b_acc_cov, param->b_acc_cov, param->b_acc_cov);
 
     ivox_ = std::make_shared<IVoxType>(param->ivox_options_);
+    visual_manager->ivox_ = ivox_;
+    visual_manager->param = param;
+    visual_manager->Initialize();
+
     mapper = std::make_shared<GlobalOptimizor>();
     GlobalOptimizor::Options global_options;
     global_options.LoadFromYaml(config_fname);

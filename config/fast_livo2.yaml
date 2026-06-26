@@ -3,6 +3,7 @@ common:
   imu_topic: "/livox/imu"
   camera_topic: "/left_camera/image"
   camera_enable: true
+  visual_update: true
   imu_enable: true
   scan_interval: 0.1
   lidar_time_offset: 0
@@ -43,8 +44,8 @@ cam:
   # spherical
   camera_model: pinhole_radial
   distortion_param: [-0.076160, 0.123001, 0.0, -0.00113, 0.000251]
-  pinhole_param: [1293.56944, 1293.3155, 626.91359, 522.799224]
-  resolution: [1280, 1024]
+  pinhole_param: [646.78472, 646.65775, 313.456795, 261.399612]
+  resolution: [640, 512]
   extrin_t_cl: [ 0.0194384, 0.104689,-0.0251952 ]
   extrin_R_cl: [ 0.00610193,-0.999863,-0.0154172,
                   -0.00615449,0.0153796,-0.999863,

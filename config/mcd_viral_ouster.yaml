@@ -3,6 +3,7 @@ common:
   imu_topic: "/os_cloud_node/imu"
   camera_topic: ""
   camera_enable: false
+  visual_update: false
   imu_enable: true
   scan_interval: 0.1
   lidar_time_offset: -0.1

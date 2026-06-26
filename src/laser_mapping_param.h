@@ -18,8 +18,9 @@ class LaserMappingParam {
     std::string lidar_topic_;
     std::string imu_topic_;
     std::string camera_topic_;
-    bool camera_enable_;
-    bool imu_enable_;
+    bool camera_enable_ = false;
+    bool visual_update_ = false;
+    bool imu_enable_ = true;
     Pose3 extrin_il_ = Pose3::Identity();
     Pose3 extrin_ic_ = Pose3::Identity();
     double lidar_time_offset_ = 0.;
@@ -81,6 +82,7 @@ class LaserMappingParam {
             camera_topic_ = yaml["common"]["camera_topic"].as<std::string>();
             scan_interval_ = yaml["common"]["scan_interval"].as<double>();
             camera_enable_ = yaml["common"]["camera_enable"].as<bool>();
+            visual_update_ = yaml["common"]["visual_update"].as<bool>();
             imu_enable_ = yaml["common"]["imu_enable"].as<bool>();
             camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
             lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();

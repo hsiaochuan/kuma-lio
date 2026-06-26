@@ -3,6 +3,7 @@ common:
   imu_topic: "/imu/imu"
   camera_topic: "/left/image_raw"
   camera_enable: false
+  visual_update: false
   imu_enable: true
   scan_interval: 0.1
   lidar_time_offset: -0.1

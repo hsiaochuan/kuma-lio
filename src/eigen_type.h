@@ -11,7 +11,9 @@ using VecX = Eigen::VectorXd;
 
 using Vec2 = Eigen::Vector2d;
 using Vec2i = Eigen::Vector2i;
+using Vec2f = Eigen::Vector2f;
 using Mat2 = Eigen::Matrix2d;
+using Mat2f = Eigen::Matrix2f;
 using Mat2X = Eigen::Matrix<double, 2, Eigen::Dynamic>;
 
 using Vec3 = Eigen::Vector3d;
@@ -26,5 +28,7 @@ using Mat32 = Eigen::Matrix<double, 3, 2>;
 using Vec4 = Eigen::Vector4d;
 using Vec4f = Eigen::Vector4f;
 using Mat4 = Eigen::Matrix<double, 4, 4>;
+
+using Mat6 = Eigen::Matrix<double, 6, 6>;
 }
 #endif  // FASTER_LIO_EIGEN_TYPE_H

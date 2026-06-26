@@ -21,6 +21,8 @@
 #include "sfm_data.h"
 #include "stamp_pose.h"
 #include "types.h"
+#include "global_optimizor.h"
+#include "visual_manager.h"
 namespace faster_lio {
 
 class LaserMapping {
@@ -79,12 +81,14 @@ class LaserMapping {
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
     std::shared_ptr<ImuProcess> p_imu_ = nullptr;                 // imu process
     std::shared_ptr<GlobalOptimizor> mapper = nullptr;
-
+    std::shared_ptr<VisualManager> visual_manager = nullptr;
     /// point clouds data
     PointCloud::Ptr scan_undistort_{new PointCloud()};   // scan after undistortion, not downsampled
     PointCloud::Ptr scan_down_body_{new PointCloud()};   // downsampled scan in body
     PointCloud::Ptr scan_down_world_{new PointCloud()};  // downsampled scan in world
+    ColorPointCloud::Ptr color_scan_world_{new ColorPointCloud()};  // downsampled scan in world with color
     std::vector<PointVector> nearest_points_;            // nearest points of current scan
+    std::vector<Vec4f> plane_coeffs_;
     pcl::VoxelGrid<Point> scan_sampler_;             // voxel filter for current scan
     std::vector<char> eff_mask_;              // selected points
 

@@ -78,7 +78,7 @@ void LaserMapping::PublishOdometry() {
 
 void LaserMapping::PublishFrameWorld() {
     sensor_msgs::PointCloud2 scan_msg;
-    pcl::toROSMsg(*scan_down_world_, scan_msg);
+    pcl::toROSMsg(*color_scan_world_, scan_msg);
     scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
     scan_msg.header.frame_id = "world";
     if (pub_laser_cloud_world_)
@@ -111,7 +111,7 @@ void LaserMapping::PublishImage() {
         cv_bridge::CvImage image_msg;
         image_msg.header.stamp = ros::Time().fromSec(measures_.end_time_);
         image_msg.header.frame_id = "world";
-        image_msg.encoding = "bgr8";
+        image_msg.encoding = measures_.img_.type() == CV_8UC1 ? "mono8" : "bgr8";
         image_msg.image = measures_.img_;
         if (pub_image_)
             pub_image_.publish(*image_msg.toImageMsg());
