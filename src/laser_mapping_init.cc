@@ -1,5 +1,7 @@
 #include "laser_mapping.h"
 #include <yaml-cpp/yaml.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/features/normal_3d.h>
 
 #include <memory>
 #include "cameras/cameras.h"
@@ -13,8 +15,7 @@ LaserMapping::LaserMapping() {
     p_imu_ = std::make_shared<ImuProcess>();
     state_point_ = std::make_shared<StatePoint>();
     visual_manager = std::make_shared<VisualManager>();
-    p_imu_->state_point_ = state_point_;
-    visual_manager->state_point_ = state_point_;
+
 }
 
 bool LaserMapping::Init(const std::string &config_fname) {
@@ -39,17 +40,22 @@ bool LaserMapping::Init(const std::string &config_fname) {
         param->ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
     }
 
+    ivox_ = std::make_shared<IVoxType>(param->ivox_options_);
+
     scan_sampler_.setLeafSize(param->scan_filter_size, param->scan_filter_size, param->scan_filter_size);
 
     p_imu_->cov_gyr_ = Vec3(param->gyr_cov, param->gyr_cov, param->gyr_cov);
     p_imu_->cov_acc_ = Vec3(param->acc_cov, param->acc_cov, param->acc_cov);
     p_imu_->cov_bias_gyr_ = Vec3(param->b_gyr_cov, param->b_gyr_cov, param->b_gyr_cov);
     p_imu_->cov_bias_acc_ = Vec3(param->b_acc_cov, param->b_acc_cov, param->b_acc_cov);
+    p_imu_->state_point_ = state_point_;
 
-    ivox_ = std::make_shared<IVoxType>(param->ivox_options_);
-    visual_manager->ivox_ = ivox_;
-    visual_manager->param = param;
-    visual_manager->Initialize();
+    if (param->camera_enable_) {
+        visual_manager->state_point_ = state_point_;
+        visual_manager->ivox_ = ivox_;
+        visual_manager->param = param;
+        visual_manager->Initialize();
+    }
 
     mapper = std::make_shared<GlobalOptimizor>();
     GlobalOptimizor::Options global_options;
@@ -70,6 +76,44 @@ bool LaserMapping::Init(const std::string &config_fname) {
     }
 
     return true;
+}
+void LaserMapping::LoadPriorMap(const std::string &prior_map_fname) {
+    if (!param->localization_enable_)
+        return;
+    map_cloud_.reset(new pcl::PointCloud<PriorMapPoint>());
+    // load points
+    pcl::io::loadPCDFile(prior_map_fname, *map_cloud_);
+    if (map_cloud_->size() == 0) {
+        LOG(WARNING) << "no prior map found";
+        return;
+    }
+    // downsample
+    if (param->map_filter_size_ > 0) {
+        pcl::VoxelGrid<PriorMapPoint> voxel_grid;
+        voxel_grid.setLeafSize(param->map_filter_size_, param->map_filter_size_, param->map_filter_size_);
+        voxel_grid.setInputCloud(map_cloud_);
+        pcl::PointCloud<PriorMapPoint>::Ptr tmp_cloud(new pcl::PointCloud<PriorMapPoint>());
+        voxel_grid.filter(*tmp_cloud);
+        map_cloud_ = tmp_cloud;
+    }
+
+    // estimate normal
+    pcl::NormalEstimation<PriorMapPoint, pcl::Normal> ne;
+    ne.setInputCloud(map_cloud_);
+    pcl::search::KdTree<PriorMapPoint>::Ptr tree(new pcl::search::KdTree<PriorMapPoint>());
+    ne.setSearchMethod(tree);
+    pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+    ne.setKSearch(20);
+    ne.compute(*cloud_normals);
+
+    map_normals_.resize(map_cloud_->size());
+    for (size_t i = 0; i < map_cloud_->size(); ++i) {
+        map_normals_[i] = cloud_normals->points[i].getNormalVector3fMap();
+    }
+
+    // build kd tree
+    map_kd_tree_.reset(new pcl::KdTreeFLANN<PriorMapPoint>());
+    map_kd_tree_->setInputCloud(map_cloud_);
 }
 
 void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {

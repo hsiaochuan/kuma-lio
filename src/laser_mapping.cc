@@ -75,6 +75,10 @@ void LaserMapping::Run() {
     pcl::transformPointCloud(*measures_.lidar_, *scan_body, param->extrin_il_.Mat4d());
     if (!p_imu_->inertial_initialized) {
         p_imu_->InertialInitialize(measures_, *state_point_);
+        if (p_imu_->inertial_initialized && param->localization_enable_) {
+            // set the initial pose to localization
+
+        }
         return;
     }
 
@@ -124,6 +128,8 @@ void LaserMapping::Run() {
 
     // update local map
     Timer::Evaluate([&, this]() {
+        if (param->localization_enable_)
+            return;
         MapIncremental();
     }, "Incremental Mapping");
 
@@ -385,6 +391,29 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
 
     Timer::Evaluate(
         [&, this]() {
+            if (param->localization_enable_) {
+                // find the surface in the prior map
+                std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
+                    Point &point_world = scan_down_world_->points[i];
+                    PriorMapPoint search_point;
+                    search_point.getVector3fMap() = point_world.getVector3fMap();
+                    std::vector<int> nearest_indices;
+                    std::vector<float> nearest_distances;
+                    map_kd_tree_->nearestKSearch(search_point, 1, nearest_indices, nearest_distances);
+                    if (nearest_indices.size() > 0) {
+                        int nearest_index = nearest_indices[0];
+                        Vec3f nearest_point = map_cloud_->at(nearest_index).getVector3fMap();
+                        Vec3f normal = map_normals_[nearest_index];
+                        float d = -normal.dot(nearest_point);
+                        plane_coeffs_[i] = Vec4f(normal[0], normal[1], normal[2], d);
+                        eff_mask_[i] = true;
+                    } else {
+                        eff_mask_[i] = false;
+                    }
+                });
+                // no need to find point in ivox
+                return;
+            }
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 Point &point_body = scan_down_body_->points[i];

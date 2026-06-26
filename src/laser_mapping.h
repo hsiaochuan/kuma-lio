@@ -1,5 +1,6 @@
 #ifndef FASTER_LIO_LASER_MAPPING_H
 #define FASTER_LIO_LASER_MAPPING_H
+#include <pcl/kdtree/kdtree_flann.h>
 #include "laser_mapping_param.h"
 #include "livox_ros_driver/CustomMsg.h"
 #include <nav_msgs/Path.h>
@@ -42,7 +43,7 @@ class LaserMapping {
 
     /// init without ros
     bool Init(const std::string &config_fname);
-
+    void LoadPriorMap(const std::string &prior_map_fname);
     void Run();
     void PostUpdate();
     void PublishROSMsg();
@@ -124,6 +125,12 @@ class LaserMapping {
 
     std::shared_ptr<LaserMappingParam> param;
     rosbag::Bag bag_;
+
+    // prior map
+    using PriorMapPoint = pcl::PointXYZ;
+    pcl::PointCloud<PriorMapPoint>::Ptr map_cloud_;
+    pcl::KdTreeFLANN<PriorMapPoint>::Ptr map_kd_tree_;
+    std::vector<Vec3f> map_normals_;
    public:
     std::string output_dir;
 };

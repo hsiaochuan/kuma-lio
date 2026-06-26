@@ -11,6 +11,7 @@
 
 DEFINE_string(output_dir, "./Log/traj.txt", "path to traj log file");
 DEFINE_string(config_fname, "./config/avia.yaml", "path to config file");
+DEFINE_string(prior_map_fname, "", "path to prior map file");
 void SigHandle(int sig) {
     faster_lio::options::FLAG_EXIT = true;
     ROS_WARN("catch sig %d", sig);
@@ -28,6 +29,7 @@ int main(int argc, char **argv) {
     auto laser_mapping = std::make_shared<faster_lio::LaserMapping>();
     laser_mapping->output_dir = FLAGS_output_dir;
     laser_mapping->Init(FLAGS_config_fname);
+    laser_mapping->LoadPriorMap(FLAGS_prior_map_fname);
     laser_mapping->SubAndPubToROS(nh);
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
