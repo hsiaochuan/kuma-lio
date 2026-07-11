@@ -131,6 +131,8 @@ class LaserMapping {
     pcl::PointCloud<PriorMapPoint>::Ptr map_cloud_;
     pcl::KdTreeFLANN<PriorMapPoint>::Ptr map_kd_tree_;
     std::vector<Vec3f> map_normals_;
+    Eigen::Vector3d prior_init_position_ = Eigen::Vector3d::Zero();
+    Eigen::Quaterniond prior_init_rotation_ = Eigen::Quaterniond::Identity();
    public:
     std::string output_dir;
 };

@@ -76,8 +76,14 @@ void LaserMapping::Run() {
     if (!p_imu_->inertial_initialized) {
         p_imu_->InertialInitialize(measures_, *state_point_);
         if (p_imu_->inertial_initialized && param->localization_enable_) {
-            // set the initial pose to localization
+            Vec3 g_map(0, 0, -GRAVITY_NORM);
+            Eigen::Quaterniond q_prior = prior_init_rotation_.normalized();
+            Vec3 acc_pred = q_prior * p_imu_->mean_acc_.normalized();
+            Eigen::Quaterniond q_fix = Eigen::Quaterniond::FromTwoVectors(acc_pred, Vec3(0, 0, 1));
 
+            state_point_->rot = q_fix * q_prior;
+            state_point_->pos = prior_init_position_;
+            state_point_->gravity = g_map;
         }
         return;
     }
@@ -93,7 +99,7 @@ void LaserMapping::Run() {
     }
 
     /// the first scan
-    if (if_local_map_init_) {
+    if (if_local_map_init_ && !param->localization_enable_) {
         scan_down_world_->resize(scan_undistort_->size());
         for (int i = 0; i < scan_undistort_->size(); i++) {
             scan_down_world_->at(i).getVector3fMap() =
@@ -400,12 +406,18 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
                     std::vector<int> nearest_indices;
                     std::vector<float> nearest_distances;
                     map_kd_tree_->nearestKSearch(search_point, 1, nearest_indices, nearest_distances);
-                    if (nearest_indices.size() > 0) {
-                        int nearest_index = nearest_indices[0];
-                        Vec3f nearest_point = map_cloud_->at(nearest_index).getVector3fMap();
-                        Vec3f normal = map_normals_[nearest_index];
+                    if (nearest_indices.size() == 0) {
+                        eff_mask_[i] = false;
+                        return;
+                    }
+                    int nearest_index = nearest_indices[0];
+                    Vec3f nearest_point = map_cloud_->at(nearest_index).getVector3fMap();
+                    float distance = (nearest_point - point_world.getVector3fMap()).norm();
+                    Vec3f normal = map_normals_[nearest_index];
+                    if (distance < 0.2 && normal.hasNaN() == false) {
                         float d = -normal.dot(nearest_point);
                         plane_coeffs_[i] = Vec4f(normal[0], normal[1], normal[2], d);
+                        residuals_[i] = plane_coeffs_[i].dot(point_world.getVector3fMap().homogeneous());
                         eff_mask_[i] = true;
                     } else {
                         eff_mask_[i] = false;
@@ -442,7 +454,7 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
                 }
             });
         },
-        "    ObsModel (Lidar Match)");
+        "ObsModel (Lidar Match)");
 
     eff_num_ = 0;
 

@@ -9,7 +9,6 @@ common:
   lidar_time_offset: 0
   camera_time_offset: 0
   image_skip: 1
-  localization_enable: false
 preprocess:
   lidar_type: LIVOX
   blind: 4
@@ -21,7 +20,7 @@ mapping:
   b_gyr_cov: 0.0001
   det_range:     100.0
   extrin_t_il: [ 0.04165, 0.02326, -0.0284 ]
-  extrin_R_il: [ 1, 0, 0, 0, 1, 0, 0, 0, 1]
+  extrin_R_il: [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ]
 
 pcd_save_en: true
 pcd_save_interval: 500

@@ -87,7 +87,6 @@ class LaserMappingParam {
             camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
             lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();
             image_skip_ = yaml["common"]["image_skip"].as<int>();
-            localization_enable_ = yaml["common"]["localization_enable"].as<bool>();
         } catch (...) {
             LOG(ERROR) << "bad conversion";
             return false;

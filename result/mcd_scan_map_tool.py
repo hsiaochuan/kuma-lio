@@ -4,10 +4,11 @@ import open3d as o3d
 from tqdm import tqdm
 
 
-def merge_pcds(input_dir, output_pcd, voxel_size=0.05):
+def merge_pcds(input_dir, output_pcd, voxel_size=0.05,
+               estimate_normals=True, normal_radius=0.3, normal_max_nn=30):
     """
     Merge all PCD files in a folder, perform voxel downsampling,
-    and save the merged point cloud.
+    estimate normals, and save the merged point cloud.
 
     Parameters
     ----------
@@ -17,6 +18,12 @@ def merge_pcds(input_dir, output_pcd, voxel_size=0.05):
         Output PCD file path.
     voxel_size : float
         Voxel size used for downsampling.
+    estimate_normals : bool
+        Whether to estimate and save point normals.
+    normal_radius : float
+        Search radius used for normal estimation.
+    normal_max_nn : int
+        Maximum number of neighbors used for normal estimation.
     """
 
     # Find all PCD files
@@ -41,8 +48,17 @@ def merge_pcds(input_dir, output_pcd, voxel_size=0.05):
 
     print(f"Number of points after downsampling  : {len(merged_cloud.points):,}")
 
-    # Save merged point cloud
-    success = o3d.io.write_point_cloud(output_pcd, merged_cloud)
+    # Estimate normals
+    if estimate_normals:
+        print("Estimating normals...")
+        merged_cloud.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=normal_radius, max_nn=normal_max_nn
+            )
+        )
+
+    # Save merged point cloud (write_ascii=True keeps normals human-readable)
+    success = o3d.io.write_point_cloud(output_pcd, merged_cloud, write_ascii=False)
 
     if not success:
         raise RuntimeError(f"Failed to write {output_pcd}")
@@ -52,11 +68,14 @@ def merge_pcds(input_dir, output_pcd, voxel_size=0.05):
 
 if __name__ == "__main__":
 
-    input_dir = "/home/hsiaochuan/Downloads/TUHH/pointclouds"
-    output_pcd = "/home/hsiaochuan/Downloads/TUHH/map.pcd"
+    input_dir = "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/TUHH/pointclouds"
+    output_pcd = "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/TUHH/map.pcd"
 
     merge_pcds(
         input_dir=input_dir,
         output_pcd=output_pcd,
-        voxel_size=0.1
+        voxel_size=0.1,
+        estimate_normals=True,
+        normal_radius=0.3,
+        normal_max_nn=12
     )

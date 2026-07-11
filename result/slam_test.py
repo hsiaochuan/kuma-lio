@@ -43,10 +43,10 @@ class DatasetConfig:
     """Dataset configuration"""
     name: str
     bag_files: List[str]
-    config: str  # single config (BotanicGarden)
+    config: str
     start: float = 0.0
     duration: float = -1.0
-    config_map: Dict[str, str] = field(default_factory=dict)  # keyword → config (MCD_VIRAL)
+    config_map: Dict[str, str] = field(default_factory=dict)
     run_mode: RunMode = RunMode.OFFLINE
     def resolve_config(self, bag_name: str) -> str:
         """Select configuration file based on bag name"""
@@ -243,12 +243,20 @@ class SLAMTestRunner:
                 ["rviz", "-d", self.rviz_config],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
+
+            localization_map_and_pose = [
+                # "--prior_map_fname", "/home/hsiaochuan/Downloads/TUHH/map.pcd",
+                # "--prior_init_pose", "45.690090862136245,447.141417866168638,14.609562334189976,-0.197423661689090,0.979502111007773,0.001873158034956,0.039950013962013",
+            ]
             time.sleep(self.online_wait)
             online_proc = subprocess.Popen(
-                [self.online_app,
+                [ self.online_app,
                  "--output_dir", output_dir,
-                 "--config_fname", config]
+                 "--config_fname", config ] + localization_map_and_pose,
             )
+
+            if len(localization_map_and_pose) > 0:
+                time.sleep(60)
             bag_play_command = [
                 "rosbag", "play",
                 "--start", str(start),

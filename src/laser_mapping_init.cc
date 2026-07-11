@@ -1,8 +1,9 @@
 #include "laser_mapping.h"
 #include <yaml-cpp/yaml.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/common/io.h>
 #include <pcl/features/normal_3d.h>
-
+#include <pcl/features/normal_3d_omp.h>
 #include <memory>
 #include "cameras/cameras.h"
 #include "global_optimizor.h"
@@ -80,40 +81,75 @@ bool LaserMapping::Init(const std::string &config_fname) {
 void LaserMapping::LoadPriorMap(const std::string &prior_map_fname) {
     if (!param->localization_enable_)
         return;
-    map_cloud_.reset(new pcl::PointCloud<PriorMapPoint>());
-    // load points
-    pcl::io::loadPCDFile(prior_map_fname, *map_cloud_);
-    if (map_cloud_->size() == 0) {
-        LOG(WARNING) << "no prior map found";
+
+    // check whether the pcd file already contains normals, so we don't need
+    // to re-estimate them if the map was pre-processed (e.g. by mcd_scan_map_tool.py)
+    pcl::PCLPointCloud2 cloud_blob;
+    if (pcl::io::loadPCDFile(prior_map_fname, cloud_blob) < 0) {
+        LOG(WARNING) << "failed to load prior map: " << prior_map_fname;
         return;
     }
-    // downsample
-    if (param->map_filter_size_ > 0) {
-        pcl::VoxelGrid<PriorMapPoint> voxel_grid;
-        voxel_grid.setLeafSize(param->map_filter_size_, param->map_filter_size_, param->map_filter_size_);
-        voxel_grid.setInputCloud(map_cloud_);
-        pcl::PointCloud<PriorMapPoint>::Ptr tmp_cloud(new pcl::PointCloud<PriorMapPoint>());
-        voxel_grid.filter(*tmp_cloud);
-        map_cloud_ = tmp_cloud;
+    bool has_normals = false;
+    for (const auto &field : cloud_blob.fields) {
+        if (field.name == "normal_x") {
+            has_normals = true;
+            break;
+        }
     }
+    map_cloud_.reset(new pcl::PointCloud<PriorMapPoint>());
 
-    // estimate normal
-    pcl::NormalEstimation<PriorMapPoint, pcl::Normal> ne;
-    ne.setInputCloud(map_cloud_);
-    pcl::search::KdTree<PriorMapPoint>::Ptr tree(new pcl::search::KdTree<PriorMapPoint>());
-    ne.setSearchMethod(tree);
-    pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-    ne.setKSearch(20);
-    ne.compute(*cloud_normals);
-
-    map_normals_.resize(map_cloud_->size());
-    for (size_t i = 0; i < map_cloud_->size(); ++i) {
-        map_normals_[i] = cloud_normals->points[i].getNormalVector3fMap();
+    if (has_normals) {
+        LOG(INFO) << "prior map already contains normals, skip normal estimation";
+        pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointNormal>());
+        pcl::fromPCLPointCloud2(cloud_blob, *cloud_with_normals);
+        if (cloud_with_normals->empty()) {
+            LOG(WARNING) << "no prior map found";
+            return;
+        }
+        pcl::copyPointCloud(*cloud_with_normals, *map_cloud_);
+        LOG(INFO) << "prior map loaded, size: " << map_cloud_->size();
+        map_normals_.resize(cloud_with_normals->size());
+        for (size_t i = 0; i < cloud_with_normals->size(); ++i) {
+            map_normals_[i] = cloud_with_normals->points[i].getNormalVector3fMap();
+        }
+    } else {
+        pcl::fromPCLPointCloud2(cloud_blob, *map_cloud_);
+        if (map_cloud_->empty()) {
+            LOG(WARNING) << "no prior map found";
+            return;
+        }
+        LOG(INFO) << "prior map loaded, size: " << map_cloud_->size();
+        // downsample
+        double leaf_size = -0.1;
+        if (leaf_size > 0) {
+            pcl::VoxelGrid<PriorMapPoint> voxel_grid;
+            voxel_grid.setLeafSize(leaf_size, leaf_size, leaf_size);
+            voxel_grid.setInputCloud(map_cloud_);
+            pcl::PointCloud<PriorMapPoint>::Ptr tmp_cloud(new pcl::PointCloud<PriorMapPoint>());
+            voxel_grid.filter(*tmp_cloud);
+            map_cloud_ = tmp_cloud;
+        }
+        LOG(INFO) << "prior map downsampled, size: " << map_cloud_->size();
+        // estimate normal
+        pcl::NormalEstimationOMP<PriorMapPoint, pcl::Normal> ne;
+        ne.setNumberOfThreads(8);
+        ne.setInputCloud(map_cloud_);
+        pcl::search::KdTree<PriorMapPoint>::Ptr tree(new pcl::search::KdTree<PriorMapPoint>());
+        ne.setSearchMethod(tree);
+        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+        ne.setKSearch(12);
+        ne.compute(*cloud_normals);
+        LOG(INFO) << "prior map normals estimated";
+        map_normals_.resize(map_cloud_->size());
+        for (size_t i = 0; i < map_cloud_->size(); ++i) {
+            map_normals_[i] = cloud_normals->points[i].getNormalVector3fMap();
+        }
     }
 
     // build kd tree
     map_kd_tree_.reset(new pcl::KdTreeFLANN<PriorMapPoint>());
     map_kd_tree_->setInputCloud(map_cloud_);
+    LOG(INFO) << "prior map kd tree built";
 }
 
 void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
@@ -130,7 +166,6 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
 
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(param->imu_topic_, 200000,
                                               [this](const sensor_msgs::Imu::ConstPtr &msg) { IMUCallBack(msg); });
-
     sub_img_ = nh.subscribe<sensor_msgs::Image>(param->camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr &msg) {
         ImageMsgCallBack(msg);
     });
@@ -141,6 +176,24 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
     if (param->camera_enable_)
         pub_image_ = nh.advertise<sensor_msgs::Image>("/image_raw", 100000);
+    if (param->localization_enable_) {
+        LOG(INFO) << "publish prior map " << map_cloud_->size() << " points";
+        auto pub_prior_map = nh.advertise<sensor_msgs::PointCloud2>("/prior_map", 100000);
+        sensor_msgs::PointCloud2 prior_map_msg;
+        pcl::toROSMsg(*map_cloud_, prior_map_msg);
+        prior_map_msg.header.frame_id = "world";
+        prior_map_msg.header.stamp = ros::Time::now();
+        while (1) {
+            if (pub_prior_map.getNumSubscribers() > 0) {
+                for (int i = 0; i < 3; ++i) {
+                    pub_prior_map.publish(prior_map_msg);
+                    LOG(INFO) << "publish prior map";
+                    sleep(1);
+                }
+                break;
+            }
+        }
+    }
 }
 
 }  // namespace faster_lio

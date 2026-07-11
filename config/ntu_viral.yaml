@@ -9,7 +9,6 @@ common:
   lidar_time_offset: -0.1
   camera_time_offset: 0
   image_skip: 1
-  localization_enable: false
 preprocess:
   lidar_type: OUSTER
   blind: 1
