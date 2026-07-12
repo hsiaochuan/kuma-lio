@@ -82,8 +82,6 @@ void LaserMapping::LoadPriorMap(const std::string &prior_map_fname) {
     if (!param->localization_enable_)
         return;
 
-    // check whether the pcd file already contains normals, so we don't need
-    // to re-estimate them if the map was pre-processed (e.g. by mcd_scan_map_tool.py)
     pcl::PCLPointCloud2 cloud_blob;
     if (pcl::io::loadPCDFile(prior_map_fname, cloud_blob) < 0) {
         LOG(WARNING) << "failed to load prior map: " << prior_map_fname;

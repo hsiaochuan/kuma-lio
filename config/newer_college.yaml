@@ -1,8 +1,8 @@
 common:
-  lid_topic: "/os1_cloud_node/points"
-  imu_topic: "/os1_cloud_node/imu"
+  lid_topic: "/os_cloud_node/points"
+  imu_topic: "/os_cloud_node/imu"
   camera_topic: "/camera/infra1/image_rect_raw"
-  camera_enable: true
+  camera_enable: false
   visual_update: false
   imu_enable: true
   scan_interval: 0.1
@@ -19,8 +19,8 @@ mapping:
   b_acc_cov:     8.0e-5
   b_gyr_cov:     3.0e-6
   det_range:     100.0
-  extrin_t_il: [ -0.006253, 0.011775, -0.028535 ]
-  extrin_R_il: [ 0.0, 0.0, -1.0, 0.0 ] # (qx, qy, qz, qw)
+  extrin_t_il: [ 0.014, -0.012, -0.015 ]
+  extrin_R_il: [ 0.0, 0.0, 0.0, 1.0 ] # (qx, qy, qz, qw)
 
 pcd_save_en: true
 pcd_save_interval: 500
