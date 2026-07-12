@@ -254,6 +254,7 @@ void LaserMapping::PublishROSMsg() {
     PublishFrameWorld();
     PublishFrameEffectWorld();
     PublishImage();
+    PublishFrustrum();
 }
 bool LaserMapping::SyncPackages() {
     if (points_buffer_.empty())

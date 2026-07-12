@@ -174,6 +174,7 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
     if (param->camera_enable_)
         pub_image_ = nh.advertise<sensor_msgs::Image>("/image_raw", 100000);
+    pub_frustrum_ = nh.advertise<visualization_msgs::Marker>("/frustrum", 100000);
     if (param->localization_enable_) {
         LOG(INFO) << "publish prior map " << map_cloud_->size() << " points";
         auto pub_prior_map = nh.advertise<sensor_msgs::PointCloud2>("/prior_map", 100000);

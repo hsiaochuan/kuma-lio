@@ -9,6 +9,7 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CompressedImage.h>
+#include <visualization_msgs/Marker.h>
 
 // Heavy dependencies are forward-declared below to reduce rebuilds.
 #include <rosbag/bag.h>
@@ -67,6 +68,7 @@ class LaserMapping {
     void PublishFrameWorld();
     void PublishFrameEffectWorld();
     void PublishImage();
+    void PublishFrustrum();
     void Savetrajectory(const std::string &traj_file);
 
     void Finish();
@@ -101,6 +103,7 @@ class LaserMapping {
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
     ros::Publisher pub_image_;
+    ros::Publisher pub_frustrum_;
 
     double first_scan_time_ = std::numeric_limits<double>::quiet_NaN();
 
