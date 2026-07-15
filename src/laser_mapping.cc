@@ -79,23 +79,27 @@ void LaserMapping::Run() {
             p_imu_->InertialInitialize(measures_, *state_point_);
         else
             p_imu_->Initialize(measures_, *state_point_);
-        p_imu_->InertialInitialize(measures_, *state_point_);
-        if (p_imu_->inertial_initialized && param->localization_enable_) {
-            Vec3 g_map(0, 0, -GRAVITY_NORM);
-            Eigen::Quaterniond q_prior = prior_init_rotation_.normalized();
-            Vec3 acc_pred = q_prior * p_imu_->mean_acc_.normalized();
-            Eigen::Quaterniond q_fix = Eigen::Quaterniond::FromTwoVectors(acc_pred, Vec3(0, 0, 1));
 
-            state_point_->rot = q_fix * q_prior;
+        if (p_imu_->inertial_initialized && param->localization_enable_) {
+            if (param->imu_enable_) {
+                Vec3 g_map(0, 0, -GRAVITY_NORM);
+                Eigen::Quaterniond q_prior = prior_init_rotation_.normalized();
+                Vec3 acc_pred = q_prior * p_imu_->mean_acc_.normalized();
+                Eigen::Quaterniond q_fix = Eigen::Quaterniond::FromTwoVectors(acc_pred, Vec3(0, 0, 1));
+
+                state_point_->rot = q_fix * q_prior;
+                state_point_->gravity = g_map;
+            } else {
+                state_point_->rot = prior_init_rotation_;
+            }
             state_point_->pos = prior_init_position_;
-            state_point_->gravity = g_map;
         }
         return;
     }
 
     Timer::Evaluate([&, this]() {
         if (param->imu_enable_) {
-            p_imu_->Predict(measures_, *state_point_);
+            p_imu_->Predict(measures_);
             p_imu_->UndistortPoints(*state_point_, scan_body, *scan_undistort_);
         }else {
             p_imu_->PredictConstVel(measures_);

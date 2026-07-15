@@ -30,7 +30,6 @@ class ImuProcess {
     ImuProcess();
     ~ImuProcess();
 
-    void SetExtrinsic(const Vec3 &transl, const Mat3 &rot);
     void InertialInitialize(const MeasureGroup &meas, StatePoint &state_point);
     void Initialize(const MeasureGroup &meas, StatePoint &state_point);
     Eigen::Matrix<double, 12, 12> Q_;
@@ -40,7 +39,7 @@ class ImuProcess {
     Vec3 cov_bias_acc_;
 
     void AccuImu(const MeasureGroup &meas);
-    void Predict(const MeasureGroup &meas, StatePoint &state);
+    void Predict(const MeasureGroup &meas);
     void PredictConstVel(const MeasureGroup &meas);
     void UndistortPointsConstVel(PointCloud::Ptr &distort_points, PointCloud & undistort_points);
     void UndistortPoints(StatePoint &state_point, PointCloud::Ptr distort_points, PointCloud &undistort_points);
