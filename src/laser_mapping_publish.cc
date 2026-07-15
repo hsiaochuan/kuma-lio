@@ -240,32 +240,6 @@ void LaserMapping::Finish() {
     std::cout << "Exporting final map and trajectory..." << std::endl;
     mapper->ExportMap(output_dir + "/final.pcd");
     TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/final.txt");
-
-    // export COLMAP
-    if (param->image_save_en_) {
-        // only for the keyscan, erase others
-        for (auto it = sfm_data_.images_.begin(); it != sfm_data_.images_.end();) {
-            if (mapper->keyscans_.count(it->first) > 0) {
-                Image::Ptr im = it->second;
-                im->cam_from_world_ = (mapper->keyscans_[it->first]->world_from_body * param->extrin_ic_).GetInverse();
-                ++it;
-            } else
-                it = sfm_data_.images_.erase(it);
-        }
-        // write image list txt
-        std::ofstream ofs(output_dir + "/images.txt");
-        for (const auto &[im_id, im] : sfm_data_.images_) {
-            ofs << im->name_ << std::endl;
-        }
-        ofs.close();
-
-        // write colmap
-        std::string colmap_dir = output_dir + "/colmap_result/";
-        fs::create_directories(colmap_dir);
-        LOG(INFO) << "Exporting COLMAP result to " << colmap_dir;
-        sfm_data_.WriteCOLMAPText(colmap_dir);
-    }
-
 }
 
 }  // namespace faster_lio

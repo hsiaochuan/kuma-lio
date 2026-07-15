@@ -20,7 +20,6 @@
 #include "ivox3d.h"
 #include "pointcloud_preprocess.h"
 #include "pose3.h"
-#include "sfm_data.h"
 #include "stamp_pose.h"
 #include "types.h"
 #include "global_optimizor.h"
@@ -123,8 +122,6 @@ class LaserMapping {
     int pcd_idx = 0;
     PointCloud::Ptr pcl_wait_save_{new PointCloud()};
     Trajectory trajectory_;
-    sfm_data sfm_data_;
-
 
     std::shared_ptr<LaserMappingParam> param;
     rosbag::Bag bag_;

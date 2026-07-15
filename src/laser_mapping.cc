@@ -216,23 +216,9 @@ void LaserMapping::PostUpdate() {
 
     // save the pcd
     if (param->image_save_en_ && !measures_.img_.empty()) {
-        // construct the image
-        image_t im_id = scan->scan_id;
-        Image::Ptr im = std::make_shared<Image>();
-        im->timestamp_ = measures_.end_time_;
-        im->image_id_ = im_id;
-        // the name not include the dir path, only the filename
-        im->name_ = stamp_string.str() + ".jpg";
-        im->cam_from_world_ = (scan->world_from_body * param->extrin_ic_).GetInverse();
-        CHECK(sfm_data_.cameras_.size() == 1);
-        im->camera_id_ = sfm_data_.cameras_.begin()->first;
-
-        // add to sfm_data
-        sfm_data_.images_[im->image_id_] = im;
-
         // save image
         static auto once = fs::create_directories(output_dir + "/images");
-        cv::imwrite(output_dir + "/images/" + im->name_, measures_.img_);
+        cv::imwrite(output_dir + "/images/" + stamp_string.str() + ".jpg", measures_.img_);
     }
     if (param->pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");

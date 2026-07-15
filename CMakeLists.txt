@@ -37,8 +37,6 @@ add_library(${PROJECT_NAME}
         src/stamp_pose.cpp
         src/utils.cc
         src/voxel_map.cpp
-        src/sfm_data.cpp
-        src/database.cpp
         src/visual_manager.cpp
         )
 
@@ -75,39 +73,15 @@ target_link_libraries(points_jet ${PROJECT_NAME} gflags)
 add_executable(points_merge ./src/points_merge.cpp)
 target_link_libraries(points_merge ${PROJECT_NAME} gflags)
 
-add_executable(lvba ./src/lvba.cpp)
-target_link_libraries(lvba ${PROJECT_NAME} gflags)
-
-add_executable(points_color ./src/points_color.cpp)
-target_link_libraries(points_color ${PROJECT_NAME} gflags)
-
 add_executable(offline_global_mapping ./src/offline_global_mapping.cpp)
 target_link_libraries(offline_global_mapping ${PROJECT_NAME} gflags)
-
-add_executable(kitti2bag ./src/kitti_to_bag.cpp)
-target_link_libraries(kitti2bag ${PROJECT_NAME} gflags)
 
 find_package(GTest REQUIRED)
 enable_testing()
 add_executable(camera_test src/camera_test.cpp)
-add_executable(lidar_sim_test src/lidar_sim_test.cc)
-add_executable(bareg_test src/bareg_test.cc)
 target_link_libraries(camera_test
         ${PROJECT_NAME}
         GTest::GTest
         GTest::Main
 )
-target_link_libraries(lidar_sim_test
-        ${PROJECT_NAME}
-        GTest::GTest
-        GTest::Main
-)
-target_link_libraries(bareg_test
-        ${PROJECT_NAME}
-        GTest::GTest
-        GTest::Main
-)
 add_test(NAME camera_test COMMAND camera_test)
-add_test(NAME lidar_sim_test COMMAND lidar_sim_test)
-add_test(NAME bareg_test COMMAND bareg_test)
-add_test(NAME hash_octree_test COMMAND hash_octree_test)

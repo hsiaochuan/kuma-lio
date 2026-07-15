@@ -64,11 +64,6 @@ bool LaserMapping::Init(const std::string &config_fname) {
     mapper->options_ = global_options;
     mapper->output_dir = output_dir;
 
-    if (param->image_save_en_ && param->camera_) {
-        camera_t cam_id = 1;
-        sfm_data_.cameras_[cam_id] = param->camera_;
-    }
-
     if (param->bag_save_en_) {
         bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
         if (!bag_.isOpen()) {
