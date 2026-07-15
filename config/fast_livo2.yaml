@@ -3,6 +3,7 @@ common:
   imu_topic: "/livox/imu"
   camera_topic: "/left_camera/image"
   camera_enable: true
+  visual_update: true
   imu_enable: true
   scan_interval: 0.1
   lidar_time_offset: 0
@@ -17,19 +18,14 @@ mapping:
   gyr_cov:       5.0e-3
   b_acc_cov:     8.0e-5
   b_gyr_cov:     3.0e-6
-  fov_degree:    360
   det_range:     100.0
   extrin_t_il: [0.04165, 0.02326, -0.0284]
   extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
-path_save_en: true                 # 保存轨迹，用于精度计算和比较
-
-pcd_save:
-  pcd_save_en: true
-  interval: 500                 # how many LiDAR frames saved in each pcd file;
-  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
-
-image_save_en: true
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
+image_save_en: false
 
 point_filter_num: 1
 max_iteration: 3
@@ -48,8 +44,8 @@ cam:
   # spherical
   camera_model: pinhole_radial
   distortion_param: [-0.076160, 0.123001, 0.0, -0.00113, 0.000251]
-  pinhole_param: [1293.56944, 1293.3155, 626.91359, 522.799224]
-  resolution: [1280, 1024]
+  pinhole_param: [646.78472, 646.65775, 313.456795, 261.399612]
+  resolution: [640, 512]
   extrin_t_cl: [ 0.0194384, 0.104689,-0.0251952 ]
   extrin_R_cl: [ 0.00610193,-0.999863,-0.0154172,
                   -0.00615449,0.0153796,-0.999863,

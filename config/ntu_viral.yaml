@@ -1,36 +1,30 @@
 common:
-  lid_topic: "/kitti/velo"
-  imu_topic: "/kitti/imu"
-  camera_topic: ""
+  lid_topic: "/os1_cloud_node1/points"
+  imu_topic: "/imu/imu"
+  camera_topic: "/left/image_raw"
   camera_enable: false
+  visual_update: false
   imu_enable: true
   scan_interval: 0.1
-  lidar_time_offset: 0
+  lidar_time_offset: -0.1
   camera_time_offset: 0
   image_skip: 1
 preprocess:
-  lidar_type: VELODYNE_POINTCLOUD2
-  blind: 4
+  lidar_type: OUSTER
+  blind: 1
 
 mapping:
-  acc_cov:       6.0e-2
-  gyr_cov:       5.0e-3
-  b_acc_cov:     8.0e-5
-  b_gyr_cov:     3.0e-6
-  fov_degree:    360
+  acc_cov: 0.1
+  gyr_cov: 0.1
+  b_acc_cov: 0.0001
+  b_gyr_cov: 0.0001
   det_range:     100.0
-  extrin_t_il: [ -8.086759e-01, 3.195559e-01, -7.997231e-01 ]
-  extrin_R_il: [ 9.999976e-01, 7.553071e-04, -2.035826e-03,
-                 -7.854027e-04, 9.998898e-01, -1.482298e-02,
-                 2.024406e-03, 1.482454e-02, 9.998881e-01 ]
+  extrin_t_il: [-0.050, 0.000, 0.055]
+  extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
-path_save_en: true                 # 保存轨迹，用于精度计算和比较
-
-pcd_save:
-  pcd_save_en: true
-  interval: 500                 # how many LiDAR frames saved in each pcd file;
-  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
-
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
 image_save_en: false
 
 point_filter_num: 1

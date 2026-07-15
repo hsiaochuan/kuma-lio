@@ -39,7 +39,7 @@ add_library(${PROJECT_NAME}
         src/voxel_map.cpp
         src/sfm_data.cpp
         src/database.cpp
-        src/hash_octree.cpp
+        src/visual_manager.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}
@@ -92,7 +92,6 @@ enable_testing()
 add_executable(camera_test src/camera_test.cpp)
 add_executable(lidar_sim_test src/lidar_sim_test.cc)
 add_executable(bareg_test src/bareg_test.cc)
-add_executable(hash_octree_test src/hash_octree_test.cc)
 target_link_libraries(camera_test
         ${PROJECT_NAME}
         GTest::GTest
@@ -104,11 +103,6 @@ target_link_libraries(lidar_sim_test
         GTest::Main
 )
 target_link_libraries(bareg_test
-        ${PROJECT_NAME}
-        GTest::GTest
-        GTest::Main
-)
-target_link_libraries(hash_octree_test
         ${PROJECT_NAME}
         GTest::GTest
         GTest::Main

@@ -21,6 +21,7 @@ namespace faster_lio {
  */
 class PinholeFisheyeCamera : public CamModel {
    public:
+    using Ptr = std::shared_ptr<PinholeFisheyeCamera>;
     PinholeFisheyeCamera(unsigned int w = 0, unsigned int h = 0, double fx = 0.0, double fy = 0.0, double cx = 0.0,
                          double cy = 0.0, double k1 = 0.0, double k2 = 0.0, double k3 = 0.0, double k4 = 0.0)
         : CamModel(w, h), fx_(fx), fy_(fy), cx_(cx), cy_(cy), k1_(k1), k2_(k2), k3_(k3), k4_(k4) {}
@@ -74,7 +75,6 @@ class PinholeFisheyeCamera : public CamModel {
         return true;
     }
 
-   private:
     double fx_;
     double fy_;
     double cx_;

@@ -153,7 +153,8 @@ void TrajectoryGenerator::save_to_pcd(const Trajectory &traj, const std::string 
     }
 
     // Save to PCD file
-    pcl::io::savePCDFileASCII(filename, cloud);
+    if (cloud.size() > 0)
+        pcl::io::savePCDFileASCII(filename, cloud);
 }
 
 Eigen::Isometry3d interpolate_pose(const Eigen::Isometry3d &T0, const Eigen::Isometry3d &T1, double t) {

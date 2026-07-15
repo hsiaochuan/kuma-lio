@@ -64,7 +64,7 @@ struct EIGEN_ALIGN16 ColorPoint {
     float intensity;
     double timestamp;
     std::uint16_t ring;
-    uint32_t color;
+    std::uint32_t rgb;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
@@ -78,11 +78,16 @@ inline void U32ToRGB(uint32_t color, uint8_t &r, uint8_t &g, uint8_t &b) {
 }
 struct Imu {
     using Ptr = std::shared_ptr<Imu>;
-    double timestamp;
+    double timestamp = std::numeric_limits<double>::quiet_NaN();
     Eigen::Vector3d linear_acceleration;
     Eigen::Vector3d angular_velocity;
     Eigen::Vector3d orientation;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
+struct PointWithNormal {
+    Eigen::Vector3d xyz;
+    Eigen::Vector3d normal;
 };
 }  // namespace faster_lio
 
@@ -94,6 +99,18 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
                                 (float, intensity, intensity)
                                 (double, timestamp, timestamp)
                                 (std::uint16_t, ring, ring)
+)
+// clang-format on
+
+// clang-format off
+POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::ColorPoint,
+                                (float, x, x)
+                                (float, y, y)
+                                (float, z, z)
+                                (float, intensity, intensity)
+                                (double, timestamp, timestamp)
+                                (std::uint16_t, ring, ring)
+                                (std::uint32_t, rgb, rgb)
 )
 // clang-format on
 
@@ -195,5 +212,63 @@ struct ScanFrame {
     double timestamp = std::numeric_limits<double>::quiet_NaN();
     PointCloud::Ptr scan = nullptr;
 };
+
+inline bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector &point, const float &threshold = 0.1f) {
+    if (point.size() < options::MIN_NUM_MATCH_POINTS) {
+        return false;
+    }
+
+    Eigen::Matrix<float, 3, 1> normvec;
+
+    if (point.size() == options::NUM_MATCH_POINTS) {
+        Eigen::Matrix<float, options::NUM_MATCH_POINTS, 3> A;
+        Eigen::Matrix<float, options::NUM_MATCH_POINTS, 1> b;
+
+        A.setZero();
+        b.setOnes();
+        b *= -1.0f;
+
+        for (int j = 0; j < options::NUM_MATCH_POINTS; j++) {
+            A(j, 0) = point[j].x;
+            A(j, 1) = point[j].y;
+            A(j, 2) = point[j].z;
+        }
+
+        normvec = A.colPivHouseholderQr().solve(b);
+    } else {
+        Eigen::MatrixXd A(point.size(), 3);
+        Eigen::VectorXd b(point.size(), 1);
+
+        A.setZero();
+        b.setOnes();
+        b *= -1.0f;
+
+        for (int j = 0; j < point.size(); j++) {
+            A(j, 0) = point[j].x;
+            A(j, 1) = point[j].y;
+            A(j, 2) = point[j].z;
+        }
+
+        Eigen::MatrixXd n = A.colPivHouseholderQr().solve(b);
+        normvec(0, 0) = n(0, 0);
+        normvec(1, 0) = n(1, 0);
+        normvec(2, 0) = n(2, 0);
+    }
+
+    float n = normvec.norm();
+    pca_result(0) = normvec(0) / n;
+    pca_result(1) = normvec(1) / n;
+    pca_result(2) = normvec(2) / n;
+    pca_result(3) = 1.0 / n;
+
+    for (const auto &p : point) {
+        Eigen::Matrix<float, 4, 1> temp = p.getVector4fMap();
+        temp[3] = 1.0;
+        if (fabs(pca_result.dot(temp)) > threshold) {
+            return false;
+        }
+    }
+    return true;
+}
 }  // namespace faster_lio
 #endif

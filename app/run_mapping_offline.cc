@@ -15,6 +15,7 @@ namespace fs = boost::filesystem;
 
 DEFINE_string(config_file, "./config/avia.yaml", "path to config file");
 DEFINE_string(bag_file, "", "path to the ros bag");
+DEFINE_string(prior_map_file, "", "path to the prior map file");
 DEFINE_string(output_dir, "", "save the result to the dir");
 DEFINE_double(start, 0.0, "start time in seconds from beginning of bag");
 DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
@@ -33,13 +34,14 @@ int main(int argc, char **argv) {
     const std::string bag_file = FLAGS_bag_file;
     const std::string config_file = FLAGS_config_file;
     const std::string output_dir = FLAGS_output_dir;
+    const std::string prior_map_file = FLAGS_prior_map_file;
     auto laser_mapping = std::make_shared<faster_lio::LaserMapping>();
     laser_mapping->output_dir = output_dir;
     if (!laser_mapping->Init(FLAGS_config_file)) {
         LOG(ERROR) << "laser mapping init failed.";
         return -1;
     }
-
+    laser_mapping->LoadPriorMap(prior_map_file);
     /// handle ctrl-c
     signal(SIGINT, SigHandle);
 

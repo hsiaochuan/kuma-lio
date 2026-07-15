@@ -38,6 +38,29 @@ void CalcBodyCov(Vec3 &pb, const float dist_noise, const float dir_degree, Mat3 
     cov = w * sigma_d * w.transpose() +
         dw * sigma_w * dw.transpose();
 }
+static Vec3f InterpolatedPixel(cv::Mat & img, Vec2 pc)
+{
+    const float u_ref = pc[0];
+    const float v_ref = pc[1];
+    const int u_ref_i = floorf(pc[0]);
+    const int v_ref_i = floorf(pc[1]);
+    const float subpix_u_ref = (u_ref - u_ref_i);
+    const float subpix_v_ref = (v_ref - v_ref_i);
+    const float w_ref_tl = (1.0 - subpix_u_ref) * (1.0 - subpix_v_ref);
+    const float w_ref_tr = subpix_u_ref * (1.0 - subpix_v_ref);
+    const float w_ref_bl = (1.0 - subpix_u_ref) * subpix_v_ref;
+    const float w_ref_br = subpix_u_ref * subpix_v_ref;
+
+    auto pixel_tl = (cv::Vec3f)img.at<cv::Vec3b>(v_ref_i, u_ref_i);
+    auto pixel_tr = (cv::Vec3f)img.at<cv::Vec3b>(v_ref_i, u_ref_i + 1);
+    auto pixel_bl = (cv::Vec3f)img.at<cv::Vec3b>(v_ref_i + 1, u_ref_i);
+    auto pixel_br = (cv::Vec3f)img.at<cv::Vec3b>(v_ref_i + 1, u_ref_i + 1);
+    float B = w_ref_tl * pixel_tl[0] + w_ref_tr * pixel_tr[0] + w_ref_bl * pixel_bl[0] + w_ref_br * pixel_br[0];
+    float G = w_ref_tl * pixel_tl[1] + w_ref_tr * pixel_tr[1] + w_ref_bl * pixel_bl[1] + w_ref_br * pixel_br[1];
+    float R = w_ref_tl * pixel_tl[2] + w_ref_tr * pixel_tr[2] + w_ref_bl * pixel_bl[2] + w_ref_br * pixel_br[2];
+    Vec3f pixel(B, G, R);
+    return pixel;
+}
 void LaserMapping::Run() {
     // sync the lidar and imu data, if no data or not synced, return true
     if (!SyncPackages()) {
@@ -56,6 +79,17 @@ void LaserMapping::Run() {
             p_imu_->InertialInitialize(measures_, *state_point_);
         else
             p_imu_->Initialize(measures_, *state_point_);
+        p_imu_->InertialInitialize(measures_, *state_point_);
+        if (p_imu_->inertial_initialized && param->localization_enable_) {
+            Vec3 g_map(0, 0, -GRAVITY_NORM);
+            Eigen::Quaterniond q_prior = prior_init_rotation_.normalized();
+            Vec3 acc_pred = q_prior * p_imu_->mean_acc_.normalized();
+            Eigen::Quaterniond q_fix = Eigen::Quaterniond::FromTwoVectors(acc_pred, Vec3(0, 0, 1));
+
+            state_point_->rot = q_fix * q_prior;
+            state_point_->pos = prior_init_position_;
+            state_point_->gravity = g_map;
+        }
         return;
     }
 
@@ -75,7 +109,7 @@ void LaserMapping::Run() {
     }
 
     /// the first scan
-    if (if_local_map_init_) {
+    if (if_local_map_init_ && !param->localization_enable_) {
         scan_down_world_->resize(scan_undistort_->size());
         for (int i = 0; i < scan_undistort_->size(); i++) {
             scan_down_world_->at(i).getVector3fMap() =
@@ -99,6 +133,7 @@ void LaserMapping::Run() {
 
 
     // ICP and iterated Kalman filter update
+    StatePoint state_predict = *state_point_;
     Timer::Evaluate(
         [&, this]() {
             IESKF::IterativeUpdate(
@@ -109,9 +144,50 @@ void LaserMapping::Run() {
 
     // update local map
     Timer::Evaluate([&, this]() {
+        if (param->localization_enable_)
+            return;
         MapIncremental();
     }, "Incremental Mapping");
 
+    Timer::Evaluate([&, this]() {
+        if (param->camera_enable_ && param->visual_update_ && !measures_.img_.empty()) {
+            std::vector<PointWithNormal> points_with_normals(scan_down_body_->size());
+            for (int i = 0; i < scan_down_world_->size(); i++) {
+                PointWithNormal point_with_normal;
+                point_with_normal.xyz = scan_down_world_->points[i].getVector3fMap().cast<double>();
+                if (eff_mask_[i])
+                    point_with_normal.normal = plane_coeffs_[i].head<3>().cast<double>();
+                else
+                    point_with_normal.normal = Vec3::Zero();
+                points_with_normals[i] = point_with_normal;
+            }
+            visual_manager->state_predict_ = state_predict;
+            visual_manager->Run(measures_.img_, points_with_normals);
+        }
+    }, "Visual IEKF solve and Update");
+
+    if (param->camera_enable_) {
+        color_scan_world_->reserve(scan_down_world_->size());
+        Pose3 camera_from_world = (Pose3(state_point_->rot, state_point_->pos) * param->extrin_ic_).GetInverse();
+        for (int i = 0; i < scan_down_world_->size(); i++) {
+            Vec3 pc = camera_from_world * scan_down_world_->at(i).getVector3fMap().cast<double>();
+            auto p_im = param->camera_->project_and_valid(pc,3);
+            if (p_im) {
+                ColorPoint color_point{};
+                Vec3f color = InterpolatedPixel(measures_.img_, *p_im);
+                color_point.rgb = RGBToU32(color[2], color[1], color[0]);
+                color_point.getVector3fMap() = scan_down_world_->at(i).getVector3fMap();
+                color_point.intensity = scan_down_world_->at(i).intensity;
+                color_scan_world_->emplace_back(color_point);
+            }
+        }
+    }else {
+        color_scan_world_->resize(scan_down_world_->size());
+        for (int i =0; i < scan_down_world_->size(); i++) {
+            color_scan_world_->at(i).getVector3fMap() = scan_down_world_->at(i).getVector3fMap();
+            color_scan_world_->at(i).intensity = scan_down_world_->at(i).intensity;
+        }
+    }
     LOG(INFO) << "Raw scan: " << scan_undistort_->points.size() << " downsample " << scan_down_body_->size()
               << " Map grid num: " << ivox_->grids_map_.size() << " effect num : " << eff_num_;
 
@@ -156,7 +232,8 @@ void LaserMapping::PostUpdate() {
     }
     if (param->pcd_save_en_) {
         static auto once = fs::create_directories(output_dir + "/scans");
-        pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
+        if (scan_undistort_->size() > 0)
+            pcl::io::savePCDFileBinary(scan->cloud_fname, *scan_undistort_);
     }
     if (param->pcd_save_en_) {
         *pcl_wait_save_ += *scan_down_world_;
@@ -183,14 +260,11 @@ void LaserMapping::PostUpdate() {
 }
 void LaserMapping::PublishROSMsg() {
     // publish
-    if (pub_laser_cloud_world_)
-        PublishFrameWorld();
-    if (pub_path_)
-        PublishPath();
-    if (pub_odom_aft_mapped_)
-        PublishOdometry();
-    if (pub_laser_cloud_effect_world_)
-        PublishFrameEffectWorld();
+    PublishOdometry();
+    PublishFrameWorld();
+    PublishFrameEffectWorld();
+    PublishImage();
+    PublishFrustrum();
 }
 bool LaserMapping::SyncPackages() {
     if (points_buffer_.empty())
@@ -317,68 +391,13 @@ void LaserMapping::MapIncremental() {
         "    IVox Add Points");
 }
 
-
-static bool esti_plane(Eigen::Matrix<float, 4, 1> &pca_result, const PointVector &point, const float &threshold = 0.1f) {
-    if (point.size() < options::MIN_NUM_MATCH_POINTS) {
-        return false;
-    }
-
-    Eigen::Matrix<float, 3, 1> normvec;
-
-    if (point.size() == options::NUM_MATCH_POINTS) {
-        Eigen::Matrix<float, options::NUM_MATCH_POINTS, 3> A;
-        Eigen::Matrix<float, options::NUM_MATCH_POINTS, 1> b;
-
-        A.setZero();
-        b.setOnes();
-        b *= -1.0f;
-
-        for (int j = 0; j < options::NUM_MATCH_POINTS; j++) {
-            A(j, 0) = point[j].x;
-            A(j, 1) = point[j].y;
-            A(j, 2) = point[j].z;
-        }
-
-        normvec = A.colPivHouseholderQr().solve(b);
-    } else {
-        Eigen::MatrixXd A(point.size(), 3);
-        Eigen::VectorXd b(point.size(), 1);
-
-        A.setZero();
-        b.setOnes();
-        b *= -1.0f;
-
-        for (int j = 0; j < point.size(); j++) {
-            A(j, 0) = point[j].x;
-            A(j, 1) = point[j].y;
-            A(j, 2) = point[j].z;
-        }
-
-        Eigen::MatrixXd n = A.colPivHouseholderQr().solve(b);
-        normvec(0, 0) = n(0, 0);
-        normvec(1, 0) = n(1, 0);
-        normvec(2, 0) = n(2, 0);
-    }
-
-    float n = normvec.norm();
-    pca_result(0) = normvec(0) / n;
-    pca_result(1) = normvec(1) / n;
-    pca_result(2) = normvec(2) / n;
-    pca_result(3) = 1.0 / n;
-
-    for (const auto &p : point) {
-        Eigen::Matrix<float, 4, 1> temp = p.getVector4fMap();
-        temp[3] = 1.0;
-        if (fabs(pca_result.dot(temp)) > threshold) {
-            return false;
-        }
-    }
-    return true;
-}
 bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &obs) {
     eff_mask_.resize(scan_down_body_->size(), false);
     nearest_points_.resize(scan_down_body_->size());
-    std::vector<Vec4f> plane_coeffs(scan_down_body_->size());
+    plane_coeffs_.resize(scan_down_body_->size());
+    std::fill(eff_mask_.begin(), eff_mask_.end(), false);
+    std::fill(nearest_points_.begin(), nearest_points_.end(), PointVector());
+    std::fill(plane_coeffs_.begin(), plane_coeffs_.end(), Vec4f::Zero());
     std::vector<float> residuals_(scan_down_body_->size(), 0.0);
     std::vector<size_t> index(scan_down_body_->size());
     pcl::transformPointCloud(*scan_down_body_, *scan_down_world_, s.Isometry().cast<float>());
@@ -389,38 +408,64 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
 
     Timer::Evaluate(
         [&, this]() {
+            if (param->localization_enable_) {
+                // find the surface in the prior map
+                std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
+                    Point &point_world = scan_down_world_->points[i];
+                    PriorMapPoint search_point;
+                    search_point.getVector3fMap() = point_world.getVector3fMap();
+                    std::vector<int> nearest_indices;
+                    std::vector<float> nearest_distances;
+                    map_kd_tree_->nearestKSearch(search_point, 1, nearest_indices, nearest_distances);
+                    if (nearest_indices.size() == 0) {
+                        eff_mask_[i] = false;
+                        return;
+                    }
+                    int nearest_index = nearest_indices[0];
+                    Vec3f nearest_point = map_cloud_->at(nearest_index).getVector3fMap();
+                    float distance = (nearest_point - point_world.getVector3fMap()).norm();
+                    Vec3f normal = map_normals_[nearest_index];
+                    if (distance < 0.2 && normal.hasNaN() == false) {
+                        float d = -normal.dot(nearest_point);
+                        plane_coeffs_[i] = Vec4f(normal[0], normal[1], normal[2], d);
+                        residuals_[i] = plane_coeffs_[i].dot(point_world.getVector3fMap().homogeneous());
+                        eff_mask_[i] = true;
+                    } else {
+                        eff_mask_[i] = false;
+                    }
+                });
+                // no need to find point in ivox
+                return;
+            }
             /** closest surface search and residual computation **/
             std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
                 Point &point_body = scan_down_body_->points[i];
                 Point &point_world = scan_down_world_->points[i];
 
-                auto &points_near = nearest_points_[i];
 
                 /** Find the closest surfaces in the map **/
+                auto &points_near = nearest_points_[i];
                 points_near.clear();
                 ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
                 eff_mask_[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
                 if (eff_mask_[i]) {
-                    eff_mask_[i] = esti_plane(plane_coeffs[i], points_near, param->esti_plane_thr);
+                    eff_mask_[i] = esti_plane(plane_coeffs_[i], points_near, param->esti_plane_thr);
                 }
 
 
                 if (eff_mask_[i]) {
-                    auto temp = point_world.getVector4fMap();
-                    temp[3] = 1.0;
-                    float pd2 = plane_coeffs[i].dot(temp);
-
-                    bool valid_corr = point_body.getVector3fMap().norm() > 81 * pd2 * pd2;
+                    float residual = plane_coeffs_[i].dot(point_world.getVector3fMap().homogeneous());
+                    bool valid_corr = point_body.getVector3fMap().norm() > 81 * residual * residual;
                     if (valid_corr) {
                         eff_mask_[i] = true;
-                        residuals_[i] = pd2;
+                        residuals_[i] = residual;
                     } else {
                         eff_mask_[i] = false;
                     }
                 }
             });
         },
-        "    ObsModel (Lidar Match)");
+        "ObsModel (Lidar Match)");
 
     eff_num_ = 0;
 
@@ -430,7 +475,7 @@ bool LaserMapping::BuildLidarObservation(const StatePoint &s, LidarObservation &
     match_plane_coeff_.resize(scan_down_body_->size());
     for (int i = 0; i < scan_down_body_->size(); i++) {
         if (eff_mask_[i]) {
-            match_plane_coeff_[eff_num_] = plane_coeffs[i];
+            match_plane_coeff_[eff_num_] = plane_coeffs_[i];
             match_point_[eff_num_] = scan_down_body_->points[i].getVector4fMap();
             match_point_[eff_num_][3] = residuals_[i];
             eff_num_++;

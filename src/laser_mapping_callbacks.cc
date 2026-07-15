@@ -3,6 +3,7 @@
 #include "laser_mapping.h"
 #include "utils.h"
 
+#define SCAN_HZ 10
 namespace faster_lio {
 void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
     if (scan->empty()) {
@@ -10,7 +11,17 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
         return;
     }
     std::sort(scan->points.begin(), scan->points.end(), [](const Point &p1, const Point &p2) { return p1.timestamp < p2.timestamp; });
-    CHECK(scan->back().timestamp - scan->front().timestamp < 1.0) << "too big scan, check the timestamp";
+    if(scan->back().timestamp - scan->front().timestamp > 2 * (1. / SCAN_HZ)) {
+        LOG(WARNING) << "scan timestamp range is too large: " << scan->back().timestamp - scan->front().timestamp
+                     << "s, which may cause problems in synchronization with IMU data";
+        int scan_size = scan->points.size();
+        while (scan->back().timestamp - scan->front().timestamp > 2 * (1. / SCAN_HZ)) {
+            scan->points.pop_back();
+        }
+        LOG(WARNING) << "after removing " << scan_size - scan->points.size() << " points, scan timestamp range is " << scan->back().timestamp - scan->front().timestamp
+                     << "s";
+    }
+
 
     int skip_scan_points = 0;
     for (int i = 0; i < scan->size(); ++i) {

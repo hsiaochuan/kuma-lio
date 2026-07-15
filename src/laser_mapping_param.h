@@ -18,15 +18,16 @@ class LaserMappingParam {
     std::string lidar_topic_;
     std::string imu_topic_;
     std::string camera_topic_;
-    bool camera_enable_;
-    bool imu_enable_;
+    bool camera_enable_ = false;
+    bool visual_update_ = false;
+    bool imu_enable_ = true;
     Pose3 extrin_il_ = Pose3::Identity();
     Pose3 extrin_ic_ = Pose3::Identity();
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
     std::shared_ptr<CamModel> camera_;
     int image_skip_ = 3;
-
+    bool localization_enable_ = false;
     // lidar
     std::string lidar_type;
     float det_range_ = 300.0f;
@@ -49,15 +50,13 @@ class LaserMappingParam {
     double b_acc_cov;
 
     // output
-    bool path_save_en_ = false;
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;
     int pcd_save_interval_ = -1;
-
+    bool bag_save_en_ = false;
     bool LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
         try {
-            path_save_en_ = yaml["path_save_en"].as<bool>();
             max_iteraions = yaml["max_iteration"].as<int>();
             esti_plane_thr = yaml["esti_plane_threshold"].as<float>();
             scan_filter_size = yaml["scan_filter_size"].as<float>();
@@ -70,9 +69,10 @@ class LaserMappingParam {
             blind = yaml["preprocess"]["blind"].as<double>();
             lidar_type = yaml["preprocess"]["lidar_type"].as<std::string>();
             point_filter_num = yaml["point_filter_num"].as<int>();
-            pcd_save_en_ = yaml["pcd_save"]["pcd_save_en"].as<bool>();
+            pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
+            pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
+            bag_save_en_ = yaml["bag_save_en"].as<bool>();
             image_save_en_ = yaml["image_save_en"].as<bool>();
-            pcd_save_interval_ = yaml["pcd_save"]["interval"].as<int>();
             extrin_il_.q_ = RotationFromArray(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
             extrin_il_.t_ = VecFromArray(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
             ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
@@ -82,6 +82,7 @@ class LaserMappingParam {
             camera_topic_ = yaml["common"]["camera_topic"].as<std::string>();
             scan_interval_ = yaml["common"]["scan_interval"].as<double>();
             camera_enable_ = yaml["common"]["camera_enable"].as<bool>();
+            visual_update_ = yaml["common"]["visual_update"].as<bool>();
             imu_enable_ = yaml["common"]["imu_enable"].as<bool>();
             camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
             lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();

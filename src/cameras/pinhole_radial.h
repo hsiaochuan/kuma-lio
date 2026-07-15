@@ -25,6 +25,7 @@ namespace faster_lio {
  */
 class PinholeRadialCamera : public CamModel {
    public:
+    using Ptr = std::shared_ptr<PinholeRadialCamera>;
     PinholeRadialCamera(unsigned int w = 0, unsigned int h = 0, double fx = 0.0, double fy = 0.0, double cx = 0.0,
                         double cy = 0.0, double k1 = 0.0, double k2 = 0.0, double k3 = 0.0, double p1 = 0.0,
                         double p2 = 0.0)

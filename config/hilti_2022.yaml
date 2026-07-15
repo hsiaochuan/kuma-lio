@@ -3,6 +3,7 @@ common:
   imu_topic: "/alphasense/imu"
   camera_topic: "/alphasense/cam0/image_raw"
   camera_enable: false
+  visual_update: false
   imu_enable: true
   scan_interval: 0.1
   lidar_time_offset: 0
@@ -17,18 +18,13 @@ mapping:
   gyr_cov: 0.1
   b_acc_cov: 0.0001
   b_gyr_cov: 0.0001
-  fov_degree:    360
   det_range:     100.0
   extrin_t_il: [ -0.001, -0.00855, 0.055 ]
   extrin_R_il: [ 0.7071068, -0.7071068, 0, 0 ]
 
-path_save_en: true                 # 保存轨迹，用于精度计算和比较
-
-pcd_save:
-  pcd_save_en: true
-  interval: 500                 # how many LiDAR frames saved in each pcd file;
-  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
-
+pcd_save_en: true
+pcd_save_interval: 500
+bag_save_en: false
 image_save_en: false
 
 point_filter_num: 1

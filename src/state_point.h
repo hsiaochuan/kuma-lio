@@ -4,6 +4,7 @@
 #include "common_lib.h"
 #include "s2.h"
 #include "so3_math.h"
+#include "pose3.h"
 namespace faster_lio {
 struct StatePoint {
     using Ptr = std::shared_ptr<StatePoint>;

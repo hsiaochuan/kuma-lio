@@ -99,6 +99,7 @@ PointCloud::Ptr PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud
         added_pt.z = pl_orig.points[i].z;
         added_pt.intensity = pl_orig.points[i].intensity;
         added_pt.timestamp = scan_start + pl_orig.points[i].timestamp - base_time;
+        cloud_out->push_back(added_pt);
     }
     return cloud_out;
 }
