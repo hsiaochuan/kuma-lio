@@ -27,7 +27,6 @@ include_directories(src)
 add_library(${PROJECT_NAME}
         src/ieskf_lio.cc
         src/laser_mapping.cc
-        src/laser_mapping_init.cc
         src/laser_mapping_callbacks.cc
         src/laser_mapping_publish.cc
         src/global_optimizor.cpp

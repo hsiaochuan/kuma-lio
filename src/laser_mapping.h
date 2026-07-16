@@ -69,7 +69,7 @@ class LaserMapping {
 
    public:
     /// modules
-    std::shared_ptr<IeskfLio> odom_ = nullptr;                    // state estimation algorithm
+    std::shared_ptr<IeskfLio> ieskf_lio = nullptr;                    // state estimation algorithm
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
     std::shared_ptr<GlobalOptimizor> mapper = nullptr;
 

@@ -16,7 +16,7 @@ namespace fs = boost::filesystem;
 namespace faster_lio {
 
 void LaserMapping::PublishOdometry() {
-    auto state_point_ = odom_->State();
+    auto state_point_ = ieskf_lio->State();
     nav_msgs::Odometry body_odometry;
     geometry_msgs::PoseStamped pose_stamped;
     pose_stamped.pose.position.x = state_point_->pos(0);
@@ -80,7 +80,7 @@ void LaserMapping::PublishOdometry() {
 }
 
 void LaserMapping::PublishFrameWorld() {
-    auto state_point_ = odom_->State();
+    auto state_point_ = ieskf_lio->State();
     sensor_msgs::PointCloud2 scan_msg;
     pcl::toROSMsg(*color_scan_world_, scan_msg);
     scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
@@ -92,11 +92,11 @@ void LaserMapping::PublishFrameWorld() {
 }
 
 void LaserMapping::PublishFrameEffectWorld() {
-    auto state_point_ = odom_->State();
-    auto scan_down_world_ = odom_->ScanDownWorld();
-    const auto &eff_mask_ = odom_->EffMask();
+    auto state_point_ = ieskf_lio->State();
+    auto scan_down_world_ = ieskf_lio->ScanDownWorld();
+    const auto &eff_mask_ = ieskf_lio->EffMask();
     PointCloud::Ptr eff_scan(new PointCloud);
-    eff_scan->resize(odom_->EffNum());
+    eff_scan->resize(ieskf_lio->EffNum());
     int j =0;
     for (int i = 0; i < scan_down_world_->size(); i++) {
         if (eff_mask_[i]) {
@@ -128,7 +128,7 @@ void LaserMapping::PublishImage() {
 void LaserMapping::PublishFrustrum() {
     if (!pub_frustrum_)
         return;
-    auto state_point_ = odom_->State();
+    auto state_point_ = ieskf_lio->State();
 
     // virtual pinhole camera, drawn at the body-to-camera extrinsic (identity if uncalibrated)
     constexpr double kDepth = 1.0;       // frustum depth, meters
