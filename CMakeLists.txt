@@ -25,6 +25,7 @@ endif()
 
 include_directories(src)
 add_library(${PROJECT_NAME}
+        src/ieskf_lio.cc
         src/laser_mapping.cc
         src/laser_mapping_init.cc
         src/laser_mapping_callbacks.cc
