@@ -257,9 +257,9 @@ bool LaserMapping::SyncPackages() {
         measures_.end_time_ = measures_.end_time_;
     }
 
-    if (param->imu_enable_)
-        if (imu_buffer_.back().timestamp < measures_.end_time_)
-            return false;
+
+    if (imu_buffer_.back().timestamp < measures_.end_time_)
+        return false;
     if (points_buffer_.back().timestamp < measures_.end_time_) return false;
 
     // push the imu data
@@ -276,8 +276,7 @@ bool LaserMapping::SyncPackages() {
         points_buffer_.pop_front();
     }
 
-    if (measures_.lidar_->empty() ||
-        (param->imu_enable_ && measures_.imu_.empty())) {
+    if (measures_.lidar_->empty() || measures_.imu_.empty()) {
         std::cout << "Empty lidar or imu data, skip this measure" << std::endl;
         return false;
     }

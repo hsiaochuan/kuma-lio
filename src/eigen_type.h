@@ -2,9 +2,13 @@
 // Created by hsiaochuan on 2026/05/20.
 //
 
-#ifndef FASTER_LIO_EIGEN_TYPE_H
-#define FASTER_LIO_EIGEN_TYPE_H
-#include <Eigen/Eigen>
+#pragma once
+#include <deque>
+#include <map>
+#include <unordered_map>
+#include <vector>
+
+#include <Eigen/Dense>
 namespace faster_lio {
 using MatX = Eigen::MatrixXd;
 using VecX = Eigen::VectorXd;
@@ -31,4 +35,22 @@ using Mat4 = Eigen::Matrix<double, 4, 4>;
 
 using Mat6 = Eigen::Matrix<double, 6, 6>;
 }
-#endif  // FASTER_LIO_EIGEN_TYPE_H
+namespace Eigen {
+
+template <typename T>
+using aligned_vector = std::vector<T, Eigen::aligned_allocator<T>>;
+
+template <typename T>
+using aligned_deque = std::deque<T, Eigen::aligned_allocator<T>>;
+
+template <typename K, typename V>
+using aligned_map = std::map<K, V, std::less<K>,
+                             Eigen::aligned_allocator<std::pair<K const, V>>>;
+
+template <typename K, typename V>
+using aligned_unordered_map =
+    std::unordered_map<K, V, std::hash<K>, std::equal_to<K>,
+                       Eigen::aligned_allocator<std::pair<K const, V>>>;
+
+}  // namespace Eigen
+
