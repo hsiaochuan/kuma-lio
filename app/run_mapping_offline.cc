@@ -68,6 +68,14 @@ int main(int argc, char **argv) {
     for (const rosbag::MessageInstance &m : view) {
         auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>();
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && livox_msg) {
+            static int once = [&](){
+                double start_offset_time = livox_msg->header.stamp.toSec();
+                if (std::isnan(laser_mapping->global_offset_time)) {
+                    laser_mapping->global_offset_time = start_offset_time;
+                    LOG(INFO) << "Offset time: " << std::fixed << start_offset_time;
+                }
+                return 0;
+            }();
             faster_lio::Timer::Evaluate(
                 [&laser_mapping, &livox_msg]() {
                     laser_mapping->LivoxPCLCallBack(livox_msg);
@@ -79,6 +87,14 @@ int main(int argc, char **argv) {
 
         auto point_cloud_msg = m.instantiate<sensor_msgs::PointCloud2>();
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && point_cloud_msg) {
+            static int once = [&](){
+                double start_offset_time = point_cloud_msg->header.stamp.toSec();
+                if (std::isnan(laser_mapping->global_offset_time)) {
+                    laser_mapping->global_offset_time = start_offset_time;
+                    LOG(INFO) << "Offset time: " << std::fixed << start_offset_time;
+                }
+                return 0;
+            }();
             faster_lio::Timer::Evaluate(
                 [&laser_mapping, &point_cloud_msg]() {
                     laser_mapping->StandardPCLCallBack(point_cloud_msg);
@@ -90,6 +106,14 @@ int main(int argc, char **argv) {
 
         auto vel_msg = m.instantiate<velodyne_msgs::VelodyneScan>();
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && vel_msg) {
+            static int once = [&](){
+                double start_offset_time = vel_msg->header.stamp.toSec();
+                if (std::isnan(laser_mapping->global_offset_time)) {
+                    laser_mapping->global_offset_time = start_offset_time;
+                    LOG(INFO) << "Offset time: " << std::fixed << start_offset_time;
+                }
+                return 0;
+            }();
             faster_lio::Timer::Evaluate(
                 [&laser_mapping, &vel_msg]() {
                     laser_mapping->VelodyneScanCallBack(vel_msg);

@@ -170,13 +170,13 @@ void LaserMapping::PostUpdate() {
 
     // save to trajectory
     Pose3 body_pose = Pose3(state_point_->rot, state_point_->pos);
-    trajectory_.emplace_back(state_point_->timestamp, body_pose.Isometry3d());
+    trajectory_.emplace_back(state_point_->timestamp + global_offset_time, body_pose.Isometry3d());
 
     // add scan frame to global optimize
     static scan_t scan_id = 1;
     ScanFrame::Ptr scan = std::make_shared<ScanFrame>(scan_id);
     std::stringstream stamp_string;
-    stamp_string << std::setw(15) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.end_time_;
+    stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << measures_.end_time_;
     scan->cloud_fname = output_dir + "/scans/" + stamp_string.str() + ".pcd";
     scan->world_from_body = Pose3(state_point_->rot, state_point_->pos);
     scan->timestamp = measures_.end_time_;

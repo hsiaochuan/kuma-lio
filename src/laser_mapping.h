@@ -87,7 +87,7 @@ class LaserMapping {
     ros::Publisher pub_image_;
     ros::Publisher pub_frustrum_;
 
-    double first_scan_time_ = std::numeric_limits<double>::quiet_NaN();
+    double global_offset_time = std::numeric_limits<double>::quiet_NaN();
 
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;

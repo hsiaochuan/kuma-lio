@@ -6,6 +6,7 @@ General SLAM algorithm test framework, supporting multiple datasets, offline/onl
 
 import subprocess
 import os
+import sys
 import datetime
 import time
 import argparse
@@ -15,7 +16,18 @@ from pathlib import Path
 from enum import Enum
 import shutil
 import re
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from evo.tools import plot
+from evo.tools.settings import SETTINGS
 
+# Use the evo checked out in third_party/evo (not any pip-installed evo) for ATE evaluation
+_EVO_DIR = str(Path(__file__).resolve().parent.parent / "third_party" / "evo")
+if _EVO_DIR not in sys.path:
+    sys.path.insert(0, _EVO_DIR)
+from evo.core import metrics, sync
+from evo.tools import file_interface
 # ──────────────────────────────────────────────
 # Data Structures
 # ──────────────────────────────────────────────
@@ -37,6 +49,7 @@ class RunTask:
     prior_map_fname: str = ""  # prior map for localization mode
     prior_init_pose: str = ""  # init pose for localization mode
     name: str = ""  # automatically extracted from bag_file
+    ground_truth_fname: str = ""
     is_localization: bool = False
 
     @property
@@ -59,6 +72,7 @@ class DatasetConfig:
     run_mode: RunMode = RunMode.OFFLINE
     prior_init_pose: Dict[str, str] = field(default_factory=dict)
     prior_map: Dict[str, str] = field(default_factory=dict)
+    ground_truth_dir: str = ""
     is_localization: bool = False
 
 @dataclass
@@ -67,7 +81,7 @@ class TestResult:
     bag_file: str
     points_count: int = 0
     duration_sec: float = 0.0
-
+    ate: float = 0.0
 
 @dataclass
 class SuiteResult:
@@ -279,8 +293,55 @@ class SLAMTestRunner:
 
         result.duration_sec = round(end_time - start_time, 1)
         result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
-
+        if os.path.exists(task.ground_truth_fname):
+            result.ate = self.evaluate_ate(task.ground_truth_fname, output_dir)
+        else:
+            print("Fail to evaluate the ATE RMSE")
         return result
+
+    def evaluate_ate(self, ground_truth_fname: str, output_dir: str) -> float:
+        est_fname = os.path.join(output_dir, "traj_log.txt")
+        traj_ref = file_interface.read_tum_trajectory_file(ground_truth_fname)
+        traj_est = file_interface.read_tum_trajectory_file(est_fname)
+        traj_ref, traj_est = sync.associate_trajectories(traj_ref, traj_est, max_diff=0.05)
+        traj_est.align(traj_ref, correct_scale=False)
+
+        ape_metric = metrics.APE(metrics.PoseRelation.translation_part)
+        ape_metric.process_data((traj_ref, traj_est))
+
+        self.save_ate_plots(traj_ref, traj_est, ape_metric, output_dir)
+
+        return ape_metric.get_statistic(metrics.StatisticsType.rmse)
+
+    def save_ate_plots(self, traj_ref, traj_est, ape_metric: "metrics.APE", output_dir: str):
+        """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
+        over the trajectory index, and the trajectory colored by APE error."""
+        error_array = ape_metric.error
+        stats = ape_metric.get_all_statistics()
+
+        fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
+        plot.error_array(
+            fig_error.gca(), error_array,
+            statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
+            name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
+        )
+        fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
+        plt.close(fig_error)
+
+        plot_mode = plot.PlotMode.xy
+        fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
+        ax = plot.prepare_axis(fig_traj, plot_mode)
+        plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
+                  color=SETTINGS.plot_reference_color, label="reference",
+                  alpha=SETTINGS.plot_reference_alpha)
+        plot.traj_colormap(
+            ax, traj_est, error_array, plot_mode,
+            min_map=stats["min"], max_map=stats["max"],
+            title="ATE mapped onto trajectory (aligned)",
+        )
+        fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
+        plt.close(fig_traj)
+
 
     # ── Dataset run ────────────────────────────
 
@@ -329,6 +390,7 @@ class SLAMTestRunner:
                 duration=dataset.duration,
                 prior_map_fname=prior_map_fname,
                 prior_init_pose=prior_init_pose,
+                ground_truth_fname= os.path.join(dataset.ground_truth_dir, name + ".txt"),
                 is_localization=dataset.is_localization,
             )
             test_result = self.run_single(task)
@@ -354,7 +416,7 @@ class SLAMTestRunner:
             f.write("-" * 65 + "\n")
             for r in suite.test_results:
                 f.write(
-                    "{},\t{}\n".format(r.bag_name, r.points_count)
+                    "{},\t{},\tate={}\n".format(r.bag_name, r.points_count, r.ate)
                 )
             f.write("-" * 65 + "\n")
         return fname
@@ -444,6 +506,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
             "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/tuhh_night_09.bag",
         ],
         run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ground_truth",
     )
     mcd_viral_ouster = DatasetConfig(
         name="mcd_viral_ouster",

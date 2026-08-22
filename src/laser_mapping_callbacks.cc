@@ -52,14 +52,9 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
                 LOG(ERROR) << "lidar loop back, clear buffer";
             }
             last_timestamp_lidar_ = timestamp;
-
-            // set start offset
-            if (std::isnan(first_scan_time_)) {
-                first_scan_time_ = timestamp;
-            }
-
-            timestamp = timestamp - first_scan_time_;
-
+            if (std::isnan(global_offset_time) || timestamp < global_offset_time)
+                return;
+            timestamp = timestamp - global_offset_time;
             // push to buffer
             PointCloud::Ptr scan(new PointCloud());
             switch (LidarTypeFromString(param->lidar_type)) {
@@ -94,14 +89,10 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
                 LOG(ERROR) << "lidar loop back, clear buffer";
             }
             last_timestamp_lidar_ = timestamp;
-
-            // set start offset
-            if (std::isnan(first_scan_time_)) {
-                first_scan_time_ = timestamp;
+            if (std::isnan(global_offset_time) || timestamp < global_offset_time) {
+                return;
             }
-
-            timestamp = timestamp - first_scan_time_;
-
+            timestamp = timestamp - global_offset_time;
             // push to buffer
             PointCloud::Ptr scan;
             scan = preprocess_->LivoxHandler(msg, timestamp);
@@ -125,14 +116,9 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
                 LOG(ERROR) << "lidar loop back, clear buffer";
             }
             last_timestamp_lidar_ = timestamp;
-
-            // set start offset
-            if (std::isnan(first_scan_time_)) {
-                first_scan_time_ = timestamp;
-            }
-
-            timestamp = timestamp - first_scan_time_;
-
+            if (std::isnan(global_offset_time) || timestamp < global_offset_time)
+                return;
+            timestamp = timestamp - global_offset_time;
             // push to buffer
             PointCloud::Ptr scan(new PointCloud());
             scan = preprocess_->VelodyneScanHandler(msg, timestamp);
@@ -151,14 +137,9 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
         imu_buffer_.clear();
     }
     last_timestamp_imu_ = timestamp;
-
-    // set start offset
-    if (std::isnan(first_scan_time_)) {
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time)
         return;
-    } else {
-        timestamp = timestamp - first_scan_time_;
-    }
-
+    timestamp = timestamp - global_offset_time;
     // push to buffer
     Imu imu;
     imu.timestamp = timestamp;
@@ -194,13 +175,9 @@ void LaserMapping::ImageCallBack(Image &image) {
         image_buffer_.clear();
     }
     last_timestamp_camera_ = image.timestamp_;
-
-    // set start offset
-    if (std::isnan(first_scan_time_))
+    if (std::isnan(global_offset_time) || image.timestamp_ < global_offset_time)
         return;
-    else
-        image.timestamp_ = image.timestamp_ - first_scan_time_;
-
+    image.timestamp_ = image.timestamp_ - global_offset_time;
     // push to buffer
     image_buffer_.emplace_back(image);
 }
