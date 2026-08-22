@@ -14,7 +14,7 @@ from typing import List, Dict, Tuple
 from pathlib import Path
 from enum import Enum
 import shutil
-import colmap
+import re
 
 # ──────────────────────────────────────────────
 # Data Structures
@@ -39,10 +39,6 @@ class RunTask:
     name: str = ""  # automatically extracted from bag_file
     is_localization: bool = False
 
-    def __post_init__(self):
-        if not self.name:
-            self.name = Path(self.bag_file).stem
-
     @property
     def localization_args(self) -> List[str]:
         if not self.is_localization:
@@ -57,36 +53,13 @@ class DatasetConfig:
     """Dataset configuration"""
     name: str
     bag_files: List[str]
-    config: str
+    config: Dict[str,str] = field(default_factory=dict)
     start: float = 0.0
     duration: float = -1.0
-    config_map: Dict[str, str] = field(default_factory=dict)
     run_mode: RunMode = RunMode.OFFLINE
-    prior_map_fname: str = ""
-    prior_init_pose: str = ""
-    prior_map_map: Dict[str, str] = field(default_factory=dict)
-    prior_init_pose_map: Dict[str, str] = field(default_factory=dict)
+    prior_init_pose: Dict[str, str] = field(default_factory=dict)
+    prior_map: Dict[str, str] = field(default_factory=dict)
     is_localization: bool = False
-
-    @staticmethod
-    def _resolve(mapping: Dict[str, str], bag_name: str, default: str) -> str:
-        for keyword, value in mapping.items():
-            if keyword in bag_name:
-                return value
-        return default
-
-    def resolve_config(self, bag_name: str) -> str:
-        """Select configuration file based on bag name"""
-        return self._resolve(self.config_map, bag_name, self.config)
-
-    def resolve_prior_map(self, bag_name: str) -> str:
-        """Select prior map based on bag name"""
-        return self._resolve(self.prior_map_map, bag_name, self.prior_map_fname)
-
-    def resolve_prior_init_pose(self, bag_name: str) -> str:
-        """Select init pose based on bag name"""
-        return self._resolve(self.prior_init_pose_map, bag_name, self.prior_init_pose)
-
 
 @dataclass
 class TestResult:
@@ -102,9 +75,9 @@ class SuiteResult:
     dataset_name: str
     git_branch: str
     git_commit: str
-    start_time: str
+    start_time: str = ""
     end_time: str = ""
-    results: List[TestResult] = field(default_factory=list)
+    test_results: List[TestResult] = field(default_factory=list)
 
 
 # ──────────────────────────────────────────────
@@ -167,52 +140,40 @@ class SLAMTestRunner:
             offline_app: str = "../build/run_mapping_offline",
             online_app: str = "../build/run_mapping_online",
             points_post_app: str = "../build/points_jet",
-            lvba_app: str = "../build/lvba",
-            points_color_app: str = "../build/points_color",
 
             build_dir: str = "../build",
-            build_jobs: int = 4,
             output_root: str = "./test_results",
-            rviz_config: str = "../rviz_cfg/loam_livox.rviz",
-            online_wait: int = 5,
 
             if_delete_result_dir: bool = False,
             if_slam: bool = True,
-            if_lvba: bool = True,
             if_postprocess: bool = False,
     ):
         self.offline_app = offline_app
         self.online_app = online_app
         self.points_post_app = points_post_app
-        self.lvba_app = lvba_app
-        self.points_color_app = points_color_app
 
         self.build_dir = build_dir
-        self.build_jobs = build_jobs
         self.output_root = output_root
-        self.rviz_config = rviz_config
-        self.online_wait = online_wait
 
         ts = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         self.run_ts = ts
 
         self.if_delete_result_dir = if_delete_result_dir
         self.if_slam = if_slam
-        self.if_lvba = if_lvba
         self.if_postprocess = if_postprocess
 
     # ── Build ──────────────────────────────────
 
     def build(self) -> bool:
-        print(f"Building project (jobs={self.build_jobs}) ...")
+        jobs = 4
+        print(f"Building project (jobs={jobs}) ...")
         try:
             subprocess.run(
                 ["make",
                  "-C", self.build_dir,
                  "run_mapping_offline",
                  "run_mapping_online",
-                 "lvba",
-                 "-j", str(self.build_jobs)],
+                 "-j", str(jobs)],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -249,24 +210,6 @@ class SLAMTestRunner:
             '--output', os.path.join(output_dir, "final_post.pcd"),
         ], check=True)
 
-    def run_points_color(self, output_dir: str):
-        subprocess.run([
-            self.points_color_app,
-            '--lidar_points_fname', os.path.join(output_dir, "final_post.pcd"),
-            '--color_points_fname', os.path.join(output_dir, "final_post_color.pcd"),
-            '--images_dir', os.path.join(output_dir, "images"),
-            '--colmap_result', os.path.join(output_dir, "colmap_result"),
-        ], check=True)
-
-    def run_lvba(self, output_dir: str):
-        subprocess.run([
-            self.lvba_app,
-            '--cam_trajectory', os.path.join(output_dir, "cam_final.txt"),
-            '--lidar_points_fname', os.path.join(output_dir, "final.pcd"),
-            '--database', os.path.join(output_dir, "database.db"),
-            '--colmap_output', os.path.join(output_dir, "colmap_result"),
-        ], check=True)
-
     def run_online(self, task: RunTask) -> bool:
         roscore = rviz = online_proc = None
         try:
@@ -275,11 +218,11 @@ class SLAMTestRunner:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             rviz = subprocess.Popen(
-                ["rviz", "-d", self.rviz_config],
+                ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
 
-            time.sleep(self.online_wait)
+            time.sleep(5)
 
             online_proc = subprocess.Popen(
                 [self.online_app,
@@ -310,41 +253,6 @@ class SLAMTestRunner:
                 if proc:
                     proc.terminate()
 
-    def run_time_analysis(self, time_log: str, time_cost_summ_f: str):
-        with open(time_log, "r", encoding="utf-8") as handle:
-            lines = [line.rstrip("\n") for line in handle if line.strip()]
-
-        if not lines:
-            return
-
-        headers = [h.strip() for h in lines[0].split(",") if h.strip()]
-        if not headers:
-            return
-
-        columns = {name: [] for name in headers}
-        for line in lines[1:]:
-            parts = [part.strip() for part in line.split(",")]
-            for idx, name in enumerate(headers):
-                if idx >= len(parts):
-                    continue
-                try:
-                    value = float(parts[idx]) if parts[idx] else None
-                except ValueError:
-                    value = None
-                if value is None:
-                    continue
-                columns[name].append(value)
-
-        with open(time_cost_summ_f, "w", encoding="utf-8") as result_f:
-            for name, values in columns.items():
-                if not values:
-                    continue
-                avg = sum(values) / len(values)
-                var = sum((v - avg) ** 2 for v in values) / len(values)
-                std = var ** 0.5
-                fmt = "%-35s: num=%d, ave=%f, std=%f, max=%f, min=%f\n"
-                result_f.write(fmt % (name, len(values), avg, std, max(values), min(values)))
-
     def run_single(self, task: RunTask) -> TestResult:
         output_dir = task.output_dir
         result = TestResult(
@@ -363,14 +271,10 @@ class SLAMTestRunner:
                 self.run_offline(task)
             else:
                 self.run_online(task)
-            self.run_time_analysis(os.path.join(output_dir, "time_log.txt"),
-                                   os.path.join(output_dir, "time_cost_summ.txt"))
+
         if self.if_postprocess:
             self.run_post_process(output_dir)
-        if os.path.exists(os.path.join(output_dir, "images")) and self.if_lvba:
-            colmap.run_colmap(output_dir, extract_match=True, mapping=False, triangulate=True)
-            # self.run_lvba(output_dir)
-            # self.run_points_color(output_dir)
+
         end_time = time.time()
 
         result.duration_sec = round(end_time - start_time, 1)
@@ -386,16 +290,15 @@ class SLAMTestRunner:
             dataset_name=dataset.name,
             git_branch=branch,
             git_commit=commit,
-            start_time=datetime.datetime.now().isoformat(),
         )
 
         print(f"\n{'=' * 50}")
         print(f"   Dataset: {dataset.name}  ({len(dataset.bag_files)} bags)")
         print(f"   branch={branch}  commit={commit[:8]}")
 
+        suite.start_time = datetime.datetime.now().isoformat()
         for bag_file in dataset.bag_files:
             name = Path(bag_file).stem
-            config = dataset.resolve_config(name)
             output_dir = os.path.join(
                 Path(bag_file).parent,
                 name + "_faster_lio_result"
@@ -404,20 +307,32 @@ class SLAMTestRunner:
                 print(f"Result dir {output_dir} already exists, remove it")
                 shutil.rmtree(output_dir)
             os.makedirs(output_dir, exist_ok=True)
+            config_fname = ""
+            for pattern, config_fname in dataset.config.items():
+                if re.search(pattern, name):
+                    break
+            prior_map_fname = ""
+            for pattern, prior_map_fname in dataset.prior_map.items():
+                if re.search(pattern, name):
+                    break
+            prior_init_pose = ""
+            for pattern, prior_init_pose in dataset.prior_init_pose.items():
+                if re.search(pattern, name):
+                    break
             task = RunTask(
                 bag_file=bag_file,
-                config=config,
+                config=config_fname,
+                name=name,
                 output_dir=output_dir,
                 run_mode=dataset.run_mode,
                 start=dataset.start,
                 duration=dataset.duration,
-                prior_map_fname=dataset.resolve_prior_map(name),
-                prior_init_pose=dataset.resolve_prior_init_pose(name),
+                prior_map_fname=prior_map_fname,
+                prior_init_pose=prior_init_pose,
                 is_localization=dataset.is_localization,
             )
-            result = self.run_single(task)
-            result.dataset = dataset.name
-            suite.results.append(result)
+            test_result = self.run_single(task)
+            suite.test_results.append(test_result)
 
         suite.end_time = datetime.datetime.now().isoformat()
         return suite
@@ -437,7 +352,7 @@ class SLAMTestRunner:
             f.write(f"START_TIME  = {suite.start_time}\n")
             f.write(f"END_TIME    = {suite.end_time}\n")
             f.write("-" * 65 + "\n")
-            for r in suite.results:
+            for r in suite.test_results:
                 f.write(
                     "{},\t{}\n".format(r.bag_name, r.points_count)
                 )
@@ -469,7 +384,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     """Default datasets equivalent to original two test scripts"""
     botanic_garden = DatasetConfig(
         name="botanic_garden",
-        config="../config/botanic_garden.yaml",
+        config={".":"../config/botanic_garden.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/Botanic/1005_00_LIO.bag",
             "/mnt/data/home/hsiaochuan/data/Botanic/1005_01_LIO.bag",
@@ -487,17 +402,17 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     mcd_viral = DatasetConfig(
         name="mcd_viral",
-        config="../config/mcd_viral_handheld.yaml",
-        config_map={
+        config={
             "ntu": "../config/mcd_viral_atv.yaml",
+            "kth|tuhh": "../config/mcd_viral_handheld.yaml",
         },
         is_localization=False,
-        prior_map_map={
+        prior_map={
             "ntu": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/NTU/map.pcd",
             "tuhh": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/TUHH/map.pcd",
             "kth": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/KTH/map.pcd",
         },
-        prior_init_pose_map={
+        prior_init_pose={
             "ntu_day_01": "49.260631711144441, 107.371797989246588, 7.635809572392588, 0.936118452267473, -0.351663294301812, 0.003894594980225, -0.000053806028052",
             "ntu_day_02": "61.961311814185514, 119.593225444885661, 7.696161795293277, 0.393007783516859, -0.919096202232126, -0.005400025874432, -0.027890730686113",
             "ntu_day_10": "39.916532928019564, 23.052257138316396, 7.299254388426964, 0.886432211042536, 0.292027951287205, 0.156779604991748, 0.323075480889327",
@@ -532,7 +447,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     )
     mcd_viral_ouster = DatasetConfig(
         name="mcd_viral_ouster",
-        config="../config/mcd_viral_ouster.yaml",
+        config={".":"../config/mcd_viral_ouster.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/kth_day_09_os1_64.bag",
             "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/kth_day_10_os1_64.bag",
@@ -551,13 +466,13 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     newer_college = DatasetConfig(
         name="newer_college",
-        config="../config/newer_college.yaml",
+        config={".":"../config/newer_college.yaml"},
         is_localization=False,
-        prior_map_map={
+        prior_map={
             "math": "/mnt/data/home/hsiaochuan/data/newer_college2/prior/maths-institute.pcd",
             "quad": "/mnt/data/home/hsiaochuan/data/newer_college2/prior/new-college-combined-5cm-v2.pcd",
         },
-        prior_init_pose_map={
+        prior_init_pose={
             "2021-04-07-13-49-03_0-math-easy": "-23.7027, -31.2686, 1.0525, -0.0143745, 0.0104179, 0.8413119999999999, 0.540259",
             "2021-07-01-10-37-38-quad-easy": "6.480905467, -56.18264898, 0.9662902927, -0.008606563288, 0.02200112682, 0.473694466, 0.8803723248999999",
         },
@@ -578,7 +493,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     hilti_2022 = DatasetConfig(
         name="hilti_2022",
-        config="../config/hilti_2022.yaml",
+        config={".":"../config/hilti_2022.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/Hilti2022/exp04_construction_upper_level.bag",
             "/mnt/data/home/hsiaochuan/data/Hilti2022/exp07_long_corridor.bag",
@@ -592,8 +507,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     fast_livo2 = DatasetConfig(
         name="fast_livo2",
-        config="../config/fast_livo2.yaml",
-        config_map={
+        config={
             "Retail_Street": "../config/fast_livo2.yaml",
             "CBD_Building_01": "../config/fast_livo2.yaml",
             "Bright_Screen_Wall": "../config/fast_livo2.yaml",
@@ -622,7 +536,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     urban_loco = DatasetConfig(
         name="urban_loco",
-        config="../config/urban_loco.yaml",
+        config={".":"../config/urban_loco.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/urban_loco/test2.bag",
         ],
@@ -631,8 +545,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     geocode = DatasetConfig(
         name="geocode",
-        config="../config/geocode_alpha.yaml",
-        config_map={
+        config={
             "alpha": "../config/geocode_alpha.yaml",
             "gamma": "../config/geocode_gamma.yaml",
         },
@@ -661,7 +574,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     ntu_viral = DatasetConfig(
         name="ntu_viral",
-        config="../config/ntu_viral.yaml",
+        config={".":"../config/ntu_viral.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/ntu_viral/eee_03/eee_03.bag",
         ],
@@ -679,7 +592,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral", "mcd_viral_ouster","botanic_garden", "newer_college", "fast_livo2", "hilti_2022", "urban_loco", "geocode", "ntu_viral"],
+                        default=["mcd_viral"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
