@@ -10,18 +10,42 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -pthread -fexceptions -g -ggdb")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
-set(CMAKE_BUILD_TYPE release)
-include(cmake/packages.cmake)
 
-# options
-option(WITH_IVOX_NODE_TYPE_PHC "Use PHC instead of default ivox node" OFF)
+find_package(catkin REQUIRED COMPONENTS
+        geometry_msgs
+        nav_msgs
+        sensor_msgs
+        roscpp
+        rospy
+        std_msgs
+        pcl_ros
+        tf
+        eigen_conversions
+        cv_bridge
+        velodyne_pointcloud
+        velodyne_msgs
+)
 
-if (WITH_IVOX_NODE_TYPE_PHC)
-    message("USING_IVOX_NODE_TYPE_PHC")
-    add_definitions(-DIVOX_NODE_TYPE_PHC)
-else ()
-    message("USING_IVOX_NODE_TYPE_DEFAULT")
-endif()
+find_package(Eigen3 REQUIRED)
+find_package(PCL 1.8 REQUIRED)
+add_definitions(-DPCL_NO_PRECOMPILE)
+find_package(yaml-cpp REQUIRED)
+find_package(Ceres REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(OpenMP REQUIRED)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+include_directories(
+        ${catkin_INCLUDE_DIRS}
+        ${EIGEN3_INCLUDE_DIR}
+        ${PCL_INCLUDE_DIRS}
+        ${PYTHON_INCLUDE_DIRS}
+        ${yaml-cpp_INCLUDE_DIRS}
+        ${CERES_INCLUDE_DIRS}
+        ${OpenCV_INCLUDE_DIRS}
+        include
+)
+
 
 include_directories(src)
 add_library(${PROJECT_NAME}
