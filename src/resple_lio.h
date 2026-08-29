@@ -1,5 +1,6 @@
 #pragma once
 #include <glog/logging.h>
+#include <array>
 #include <pcl/common/transforms.h>
 #include <pcl/filters/uniform_sampling.h>
 
@@ -21,19 +22,24 @@ struct PointData {
     Eigen::aligned_vector<faster_lio::Point> near_points;
     Eigen::Matrix<double, 1, 24> H;
     bool if_valid = false;
-    double var_pt = 0.01;
+    double pt_wt = 0.01;
 };
 struct ImuData {
     int64_t time_ns;
     Eigen::Vector3d gyro;
     Eigen::Vector3d accel;
-    Eigen::Matrix<double, 6, 24> H;
+    Eigen::Matrix<double, 6, 30> H;
     Eigen::Matrix<double, 6, 1> imu_itp;
+    Eigen::Matrix<double, 6, 1> z;
+    // per-axis outlier gating, decided in prepIMU
+    std::array<bool, 3> if_acc_valid = {false, false, false};
+    std::array<bool, 3> if_gyro_valid = {false, false, false};
     ImuData() {}
     ImuData(const int64_t s, const Eigen::Vector3d& w, const Eigen::Vector3d& a) : time_ns(s), gyro(w), accel(a) {}
 
     ImuData(const ImuData& other)
-        : time_ns(other.time_ns), gyro(other.gyro), accel(other.accel), H(other.H), imu_itp(other.imu_itp) {}
+        : time_ns(other.time_ns), gyro(other.gyro), accel(other.accel), H(other.H), imu_itp(other.imu_itp),
+          if_acc_valid(other.if_acc_valid), if_gyro_valid(other.if_gyro_valid) {}
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 class RESPLE_LIO {
@@ -127,7 +133,7 @@ class RESPLE_LIO {
             pt_meas[i].point_body = points_body->at(i).getVector3fMap().cast<double>();
             pt_meas[i].point = points_body->at(i);
             pt_meas[i].time_ns = points_body->at(i).GetTimeNs();
-            pt_meas[i].var_pt = param->w_pt;
+            pt_meas[i].pt_wt = param->w_pt;
         }
 
         IterativeUpdate();
@@ -205,11 +211,11 @@ class RESPLE_LIO {
             point_w.getVector3fMap() = pt_data.point_world.cast<float>();
             // nearest search
             std::vector<float> point_search_dists;
-            kd_tree->Nearest_Search(point_w, MATCH_POINT, pt_data.near_points, point_search_dists, 2.236);
-            if (pt_data.near_points.size() >= MATCH_POINT && point_search_dists[MATCH_POINT-1] < 5){
+            kd_tree->Nearest_Search(point_w, MATCH_POINT, pt_data.near_points, point_search_dists, 1.0);
+            if (pt_data.near_points.size() >= MATCH_POINT){
                 Vec4 abcd = Vec4::Zero();
-                if (esti_plane(abcd, pt_data.near_points, 0.1)) {
-                    float pd2 = abcd.dot(pt_data.point_world.homogeneous());
+                if (esti_plane(abcd, pt_data.near_points, param->nn_thresh)) {
+                    double pd2 = abcd.dot(pt_data.point_world.homogeneous());
                     if (pt_data.point_body.norm() > 81.0 * pd2 * pd2) {
                         pt_data.if_valid = true;
                         pt_data.ppl_normal = abcd.head<3>().normalized();
@@ -294,7 +300,27 @@ class RESPLE_LIO {
         Hi.block(3, BG_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
         imu_data.imu_itp.head<3>() = RT * a_w + ba;
         imu_data.imu_itp.tail<3>() = rot_vel + bg;
-        imu_data.H = Hi.leftCols<24>();
+        imu_data.H = Hi;
+
+        Eigen::Matrix<double, 6, 1> imu;
+        imu.head<3>() = imu_data.accel;
+        imu.tail<3>() = imu_data.gyro;
+        imu_data.imu_itp.head<3>() = RT * a_w + ba;
+        imu_data.imu_itp.tail<3>() = rot_vel + bg;
+        imu_data.z = imu - imu_data.imu_itp;
+
+        for (int i = 0; i < 3; i++) {
+            imu_data.if_acc_valid[i] = std::abs(imu_data.accel(i) - imu_data.imu_itp(i)) <= 10.0;
+            if (!imu_data.if_acc_valid[i]) {
+                imu_data.H.row(i).setZero();
+                imu_data.z(i) = 0;
+            }
+            imu_data.if_gyro_valid[i] = std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= 5.0;
+            if (!imu_data.if_gyro_valid[i]) {
+                imu_data.H.row(i + 3).setZero();
+                imu_data.z(i + 3) = 0;
+            }
+        }
     }
 
     void prepLiDAR(PointData& pt_data) const {
@@ -329,7 +355,7 @@ class RESPLE_LIO {
         spl.addOneStateKnot(cp_prop_pos.head<3>(), delta);
         cov_rcp = a_mat * cov_rcp * a_mat.transpose() + cov_sys;
     }
-    void UpdateLiDARInertial(int num_eff, const Eigen::Matrix<double, XSIZE, 1>& x_prop,
+    void UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<double, XSIZE, 1>& x_prop,
                              const Eigen::Matrix<double, XSIZE, XSIZE>& P_prop) {
         Eigen::Matrix<double, 6, 1> cov_imu_inv;
         cov_imu_inv(0) = 1. / param->cov_acc(0);
@@ -348,7 +374,7 @@ class RESPLE_LIO {
         for (size_t i = 0; i < imu_meas.size(); i++) {
             prepIMU(imu_meas[i]);
         }
-        int dim_meas = 6 * imu_meas.size() + num_eff;
+        int dim_meas = 6 * imu_meas.size() + eff_lidar_num;
         Eigen::Matrix<double, Eigen::Dynamic, XSIZE> H(dim_meas, XSIZE);
         Eigen::Matrix<double, Eigen::Dynamic, 1> innv(dim_meas, 1);
         Eigen::Matrix<double, Eigen::Dynamic, 1> mat_cov_inv(dim_meas, 1);
@@ -365,13 +391,12 @@ class RESPLE_LIO {
                 (id_pt < pt_meas.size() && id_imu >= imu_meas.size())) {
                 PointData& pt_data = pt_meas[id_pt];
                 if (pt_data.if_valid) {
-                    Eigen::Matrix<double, 24, 24> cov24 = cov_rcp.topLeftCorner<24, 24>();
-                    double lid_cov = pt_data.H * cov24 * pt_data.H.transpose() + pt_data.var_pt;
-                    if (std::abs(pt_data.z) < param->nn_thresh || lid_cov < pt_data.var_pt * param->coeff_cov) {
+                    double lid_cov = pt_data.H * cov_rcp.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
+                    if (std::abs(pt_data.z) < param->nn_thresh || lid_cov < pt_data.pt_wt * param->coeff_cov) {
                         innv(idx_offset) = -pt_data.z;
                         H.block(idx_offset, 0, 1, 24) = pt_data.H;
                     }
-                    mat_cov_inv(idx_offset) = 1 / pt_data.var_pt;
+                    mat_cov_inv(idx_offset) = 1 / pt_data.pt_wt;
                     idx_offset++;
                 }
                 id_pt++;
@@ -379,31 +404,8 @@ class RESPLE_LIO {
                         pt_meas[id_pt].time_ns >= imu_meas[id_imu].time_ns) ||
                        (id_pt >= pt_meas.size() && id_imu < imu_meas.size())) {
                 const ImuData& imu_data = imu_meas[id_imu];
-                Eigen::Matrix<double, 6, 1> imu_itp = imu_data.imu_itp;
-                Eigen::Matrix<double, 6, XSIZE> Hi = Eigen::Matrix<double, 6, XSIZE>::Zero();
-                Hi.leftCols<24>() = imu_data.H;
-                Hi.block(0, BA_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
-                Hi.block(3, BG_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
-
-                Eigen::Matrix<double, 6, 1> imu;
-                imu.head<3>() = imu_data.accel;
-                imu.tail<3>() = imu_data.gyro;
-                for (int i = 0; i < 3; i++) {
-                    if (abs(imu(i) - imu_itp(i)) > 10.0) {
-                        // acc outlier
-                        imu(i) = 0;
-                        imu_itp(i) = 0;
-                        Hi.row(i).setZero();
-                    }
-                    if (abs(imu(i + 3) - imu_itp(i + 3)) > 5.0) {
-                        // gyro outlier
-                        imu(i + 3) = 0;
-                        imu_itp(i + 3) = 0;
-                        Hi.row(i + 3).setZero();
-                    }
-                }
-                innv.segment<6>(idx_offset) = imu - imu_itp;
-                H.block(idx_offset, 0, 6, XSIZE) = Hi;
+                innv.segment<6>(idx_offset) = imu_data.z;
+                H.block(idx_offset, 0, 6, XSIZE) = imu_data.H;
                 mat_cov_inv.segment<6>(idx_offset) = cov_imu_inv;
                 idx_offset += 6;
                 id_imu++;

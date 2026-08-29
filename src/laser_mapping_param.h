@@ -30,7 +30,6 @@ class LaserMappingParam {
     Pose3 extrin_il_ = Pose3::Identity();
     Pose3 extrin_ic_ = Pose3::Identity();
 
-    // resple (key names mirror RESPLE's own config yaml, under a `resple:` block)
     int64_t dt_ns = S_TO_NS(0.01);  // 1 / knot_hz
     double ds_scan_voxel = 0.1;  // ds_scan_voxel: per-scan voxel leaf [m]
     double ds_lm_voxel = 0.2;
@@ -47,7 +46,7 @@ class LaserMappingParam {
     double std_sys_ort = 0.1;
     Vec3 cov_acc = Vec3(1.0, 1.0, 1.0);
     Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
-    double nn_thresh = 0.5;    // point-to-plane residual gate [m]
+    double nn_thresh = 0.2;    // point-to-plane residual gate [m]
     double coeff_cov = 2.0;    // lid_cov < var_pt * coeff_cov gate
     double w_pt = 0.01;        // per-point measurement variance (RESPLE `w_pt`)
     int n_iter = 1;            // IEKF convergence counter threshold
