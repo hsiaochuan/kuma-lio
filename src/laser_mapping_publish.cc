@@ -8,46 +8,39 @@
 #include <pcl/io/pcd_io.h>
 #include <sstream>
 #include <cv_bridge/cv_bridge.h>
-#include "global_optimizor.h"
 #include "laser_mapping.h"
-
+#include <nav_msgs/Path.h>
+#include <visualization_msgs/MarkerArray.h>
 namespace fs = boost::filesystem;
 
 namespace faster_lio {
 
 void LaserMapping::PublishOdometry() {
-    auto state_point_ = ieskf_lio->State();
+    auto interp_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
     nav_msgs::Odometry body_odometry;
     geometry_msgs::PoseStamped pose_stamped;
-    pose_stamped.pose.position.x = state_point_->pos(0);
-    pose_stamped.pose.position.y = state_point_->pos(1);
-    pose_stamped.pose.position.z = state_point_->pos(2);
-    pose_stamped.pose.orientation.x = state_point_->rot.coeffs()[0];
-    pose_stamped.pose.orientation.y = state_point_->rot.coeffs()[1];
-    pose_stamped.pose.orientation.z = state_point_->rot.coeffs()[2];
-    pose_stamped.pose.orientation.w = state_point_->rot.coeffs()[3];
-    pose_stamped.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    pose_stamped.pose.position.x = interp_pose.translation().x();
+    pose_stamped.pose.position.y = interp_pose.translation().y();
+    pose_stamped.pose.position.z = interp_pose.translation().z();
+    Eigen::Quaterniond q(interp_pose.linear());
+    pose_stamped.pose.orientation.x = q.x();
+    pose_stamped.pose.orientation.y = q.y();
+    pose_stamped.pose.orientation.z = q.z();
+    pose_stamped.pose.orientation.w = q.w();
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    pose_stamped.header.stamp = ros_stamp;
     pose_stamped.header.frame_id = "world";
 
     body_odometry.header.frame_id = "world";
     body_odometry.child_frame_id = "body";
-    body_odometry.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    body_odometry.header.stamp = ros_stamp;
     body_odometry.pose.pose = pose_stamped.pose;
-    auto P = state_point_->cov;
-    for (int i = 0; i < 6; i++) {
-        int k = i < 3 ? i + 3 : i - 3;
-        body_odometry.pose.covariance[i * 6 + 0] = P(k, 3);
-        body_odometry.pose.covariance[i * 6 + 1] = P(k, 4);
-        body_odometry.pose.covariance[i * 6 + 2] = P(k, 5);
-        body_odometry.pose.covariance[i * 6 + 3] = P(k, 0);
-        body_odometry.pose.covariance[i * 6 + 4] = P(k, 1);
-        body_odometry.pose.covariance[i * 6 + 5] = P(k, 2);
-    }
+
     // publish
     static nav_msgs::Path path;
     static int call_once = [&]() {
         path.header.frame_id = "world";
-        path.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+        path.header.stamp = ros_stamp;
         return 0;
     }();
     if (pub_odom_aft_mapped_)
@@ -56,80 +49,87 @@ void LaserMapping::PublishOdometry() {
     if (pub_path_)
         pub_path_.publish(path);
     if (bag_.isOpen())
-        bag_.write("/Odometry", ros::Time().fromSec(state_point_->timestamp), pose_stamped);
+        bag_.write("/Odometry", ros_stamp, pose_stamped);
     if (bag_.isOpen())
-        bag_.write("/path", ros::Time().fromSec(state_point_->timestamp), path);
+        bag_.write("/path", ros_stamp, path);
 
     // transform broadcast
-    if (ros::isInitialized()) {
-        static tf::TransformBroadcaster br;
-        tf::Transform transform;
-        tf::Quaternion q;
-        tf::Vector3 t;
-        t.setX(state_point_->pos.x());
-        t.setY(state_point_->pos.y());
-        t.setZ(state_point_->pos.z());
-        q.setX(state_point_->rot.x());
-        q.setY(state_point_->rot.y());
-        q.setZ(state_point_->rot.z());
-        q.setW(state_point_->rot.w());
-        transform.setOrigin(t);
-        transform.setRotation(q);
-        br.sendTransform(tf::StampedTransform(transform, body_odometry.header.stamp, "world", "body"));
-    }
+    static tf::TransformBroadcaster br;
+    tf::Transform transform;
+    tf::Quaternion tf_q;
+    tf::Vector3 t;
+    t.setX(interp_pose.translation().x());
+    t.setY(interp_pose.translation().y());
+    t.setZ(interp_pose.translation().z());
+    tf_q.setX(q.x());
+    tf_q.setY(q.y());
+    tf_q.setZ(q.z());
+    tf_q.setW(q.w());
+    transform.setOrigin(t);
+    transform.setRotation(tf_q);
+    br.sendTransform(tf::StampedTransform(transform, body_odometry.header.stamp, "world", "body"));
+
 }
 
 void LaserMapping::PublishFrameWorld() {
-    auto state_point_ = ieskf_lio->State();
+    if (resple_lio_->pt_meas.empty())
+        return;
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    PointCloud::Ptr points_world(new PointCloud);
+    points_world->reserve(resple_lio_->pt_meas.size());
+    for (int i = 0; i < resple_lio_->pt_meas.size(); ++i) {
+        faster_lio::Point point{};
+        point.getVector3fMap() = resple_lio_->pt_meas[i].point_world.cast<float>();
+        points_world->push_back(point);
+    }
     sensor_msgs::PointCloud2 scan_msg;
-    pcl::toROSMsg(*color_scan_world_, scan_msg);
-    scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    pcl::toROSMsg(*points_world, scan_msg);
+    scan_msg.header.stamp = ros_stamp;
     scan_msg.header.frame_id = "world";
     if (pub_laser_cloud_world_)
         pub_laser_cloud_world_.publish(scan_msg);
     if (bag_.isOpen())
-        bag_.write("/cloud_registered", ros::Time().fromSec(state_point_->timestamp), scan_msg);
+        bag_.write("/cloud_registered", ros_stamp, scan_msg);
 }
 
 void LaserMapping::PublishFrameEffectWorld() {
-    auto state_point_ = ieskf_lio->State();
-    auto scan_down_world_ = ieskf_lio->ScanDownWorld();
-    const auto &eff_mask_ = ieskf_lio->EffMask();
-    PointCloud::Ptr eff_scan(new PointCloud);
-    eff_scan->resize(ieskf_lio->EffNum());
-    int j =0;
-    for (int i = 0; i < scan_down_world_->size(); i++) {
-        if (eff_mask_[i]) {
-            eff_scan->points[j] = scan_down_world_->points[i];
-            j++;
-        }
+    if (resple_lio_->pt_meas.empty())
+        return;
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    PointCloud::Ptr eff_points(new PointCloud);
+    eff_points->reserve(resple_lio_->pt_meas.size());
+    for (int i = 0; i < resple_lio_->pt_meas.size(); ++i) {
+        if (!resple_lio_->pt_meas[i].if_valid)
+            continue;
+        faster_lio::Point point{};
+        point.getVector3fMap() = resple_lio_->pt_meas[i].point_world.cast<float>();
+        eff_points->push_back(point);
     }
     sensor_msgs::PointCloud2 eff_scan_msg;
-    pcl::toROSMsg(*eff_scan, eff_scan_msg);
-    eff_scan_msg.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+    pcl::toROSMsg(*eff_points, eff_scan_msg);
+    eff_scan_msg.header.stamp = ros_stamp;
     eff_scan_msg.header.frame_id = "world";
     if (pub_laser_cloud_effect_world_)
         pub_laser_cloud_effect_world_.publish(eff_scan_msg);
     if (bag_.isOpen())
-        bag_.write("/cloud_registered_effect_world", ros::Time().fromSec(state_point_->timestamp), eff_scan_msg);
+        bag_.write("/cloud_registered_effect_world", ros_stamp, eff_scan_msg);
 }
 void LaserMapping::PublishImage() {
-    if (!measures_.img_.empty()) {
-        cv_bridge::CvImage image_msg;
-        image_msg.header.stamp = ros::Time().fromSec(measures_.end_time_);
-        image_msg.header.frame_id = "world";
-        image_msg.encoding = measures_.img_.type() == CV_8UC1 ? "mono8" : "bgr8";
-        image_msg.image = measures_.img_;
-        if (pub_image_)
-            pub_image_.publish(*image_msg.toImageMsg());
-    }
+    // if (!measures_.img_.empty()) {
+    //     cv_bridge::CvImage image_msg;
+    //     image_msg.header.stamp = ros::Time().fromSec(measures_.end_time_);
+    //     image_msg.header.frame_id = "world";
+    //     image_msg.encoding = measures_.img_.type() == CV_8UC1 ? "mono8" : "bgr8";
+    //     image_msg.image = measures_.img_;
+    //     if (pub_image_)
+    //         pub_image_.publish(*image_msg.toImageMsg());
+    // }
 }
 
 void LaserMapping::PublishFrustrum() {
     if (!pub_frustrum_)
         return;
-    auto state_point_ = ieskf_lio->State();
-
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
     // virtual pinhole camera, drawn at the body-to-camera extrinsic (identity if uncalibrated)
     constexpr double kDepth = 1.0;       // frustum depth, meters
     constexpr double kHalfFovH = 0.5236; // 60 deg horizontal half-FOV, rad
@@ -153,7 +153,8 @@ void LaserMapping::PublishFrustrum() {
 
     visualization_msgs::Marker marker;
     marker.header.frame_id = "body";
-    marker.header.stamp = ros::Time().fromSec(state_point_->timestamp);
+
+    marker.header.stamp = ros_stamp;
     marker.ns = "frustrum";
     marker.id = 0;
     marker.type = visualization_msgs::Marker::LINE_LIST;
@@ -187,65 +188,35 @@ void LaserMapping::PublishFrustrum() {
     pub_frustrum_.publish(marker);
 }
 
-void LaserMapping::Savetrajectory(const std::string &traj_file) {
-    TrajectoryGenerator::save_to_tumtxt(trajectory_, traj_file);
+void LaserMapping::Savetrajectory() {
+    // save body pose
+    TrajectoryGenerator::save_to_tumtxt(trajectory_, (fs::path(output_dir) / "traj_log.txt").string());
+    TrajectoryGenerator::save_to_pcd(trajectory_, (fs::path(output_dir) / "traj.pcd").string());
 
+    // save camera pose
     Trajectory cam_traj;
     for (auto stamp_pose : trajectory_) {
         stamp_pose.pose = stamp_pose.pose * param->extrin_ic_.Isometry3d();
         cam_traj.emplace_back(stamp_pose);
     }
-    std::string cam_traj_file = fs::path(traj_file).parent_path().string() + "/cam_traj_log.txt";
-    TrajectoryGenerator::save_to_tumtxt(cam_traj, cam_traj_file);
-    if (cam_traj.empty()) {
-        std::cout << "No camera trajectory to save." << std::endl;
-        return;
-    }
-    TrajectoryGenerator::save_to_pcd(cam_traj, fs::path(traj_file).parent_path().string() + "/cam_traj_log.ply");
+    TrajectoryGenerator::save_to_tumtxt(cam_traj, (fs::path(output_dir) / "cam_traj_log.txt").string());
+    TrajectoryGenerator::save_to_pcd(cam_traj, (fs::path(output_dir) / "cam_traj.pcd").string());
 }
 
 void LaserMapping::Finish() {
     bag_.close();
-    if (param->pcd_save_interval_ > 0) {
-        static auto once = fs::create_directories(output_dir + "/maps");
+    if (param->pcd_save_en_ && !wait_save_points_->empty()) {
+        double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
+        std::stringstream stamp_string;
+        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
 
-        // sample
-        scan_sampler_.setInputCloud(pcl_wait_save_);
-        scan_sampler_.filter(*pcl_wait_save_);
-
-        // load pcd
-        std::ostringstream pcd_save_fname_ss;
-        pcd_save_fname_ss << output_dir << "/maps/" << std::setw(6) << std::setfill('0') << pcd_idx << ".pcd";
-        std::string pcd_save_fname(pcd_save_fname_ss.str());
-        if (!pcl_wait_save_->empty())
-            pcl::io::savePCDFileBinary(pcd_save_fname, *pcl_wait_save_);
-        pcd_idx++;
+        pcl::UniformSampling<Point> sampler;
+        sampler.setInputCloud(wait_save_points_);
+        sampler.setRadiusSearch(param->ds_scan_voxel);
+        sampler.filter(*wait_save_points_);
+        fs::create_directories(fs::path(output_dir) / "map" );
+        pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(), *wait_save_points_);
     }
-
-    mapper->ScanFilter();
-    boost::filesystem::create_directories(output_dir + "/global/");
-    mapper->ExportMap(output_dir + "/init.pcd");
-    TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/init.txt");
-    std::unordered_map<ScanPair, PairData> loops;
-    if (mapper->options_.lc_enable) {
-        loops = mapper->DetectLoopClosure();
-        mapper->SaveLoopToPcd(output_dir + "/global/loops.pcd");
-    }
-    if (!loops.empty()) {
-        mapper->PoseGraphOptimize();
-        TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/global/pgo.txt");
-        mapper->ExportMap(output_dir + "/global/pgo.pcd");
-    }
-    if (mapper->options_.ba_enable) {
-        for (int i = 0; i < mapper->options_.ba_iters; ++i) {
-            mapper->BundleAdjustment();
-        }
-    }
-
-    // export the poses in body frame
-    std::cout << "Exporting final map and trajectory..." << std::endl;
-    mapper->ExportMap(output_dir + "/final.pcd");
-    TrajectoryGenerator::save_to_tumtxt(mapper->ExportStampedPoses(), output_dir + "/final.txt");
 }
 
 }  // namespace faster_lio

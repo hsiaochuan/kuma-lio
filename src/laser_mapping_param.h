@@ -6,14 +6,10 @@
 #define FASTER_LIO_LASER_MAPPING_PARAM_H
 #include <yaml-cpp/yaml.h>
 #include "cameras/cameras.h"
-#include "ivox3d.h"
 #include "pose3.h"
 using namespace faster_lio;
 class LaserMappingParam {
    public:
-    // parameters
-    using IVoxType = IVox;
-
     // general
     std::string lidar_topic_;
     std::string imu_topic_;
@@ -21,72 +17,70 @@ class LaserMappingParam {
     bool camera_enable_ = false;
     bool visual_update_ = false;
     bool imu_enable_ = true;
-    Pose3 extrin_il_ = Pose3::Identity();
-    Pose3 extrin_ic_ = Pose3::Identity();
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
     std::shared_ptr<CamModel> camera_;
     int image_skip_ = 3;
-    bool localization_enable_ = false;
-    // lidar
+
     std::string lidar_type;
     float det_range_ = 300.0f;
     double blind = 2.0;
     int point_filter_num = 1;
 
-    // mapping
-    double scan_interval_ = 0.1;
-    int max_iteraions = 4;
-    int ivox_nearby_type;
-    IVoxType::Options ivox_options_;
-    double scan_filter_size;
-    double map_filter_size_ = 0;
-    float esti_plane_thr = 0.1;
+    Pose3 extrin_il_ = Pose3::Identity();
+    Pose3 extrin_ic_ = Pose3::Identity();
 
-    // IMU
-    double gyr_cov;
-    double acc_cov;
-    double b_gyr_cov;
-    double b_acc_cov;
+    // resple (key names mirror RESPLE's own config yaml, under a `resple:` block)
+    int64_t dt_ns = S_TO_NS(0.01);  // 1 / knot_hz
+    double ds_scan_voxel = 0.1;  // ds_scan_voxel: per-scan voxel leaf [m]
+    double ds_lm_voxel = 0.2;
+
+    double cov_P0 = 0.02;
+    Vec3 cov_ba = Vec3(0.2, 0.2, 0.2);
+    Vec3 cov_bg = Vec3(0.2, 0.2, 0.2);
+
+    double cov_RCP_pos_old = 0.1;
+    double cov_RCP_ort_old = 0.1;
+    double cov_RCP_pos_new = 1.0;
+    double cov_RCP_ort_new = 1.0;
+    double std_sys_pos = 0.1;
+    double std_sys_ort = 0.1;
+    Vec3 cov_acc = Vec3(1.0, 1.0, 1.0);
+    Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
+    double nn_thresh = 0.5;    // point-to-plane residual gate [m]
+    double coeff_cov = 2.0;    // lid_cov < var_pt * coeff_cov gate
+    double w_pt = 0.01;        // per-point measurement variance (RESPLE `w_pt`)
+    int n_iter = 1;            // IEKF convergence counter threshold
+    double cube_len = 2000.0;  // local map cube edge length [m]
 
     // output
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;
-    int pcd_save_interval_ = -1;
+    double pcd_save_interval_ = 30;
     bool bag_save_en_ = false;
     bool LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
         try {
-            max_iteraions = yaml["max_iteration"].as<int>();
-            esti_plane_thr = yaml["esti_plane_threshold"].as<float>();
-            scan_filter_size = yaml["scan_filter_size"].as<float>();
-            map_filter_size_ = yaml["map_filter_size"].as<float>();
-            det_range_ = yaml["mapping"]["det_range"].as<float>();
-            gyr_cov = yaml["mapping"]["gyr_cov"].as<float>();
-            acc_cov = yaml["mapping"]["acc_cov"].as<float>();
-            b_gyr_cov = yaml["mapping"]["b_gyr_cov"].as<float>();
-            b_acc_cov = yaml["mapping"]["b_acc_cov"].as<float>();
-            blind = yaml["preprocess"]["blind"].as<double>();
-            lidar_type = yaml["preprocess"]["lidar_type"].as<std::string>();
+            blind = yaml["blind"].as<double>();
+            lidar_type = yaml["lidar_type"].as<std::string>();
             point_filter_num = yaml["point_filter_num"].as<int>();
-            pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
-            pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
-            bag_save_en_ = yaml["bag_save_en"].as<bool>();
-            image_save_en_ = yaml["image_save_en"].as<bool>();
-            extrin_il_.q_ = RotationFromArray(yaml["mapping"]["extrin_R_il"].as<std::vector<double>>());
-            extrin_il_.t_ = VecFromArray(yaml["mapping"]["extrin_t_il"].as<std::vector<double>>());
-            ivox_options_.resolution_ = yaml["ivox_grid_resolution"].as<float>();
-            ivox_nearby_type = yaml["ivox_nearby_type"].as<int>();
             lidar_topic_ = yaml["common"]["lid_topic"].as<std::string>();
             imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
             camera_topic_ = yaml["common"]["camera_topic"].as<std::string>();
-            scan_interval_ = yaml["common"]["scan_interval"].as<double>();
             camera_enable_ = yaml["common"]["camera_enable"].as<bool>();
             visual_update_ = yaml["common"]["visual_update"].as<bool>();
             imu_enable_ = yaml["common"]["imu_enable"].as<bool>();
             camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
             lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();
             image_skip_ = yaml["common"]["image_skip"].as<int>();
+
+            extrin_il_.q_ = RotationFromArray(yaml["extrin_R_il"].as<std::vector<double>>());
+            extrin_il_.t_ = VecFromArray(yaml["extrin_t_il"].as<std::vector<double>>());
+
+            pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
+            pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
+            bag_save_en_ = yaml["bag_save_en"].as<bool>();
+            image_save_en_ = yaml["image_save_en"].as<bool>();
         } catch (...) {
             LOG(ERROR) << "bad conversion";
             return false;

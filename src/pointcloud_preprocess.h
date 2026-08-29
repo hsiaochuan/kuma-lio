@@ -14,7 +14,7 @@
 #include <velodyne_msgs/VelodyneScan.h>
 #include <velodyne_pointcloud/pointcloudXYZIRT.h>
 #include <velodyne_pointcloud/rawdata.h>
-
+#include "laser_mapping_param.h"
 namespace velodyne_ros {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
@@ -128,16 +128,13 @@ class PointCloudPreprocess {
     }
     ~PointCloudPreprocess() = default;
 
-    PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, double scan_start);
-    PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
-    PointCloud::Ptr HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
-    PointCloud::Ptr VelodynePointsHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, double scan_start);
-    PointCloud::Ptr VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, double scan_start);
+    PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, std::int64_t scan_start);
+    PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
+    PointCloud::Ptr HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
+    PointCloud::Ptr VelodynePointsHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
+    PointCloud::Ptr VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, std::int64_t scan_start);
     velodyne_rawdata::RawData raw_data;
-    LidarType lidar_type_ = LidarType::LIVOX;
-    int point_filter_num_ = 1;
-    double blind_ = 1.0;
-    double max_range = std::numeric_limits<double>::max();
+    std::shared_ptr<LaserMappingParam> param;
 };
 }  // namespace faster_lio
 

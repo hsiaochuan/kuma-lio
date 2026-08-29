@@ -28,7 +28,7 @@ struct StatePoint {
         this->vel_end = Vec3::Zero();
         this->bias_g = Vec3::Zero();
         this->bias_a = Vec3::Zero();
-        this->gravity = Vec3::UnitZ() * GRAVITY_NORM;
+        this->gravity = Vec3::UnitZ();
 
         // init cov
         this->cov = Eigen::Matrix<double, STATE_DOF, STATE_DOF>::Identity() * 0.01;
@@ -52,7 +52,6 @@ struct StatePoint {
         a.gravity = this->gravity + state_add.block<3, 1>(GRAVITY, 0);
         a.cov = this->cov;
         a.rot.normalize();
-        a.gravity = a.gravity.normalized() * GRAVITY_NORM;
         return a;
     };
 
@@ -64,7 +63,7 @@ struct StatePoint {
         this->bias_a += state_add.block<3, 1>(BIAS_A, 0);
         this->gravity += state_add.block<3, 1>(GRAVITY, 0);
         this->rot.normalize();
-        this->gravity = this->gravity.normalized() * GRAVITY_NORM;
+        this->gravity = this->gravity.normalized();
         return *this;
     };
 

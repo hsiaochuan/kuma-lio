@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -fexceptions -g -ggdb")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -pthread -fexceptions -g -ggdb")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
 set(CMAKE_BUILD_TYPE release)
@@ -25,19 +25,17 @@ endif()
 
 include_directories(src)
 add_library(${PROJECT_NAME}
-        src/ieskf_lio.cc
         src/laser_mapping.cc
         src/laser_mapping_callbacks.cc
         src/laser_mapping_publish.cc
-        src/global_optimizor.cpp
         src/pointcloud_preprocess.cc
-        src/options.cc
-        src/imu_process.cpp
         src/pose3.cpp
         src/stamp_pose.cpp
-        src/utils.cc
         src/voxel_map.cpp
-        src/visual_manager.cpp
+        src/spline_state.cpp
+        src/resple_lio.cpp
+        src/ikd-Tree/ikd_Tree.cpp
+        src/timer.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}
@@ -46,35 +44,24 @@ target_link_libraries(${PROJECT_NAME}
         ${PYTHON_LIBRARIES}
         ${CERES_LIBRARIES}
         ${OpenCV_LIBS}
+        ${OpenMP_CXX_LIBRARIES}
         tbb
         glog
         yaml-cpp
         sqlite3
+        dw
         )
 
-add_executable(run_mapping_online app/run_mapping_online.cc)
-target_link_libraries(run_mapping_online
-        ${PROJECT_NAME} gflags
-        )
 add_executable(run_mapping_offline app/run_mapping_offline.cc)
 target_link_libraries(run_mapping_offline
         ${PROJECT_NAME} gflags
         )
-add_executable(lidar_camera_calibration
-        lidar_camera_calibration/lidar_camera_calib.cpp
-        lidar_camera_calibration/lidar_camera_calib_impl.cpp
-        lidar_camera_calibration/lidar_processor.cpp)
-target_link_libraries(lidar_camera_calibration
-        ${PROJECT_NAME} gflags
-)
+
 add_executable(points_jet ./src/points_jet.cpp)
 target_link_libraries(points_jet ${PROJECT_NAME} gflags)
 
 add_executable(points_merge ./src/points_merge.cpp)
 target_link_libraries(points_merge ${PROJECT_NAME} gflags)
-
-add_executable(offline_global_mapping ./src/offline_global_mapping.cpp)
-target_link_libraries(offline_global_mapping ${PROJECT_NAME} gflags)
 
 find_package(GTest REQUIRED)
 enable_testing()

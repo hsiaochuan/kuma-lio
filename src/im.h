@@ -18,7 +18,7 @@ struct Image {
     camera_t camera_id_ = kInvalidCameraId;
     Pose3 cam_from_world_ = Pose3::InValid();
     std::string name_ = std::string();
-    double timestamp_ = std::numeric_limits<double>::quiet_NaN();
+    std::int64_t time_ns_;
     cv::Mat image_data_;
 
     std::vector<Eigen::Vector2d> points_;
@@ -33,9 +33,8 @@ struct Image {
         return name_;
     }
 
-    double Timestamp() const {
-        CHECK(std::isfinite(timestamp_));
-        return timestamp_;
+    std::int64_t TimeNs() const {
+        return time_ns_;
     }
 
     Pose3 CameraFromWorld() const {
