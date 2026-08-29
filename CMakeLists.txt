@@ -26,8 +26,6 @@ endif()
 include_directories(src)
 add_library(${PROJECT_NAME}
         src/laser_mapping.cc
-        src/laser_mapping_callbacks.cc
-        src/laser_mapping_publish.cc
         src/pointcloud_preprocess.cc
         src/pose3.cpp
         src/stamp_pose.cpp

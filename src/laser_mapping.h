@@ -13,6 +13,7 @@
 #include "pointcloud_preprocess.h"
 #include "resple_lio.h"
 #include "stamp_pose.h"
+#include <cv_bridge/cv_bridge.h>
 namespace faster_lio {
 
 /// Data pipeline around the odometry algorithm: ROS IO, buffering and time sync,
