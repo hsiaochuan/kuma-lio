@@ -11,7 +11,7 @@ common:
 
 lidar_type: LIVOX
 blind: 1.0
-point_filter_num: 1
+point_filter_num: 2
 det_range:     100.0
 
 extrin_t_il: [0.04165, 0.02326, -0.0284]

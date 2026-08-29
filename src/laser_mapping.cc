@@ -16,7 +16,9 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
         LOG(INFO) << "empty in scan, no points pushed into buffer";
         return;
     }
-
+    std::sort(scan->points.begin(), scan->points.end(), [](const Point &a, const Point &b) {
+        return a.GetTimeNs() < b.GetTimeNs();
+    });
     int skip_scan_points = 0;
     for (int i = 0; i < scan->size(); ++i) {
         if (points_buffer_.empty()) {

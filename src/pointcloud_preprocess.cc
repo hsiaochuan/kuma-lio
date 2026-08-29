@@ -42,7 +42,6 @@ PointCloud::Ptr PointCloudPreprocess::OusterHandler(const sensor_msgs::PointClou
         if (range < (param->blind * param->blind) || range > (param->det_range_ * param->det_range_))
             continue;
 
-        Eigen::Vector3d pt_vec;
         faster_lio::Point added_pt;
         added_pt.x = pl_orig.points[i].x;
         added_pt.y = pl_orig.points[i].y;
@@ -50,7 +49,6 @@ PointCloud::Ptr PointCloudPreprocess::OusterHandler(const sensor_msgs::PointClou
         added_pt.intensity = pl_orig.points[i].intensity;
         // unit of offset_time: nanosecond
         added_pt.SetTimeNs(scan_start + pl_orig.points[i].t);
-
         cloud_out->points.push_back(added_pt);
     }
     return cloud_out;

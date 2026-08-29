@@ -11,7 +11,7 @@ common:
 
 lidar_type: OUSTER
 blind: 1.0
-point_filter_num: 1
+point_filter_num: 5
 det_range:     100.0
 
 
