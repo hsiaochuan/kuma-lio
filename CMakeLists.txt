@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -pthread -fexceptions -g -ggdb")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -fexceptions -g -ggdb")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
 
@@ -63,27 +63,25 @@ add_library(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
-        ${PYTHON_LIBRARIES}
         ${CERES_LIBRARIES}
         ${OpenCV_LIBS}
         ${OpenMP_CXX_LIBRARIES}
-        tbb
         glog
         yaml-cpp
-        sqlite3
         dw
+        gflags
         )
 
 add_executable(run_mapping_offline app/run_mapping_offline.cc)
 target_link_libraries(run_mapping_offline
-        ${PROJECT_NAME} gflags
+        ${PROJECT_NAME}
         )
 
 add_executable(points_jet ./src/points_jet.cpp)
-target_link_libraries(points_jet ${PROJECT_NAME} gflags)
+target_link_libraries(points_jet ${PROJECT_NAME})
 
 add_executable(points_merge ./src/points_merge.cpp)
-target_link_libraries(points_merge ${PROJECT_NAME} gflags)
+target_link_libraries(points_merge ${PROJECT_NAME})
 
 find_package(GTest REQUIRED)
 enable_testing()
