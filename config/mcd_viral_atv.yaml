@@ -10,7 +10,7 @@ common:
   image_skip: 1
 
 lidar_type: LIVOX
-blind: 0.5
+blind: 1.0
 point_filter_num: 1
 det_range:     100.0
 

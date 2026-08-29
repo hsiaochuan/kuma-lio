@@ -29,7 +29,9 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
             skip_scan_points++;
         }
     }
-    if (skip_scan_points != 0) LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error";
+
+    if (skip_scan_points != 0)
+        LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error, " << scan->size() << " points total";
 }
 void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
