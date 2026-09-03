@@ -171,14 +171,13 @@ class RESPLE_LIO {
         state << cps_win, ba, bg;
         return state;
     }
-    static bool esti_plane(Vec4& pca_result, const Eigen::aligned_vector<faster_lio::Point>& point,
-                           const double& threshold) {
-        Eigen::Matrix<double, 5, 3> A;
-        Eigen::Matrix<double, 5, 1> b;
+    static bool esti_plane(Vec4& pca_result, const Eigen::aligned_vector<faster_lio::Point>& point,const double& threshold) {
+        Eigen::Matrix<double, MATCH_POINT, 3> A;
+        Eigen::Matrix<double, MATCH_POINT, 1> b;
         A.setZero();
         b.setOnes();
         b *= -1.0f;
-        for (int j = 0; j < 5; j++) {
+        for (int j = 0; j < MATCH_POINT; j++) {
             A(j, 0) = point[j].x;
             A(j, 1) = point[j].y;
             A(j, 2) = point[j].z;
@@ -189,7 +188,7 @@ class RESPLE_LIO {
         pca_result(1) = normvec(1) / n;
         pca_result(2) = normvec(2) / n;
         pca_result(3) = 1.0 / n;
-        for (int j = 0; j < 5; j++) {
+        for (int j = 0; j < MATCH_POINT; j++) {
             if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z +
                      pca_result(3)) > threshold) {
                 return false;
@@ -198,6 +197,8 @@ class RESPLE_LIO {
         return true;
     }
     int Match() {
+        const float nn_radius = static_cast<float>(param->nn_search_radius);
+        const float nn_max_sq = static_cast<float>(param->nn_search_radius * param->nn_search_radius);
 #pragma omp parallel for num_threads(8) schedule(dynamic)
         for (int i = 0; i < pt_meas.size(); i++) {
             PointData& pt_data = pt_meas[i];
@@ -211,10 +212,11 @@ class RESPLE_LIO {
             point_w.getVector3fMap() = pt_data.point_world.cast<float>();
             // nearest search
             std::vector<float> point_search_dists;
-            kd_tree->Nearest_Search(point_w, MATCH_POINT, pt_data.near_points, point_search_dists, 1.0);
-            if (pt_data.near_points.size() >= MATCH_POINT){
+            kd_tree->Nearest_Search(point_w, MATCH_POINT, pt_data.near_points, point_search_dists, nn_radius);
+            if (static_cast<int>(pt_data.near_points.size()) >= MATCH_POINT &&
+                point_search_dists[MATCH_POINT - 1] < nn_max_sq) {
                 Vec4 abcd = Vec4::Zero();
-                if (esti_plane(abcd, pt_data.near_points, param->nn_thresh)) {
+                if (esti_plane(abcd, pt_data.near_points, param->plane_thresh)) {
                     double pd2 = abcd.dot(pt_data.point_world.homogeneous());
                     if (pt_data.point_body.norm() > 81.0 * pd2 * pd2) {
                         pt_data.if_valid = true;
@@ -240,7 +242,7 @@ class RESPLE_LIO {
         int num_eff = 0;
         int t = 0;
         const int max_iter = 5;
-        const int n_iter = param->n_iter;
+        const int n_iter = 1;
         const double eps = 0.1;
         Timer timer;
         for (int i = 0; i < max_iter; i++) {
@@ -310,12 +312,13 @@ class RESPLE_LIO {
         imu_data.z = imu - imu_data.imu_itp;
 
         for (int i = 0; i < 3; i++) {
-            imu_data.if_acc_valid[i] = std::abs(imu_data.accel(i) - imu_data.imu_itp(i)) <= 10.0;
+            imu_data.if_acc_valid[i] = std::abs(imu_data.accel(i) - imu_data.imu_itp(i)) <= param->imu_acc_outlier;
             if (!imu_data.if_acc_valid[i]) {
                 imu_data.H.row(i).setZero();
                 imu_data.z(i) = 0;
             }
-            imu_data.if_gyro_valid[i] = std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= 5.0;
+            imu_data.if_gyro_valid[i] =
+                std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= param->imu_gyro_outlier;
             if (!imu_data.if_gyro_valid[i]) {
                 imu_data.H.row(i + 3).setZero();
                 imu_data.z(i + 3) = 0;
@@ -392,7 +395,7 @@ class RESPLE_LIO {
                 PointData& pt_data = pt_meas[id_pt];
                 if (pt_data.if_valid) {
                     double lid_cov = pt_data.H * cov_rcp.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
-                    if (std::abs(pt_data.z) < param->nn_thresh || lid_cov < pt_data.pt_wt * param->coeff_cov) {
+                    if (std::abs(pt_data.z) < param->ppl_thr || lid_cov < pt_data.pt_wt * param->coeff_cov) {
                         innv(idx_offset) = -pt_data.z;
                         H.block(idx_offset, 0, 1, 24) = pt_data.H;
                     }
@@ -481,8 +484,8 @@ class RESPLE_LIO {
             localmap_box_initialized = true;
             return;
         }
-        const float mov_threshold = 1.5f;
-        const float det_range = 100.0f;  // same fixed value RESPLE uses
+        const float mov_threshold = 1.5;
+        const float det_range = 100.0;
         float dist_to_map_edge[3][2];
         bool need_move = false;
         for (int i = 0; i < 3; i++) {

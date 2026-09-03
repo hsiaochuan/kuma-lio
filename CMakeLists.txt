@@ -48,6 +48,17 @@ include_directories(
 
 
 include_directories(src)
+include_directories(third_party/RTKLIB/src)
+file(GLOB_RECURSE RTKLIB_SOURCE
+        "third_party/RTKLIB/src/*.c"
+)
+list(REMOVE_ITEM RTKLIB_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/rcv/tersus.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/rcv/comnav.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/postpos.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/convrnx.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/download.c"
+)
 add_library(${PROJECT_NAME}
         src/laser_mapping.cc
         src/pointcloud_preprocess.cc
@@ -58,6 +69,8 @@ add_library(${PROJECT_NAME}
         src/resple_lio.cpp
         src/ikd-Tree/ikd_Tree.cpp
         src/timer.cpp
+        src/gnss_processor.cpp
+        ${RTKLIB_SOURCE}
         )
 
 target_link_libraries(${PROJECT_NAME}

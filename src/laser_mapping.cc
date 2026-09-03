@@ -134,6 +134,7 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     imu.linear_acceleration.x() = msg_in->linear_acceleration.x;
     imu.linear_acceleration.y() = msg_in->linear_acceleration.y;
     imu.linear_acceleration.z() = msg_in->linear_acceleration.z;
+    if (param->acc_ratio_) imu.linear_acceleration *= RESPLE_LIO::GRAVITY_NORM;
     imu_buffer_.emplace_back(imu);
 }
 

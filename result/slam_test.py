@@ -500,14 +500,21 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         name="hilti_2022",
         config={".":"../config/hilti_2022.yaml"},
         bag_files=[
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp04_construction_upper_level.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp07_long_corridor.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp11_lower_gallery.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp14_basement_2.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp18_corridor_lower_gallery_2.bag"
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp21_outside_building.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp01_construction_ground_level.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp03_construction_stairs.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp04_construction_upper_level.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp06_construction_upper_level_3.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp07_long_corridor.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp09_cupola.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp11_lower_gallery.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp14_basement_2.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp15_attic_to_upper_gallery.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp16_attic_to_upper_gallery_2.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp18_corridor_lower_gallery_2.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp21_outside_building.bag",
         ],
         run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/hilti2022/groundtruth",
     )
 
     fast_livo2 = DatasetConfig(

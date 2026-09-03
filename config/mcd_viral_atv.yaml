@@ -5,6 +5,7 @@ common:
   camera_enable: false
   visual_update: false
   imu_enable: true
+  acc_ratio: false
   lidar_time_offset: 0
   camera_time_offset: 0
   image_skip: 1
@@ -18,6 +19,9 @@ extrin_t_il: [ -0.010514839241742317,   -0.008989784841758377,   0.0373564686383
 extrin_R_il: [  0.99985813160508060000, -0.0002258196228773494, -0.0168423771687589430,
                 -0.00017111407692153792, -0.9999947058517530000,  0.0032494597148797887,
                 -0.01684302179448474500, -0.0032461167514232880, -0.9998528768488223000]
+
+ds_scan_voxel: 0.5
+ds_lm_voxel: 0.5
 
 pcd_save_en: true
 pcd_save_interval: 30
