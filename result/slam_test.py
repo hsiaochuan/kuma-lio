@@ -550,7 +550,17 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral]
+    mars_lvig = DatasetConfig(
+        name="mars_lvig",
+        config={".":"../config/mars_lvig.yaml"},
+        bag_files=[
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS03.bag",
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
+    )
+    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
