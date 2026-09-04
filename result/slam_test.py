@@ -19,13 +19,13 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from evo.tools import plot
-from evo.tools.settings import SETTINGS
 
 # Use the evo checked out in third_party/evo (not any pip-installed evo) for ATE evaluation
 _EVO_DIR = str(Path(__file__).resolve().parent.parent / "third_party" / "evo")
 if _EVO_DIR not in sys.path:
     sys.path.insert(0, _EVO_DIR)
+from evo.tools import plot
+from evo.tools.settings import SETTINGS
 from evo.core import metrics, sync
 from evo.tools import file_interface
 # ──────────────────────────────────────────────
