@@ -199,10 +199,6 @@ class SLAMTestRunner:
     # ── Single bag run ───────────────────────────
 
     def run_offline(self, task: RunTask) -> bool:
-        rviz = subprocess.Popen(
-            ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
         try:
             subprocess.run(
                 [self.offline_app,
@@ -214,11 +210,10 @@ class SLAMTestRunner:
                  ],
                 check=True,
             )
-            rviz.terminate()
+
             return True
         except subprocess.CalledProcessError as e:
             print(f"  run_mapping_offline exited with code {e.returncode}")
-            rviz.terminate()
             return False
 
     def run_post_process(self, output_dir: str):
@@ -578,13 +573,17 @@ def main():
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
-    parser.add_argument("--if_lvba", action="store_true", default=True, help="Run LVBA")
     parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
+    parser.add_argument("--if_rviz", action="store_true", default=False, help="Run rviz")
     parser.add_argument("--start", type=float, default=0.0, help="Start time (sec) for offline mode")
     parser.add_argument("--duration", type=float, default=-1.0,
                         help="Duration (sec) for offline mode, -1 for full length")
     args = parser.parse_args()
-
+    if args.if_rviz:
+        rviz = subprocess.Popen(
+            ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
     # decide the datasets to run
     data_name_list = args.datasets
     datasets = DatasetsList(data_name_list)
@@ -599,7 +598,6 @@ def main():
     runner = SLAMTestRunner()
     runner.if_delete_result_dir = args.if_delete_result_dir
     runner.if_slam = args.if_slam
-    runner.if_lvba = args.if_lvba
     runner.if_postprocess = args.if_postprocess
     runner.run_all(datasets)
 
