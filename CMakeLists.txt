@@ -69,7 +69,7 @@ add_library(${PROJECT_NAME}
         src/resple_lio.cpp
         src/ikd-Tree/ikd_Tree.cpp
         src/timer.cpp
-        src/gnss_processor.cpp
+#        src/gnss_processor.cpp
         ${RTKLIB_SOURCE}
         )
 
