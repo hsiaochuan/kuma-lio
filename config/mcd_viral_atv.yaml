@@ -23,6 +23,16 @@ extrin_R_il: [  0.99985813160508060000, -0.0002258196228773494, -0.0168423771687
 ds_scan_voxel: 0.5
 ds_lm_voxel: 0.5
 
+knot_hz:      100               # control points per second of the B-spline trajectory
+w_pt:         0.02              # per-point measurement variance of the LiDAR residual
+plane_thresh: 0.1               # max |point-to-plane| of the 5 neighbours when fitting [m]
+nn_thresh:    0.5               # point-to-plane residual gate [m]
+coeff_cov:    2.0               # accept a point when lid_cov < w_pt * coeff_cov
+std_sys_pos:  0.1               # spline process noise, position
+std_sys_ort:  0.1               # spline process noise, orientation
+cov_acc:      [1.0, 1.0, 1.0]   # accelerometer measurement variance
+cov_gyro:     [0.1, 0.1, 0.1]   # gyroscope measurement variance
+
 pcd_save_en: true
 pcd_save_interval: 30
 bag_save_en: false

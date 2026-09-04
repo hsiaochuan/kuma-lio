@@ -41,7 +41,7 @@ class LaserMappingParam {
     double std_sys_ort = 0.1;
     Vec3 cov_acc = Vec3(1.0, 1.0, 1.0);
     Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
-    int64_t dt_ns = S_TO_NS(0.01);  // 1 / knot_hz, derived in LoadFromYaml
+    int64_t dt_ns = S_TO_NS(0.01);   // 1 / knot_hz [s]
     double ds_scan_voxel = 0.5;  // per-scan uniform-sampling leaf [m]
     double ds_lm_voxel = 0.5;    // ikd-tree local-map downsample leaf [m]
     double cube_len = 2000.0;    // local map cube edge length [m]
@@ -80,6 +80,16 @@ class LaserMappingParam {
 
             ds_scan_voxel = yaml["ds_scan_voxel"].as<double>();
             ds_lm_voxel = yaml["ds_lm_voxel"].as<double>();
+
+            dt_ns = S_TO_NS(1.0 / yaml["knot_hz"].as<double>());
+            w_pt = yaml["w_pt"].as<double>();
+            plane_thresh = yaml["plane_thresh"].as<double>();
+            ppl_thr = yaml["nn_thresh"].as<double>();
+            coeff_cov = yaml["coeff_cov"].as<double>();
+            std_sys_pos = yaml["std_sys_pos"].as<double>();
+            std_sys_ort = yaml["std_sys_ort"].as<double>();
+            cov_acc = VecFromArray(yaml["cov_acc"].as<std::vector<double>>());
+            cov_gyro = VecFromArray(yaml["cov_gyro"].as<std::vector<double>>());
 
             pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
             pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
