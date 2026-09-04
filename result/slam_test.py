@@ -25,8 +25,6 @@ _EVO_DIR = str(Path(__file__).resolve().parent.parent / "third_party" / "evo")
 if _EVO_DIR not in sys.path:
     sys.path.insert(0, _EVO_DIR)
 from evo.tools.settings import SETTINGS
-SETTINGS.plot_backend = "Agg"
-from evo.tools import plot
 from evo.core import metrics, sync
 from evo.tools import file_interface
 # ──────────────────────────────────────────────
@@ -321,33 +319,37 @@ class SLAMTestRunner:
         return ape_metric.get_statistic(metrics.StatisticsType.rmse)
 
     def save_ate_plots(self, traj_ref, traj_est, ape_metric: "metrics.APE", output_dir: str):
-        """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
-        over the trajectory index, and the trajectory colored by APE error."""
-        error_array = ape_metric.error
-        stats = ape_metric.get_all_statistics()
+        try:
+            from evo.tools import plot
+            """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
+            over the trajectory index, and the trajectory colored by APE error."""
+            error_array = ape_metric.error
+            stats = ape_metric.get_all_statistics()
 
-        fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
-        plot.error_array(
-            fig_error.gca(), error_array,
-            statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
-            name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
-        )
-        fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
-        plt.close(fig_error)
+            fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
+            plot.error_array(
+                fig_error.gca(), error_array,
+                statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
+                name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
+            )
+            fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
+            plt.close(fig_error)
 
-        plot_mode = plot.PlotMode.xy
-        fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
-        ax = plot.prepare_axis(fig_traj, plot_mode)
-        plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
-                  color=SETTINGS.plot_reference_color, label="reference",
-                  alpha=SETTINGS.plot_reference_alpha)
-        plot.traj_colormap(
-            ax, traj_est, error_array, plot_mode,
-            min_map=stats["min"], max_map=stats["max"],
-            title="ATE mapped onto trajectory (aligned)",
-        )
-        fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
-        plt.close(fig_traj)
+            plot_mode = plot.PlotMode.xy
+            fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
+            ax = plot.prepare_axis(fig_traj, plot_mode)
+            plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
+                      color=SETTINGS.plot_reference_color, label="reference",
+                      alpha=SETTINGS.plot_reference_alpha)
+            plot.traj_colormap(
+                ax, traj_est, error_array, plot_mode,
+                min_map=stats["min"], max_map=stats["max"],
+                title="ATE mapped onto trajectory (aligned)",
+            )
+            fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
+            plt.close(fig_traj)
+        except :
+            print("Error in plotting ATE")
 
 
     # ── Dataset run ────────────────────────────
