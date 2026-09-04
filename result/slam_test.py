@@ -410,9 +410,12 @@ class SLAMTestRunner:
             f.write(f"GIT_BRANCH  = \"{self.git_branch}\"\n")
             f.write(f"GIT_COMMIT  = \"{self.git_commit}\"\n")
             f.write("-" * 65 + "\n")
+            f.write("{:<34}{:>10}{:>12}\n".format("sequence", "wall_s", "ate_rmse_m"))
             for suite_result in suite_results:
+                f.write("[{}]\n".format(suite_result.dataset_name))
                 for test_result in suite_result.test_results:
-                    f.write("{},\t{},\t{}、n\n".format(test_result.bag_name, test_result.duration_sec, test_result.ate))
+                    f.write("{:<34}{:>10.1f}{:>12.4f}\n".format(
+                        test_result.bag_name, test_result.duration_sec, test_result.ate))
             f.write("-" * 65 + "\n")
 
 
@@ -571,7 +574,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral"],
+                        default=["mcd_viral","hilti_2022","mars_lvig"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")

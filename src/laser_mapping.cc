@@ -181,6 +181,39 @@ void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::C
     }
     img_count++;
 }
+void LaserMapping::GnssCallback(const sensor_msgs::NavSatFix::ConstPtr &msg) {
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    double timestamp = msg->header.stamp.toSec();
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    std::int64_t local_time = S_TO_NS(timestamp - global_offset_time);
+    gnss_time_buffer_.emplace_back(local_time);
+
+
+    sol_t sol{};
+    sol.time.time = static_cast<time_t>(floor(timestamp));
+    sol.time.sec = timestamp - floor(timestamp);
+    const double pos[3] = {
+        msg->latitude  * D2R,
+        msg->longitude * D2R,
+        msg->altitude
+    };
+    pos2ecef(pos, sol.rr);
+
+    const uint8_t fix_type  = static_cast<uint8_t>(msg->status.status);
+    const uint8_t carr_soln = static_cast<uint8_t>(msg->status.service);
+
+    if (fix_type == 0 || fix_type == 5) {
+        sol.stat = SOLQ_NONE;
+    } else if (carr_soln == 2) {
+        sol.stat = SOLQ_FIX;
+    } else if (carr_soln == 1) {
+        sol.stat = SOLQ_FLOAT;
+    } else {
+        sol.stat = SOLQ_SINGLE;
+    }
+    sol.type = 0;
+    gnss_sol_buffer_.emplace_back(sol);
+}
 
 bool LaserMapping::Init(const std::string &config_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
@@ -353,13 +386,11 @@ void LaserMapping::PublishROSMsg() {
 }
 bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
     if (points_buffer_.empty()) return false;
-    if (param->imu_enable_ && imu_buffer_.empty()) return false;
 
-    // imu buffer is not beyond the measures end
+    // buffer is not beyond the measures end
     if (imu_buffer_.back().time_ns < meas_end) return false;
-    // points buffer is not beyond the measures end
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
-
+    if (gnss_time_buffer_.back() < meas_end) return false;
     // push the imu data
     measures_.imu_.clear();
     while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < meas_end) {
@@ -368,11 +399,18 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
     }
 
     measures_.lidar_->clear();
-    int num_collected = 0;
     while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < meas_end) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
-        num_collected++;
+    }
+
+    measures_.gnss_local_time.clear();
+    measures_.gnss_sol.clear();
+    while (!gnss_time_buffer_.empty() && gnss_time_buffer_.front() < meas_end) {
+        measures_.gnss_local_time.emplace_back(gnss_time_buffer_.front());
+        gnss_time_buffer_.pop_front();
+        measures_.gnss_sol.emplace_back(gnss_sol_buffer_.front());
+        gnss_sol_buffer_.pop_front();
     }
 
     if (measures_.lidar_->empty()) {

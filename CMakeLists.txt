@@ -32,6 +32,7 @@ add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(GTSAM REQUIRED)
 find_package(OpenMP REQUIRED)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -43,22 +44,45 @@ include_directories(
         ${yaml-cpp_INCLUDE_DIRS}
         ${CERES_INCLUDE_DIRS}
         ${OpenCV_INCLUDE_DIRS}
+        ${GTSAM_INCLUDE_DIR}
         include
 )
 
 
 include_directories(src)
-include_directories(third_party/RTKLIB/src)
-file(GLOB_RECURSE RTKLIB_SOURCE
-        "third_party/RTKLIB/src/*.c"
-)
-list(REMOVE_ITEM RTKLIB_SOURCE
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/rcv/tersus.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/rcv/comnav.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/postpos.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/convrnx.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB/src/download.c"
-)
+
+set(RTKLIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/RTKLIB)
+file(GLOB RTKLIB_SRCS CONFIGURE_DEPENDS ${RTKLIB_DIR}/src/*.c)
+list(APPEND RTKLIB_SRCS
+        ${RTKLIB_DIR}/src/rcv/binex.c
+        ${RTKLIB_DIR}/src/rcv/crescent.c
+        ${RTKLIB_DIR}/src/rcv/javad.c
+        ${RTKLIB_DIR}/src/rcv/novatel.c
+        ${RTKLIB_DIR}/src/rcv/nvs.c
+        ${RTKLIB_DIR}/src/rcv/rt17.c
+        ${RTKLIB_DIR}/src/rcv/septentrio.c
+        ${RTKLIB_DIR}/src/rcv/skytraq.c
+        ${RTKLIB_DIR}/src/rcv/swiftnav.c
+        ${RTKLIB_DIR}/src/rcv/ublox.c
+        ${RTKLIB_DIR}/src/rcv/unicore.c
+        )
+
+add_library(rtklib STATIC ${RTKLIB_SRCS})
+set_target_properties(rtklib PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+target_include_directories(rtklib PUBLIC ${RTKLIB_DIR}/src)
+target_compile_definitions(rtklib PUBLIC
+        ENAGLO ENAGAL ENAQZS ENACMP ENAIRN
+        NFREQ=3 NEXOBS=3 SVR_REUSEADDR)
+
+target_compile_options(rtklib PRIVATE -w)
+target_link_libraries(rtklib PUBLIC m pthread)
+foreach (rtklib_app rnx2rtkp convbin pos2kml)
+    add_executable(${rtklib_app} ${RTKLIB_DIR}/app/consapp/${rtklib_app}/${rtklib_app}.c)
+    target_link_libraries(${rtklib_app} rtklib)
+    target_compile_options(${rtklib_app} PRIVATE -w)
+endforeach ()
+
+
 add_library(${PROJECT_NAME}
         src/laser_mapping.cc
         src/pointcloud_preprocess.cc
@@ -70,7 +94,6 @@ add_library(${PROJECT_NAME}
         src/ikd-Tree/ikd_Tree.cpp
         src/timer.cpp
         src/gnss_processor.cpp
-        ${RTKLIB_SOURCE}
         )
 
 target_link_libraries(${PROJECT_NAME}
@@ -78,6 +101,8 @@ target_link_libraries(${PROJECT_NAME}
         ${PCL_LIBRARIES}
         ${CERES_LIBRARIES}
         ${OpenCV_LIBS}
+        gtsam
+        rtklib
         ${OpenMP_CXX_LIBRARIES}
         glog
         yaml-cpp
@@ -86,9 +111,10 @@ target_link_libraries(${PROJECT_NAME}
         )
 
 add_executable(run_mapping_offline app/run_mapping_offline.cc)
-target_link_libraries(run_mapping_offline
-        ${PROJECT_NAME}
-        )
+target_link_libraries(run_mapping_offline ${PROJECT_NAME})
+
+add_executable(global_mapping_offline app/global_mapping_offline.cpp)
+target_link_libraries(global_mapping_offline ${PROJECT_NAME})
 
 add_executable(points_jet ./src/points_jet.cpp)
 target_link_libraries(points_jet ${PROJECT_NAME})

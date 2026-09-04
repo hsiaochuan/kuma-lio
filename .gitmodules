@@ -1,3 +1,6 @@
 [submodule "third_party/evo"]
 	path = third_party/evo
 	url = https://github.com/MichaelGrupp/evo
+[submodule "third_party/RTKLIB"]
+	path = third_party/RTKLIB
+	url = https://github.com/rtklibexplorer/RTKLIB
