@@ -87,8 +87,6 @@ class TestResult:
 class SuiteResult:
     """Overall test suite result"""
     dataset_name: str
-    git_branch: str
-    git_commit: str
     start_time: str = ""
     end_time: str = ""
     test_results: List[TestResult] = field(default_factory=list)
@@ -162,6 +160,8 @@ class SLAMTestRunner:
             if_slam: bool = True,
             if_postprocess: bool = False,
     ):
+        self.git_branch = get_git_info()[0]
+        self.git_commit = get_git_info()[1]
         self.offline_app = offline_app
         self.online_app = online_app
         self.points_post_app = points_post_app
@@ -169,8 +169,7 @@ class SLAMTestRunner:
         self.build_dir = build_dir
         self.output_root = output_root
 
-        ts = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        self.run_ts = ts
+        self.run_time = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
         self.if_delete_result_dir = if_delete_result_dir
         self.if_slam = if_slam
@@ -186,7 +185,7 @@ class SLAMTestRunner:
                 ["make",
                  "-C", self.build_dir,
                  "run_mapping_offline",
-                 "run_mapping_online",
+                 # "run_mapping_online",
                  "-j", str(jobs)],
                 check=True,
                 stdout=subprocess.PIPE,
@@ -201,6 +200,10 @@ class SLAMTestRunner:
     # ── Single bag run ───────────────────────────
 
     def run_offline(self, task: RunTask) -> bool:
+        rviz = subprocess.Popen(
+            ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         try:
             subprocess.run(
                 [self.offline_app,
@@ -212,9 +215,11 @@ class SLAMTestRunner:
                  ],
                 check=True,
             )
+            rviz.terminate()
             return True
         except subprocess.CalledProcessError as e:
             print(f"  run_mapping_offline exited with code {e.returncode}")
+            rviz.terminate()
             return False
 
     def run_post_process(self, output_dir: str):
@@ -292,9 +297,10 @@ class SLAMTestRunner:
         end_time = time.time()
 
         result.duration_sec = round(end_time - start_time, 1)
-        result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
+        # result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
         if os.path.exists(task.ground_truth_fname):
             result.ate = self.evaluate_ate(task.ground_truth_fname, output_dir)
+            print("ATE RMSE: {}".format(result.ate))
         else:
             print("Fail to evaluate the ATE RMSE")
         return result
@@ -349,8 +355,6 @@ class SLAMTestRunner:
         branch, commit = get_git_info()
         suite = SuiteResult(
             dataset_name=dataset.name,
-            git_branch=branch,
-            git_commit=commit,
         )
 
         print(f"\n{'=' * 50}")
@@ -401,25 +405,16 @@ class SLAMTestRunner:
 
     # ── Write result files ────────────────────────────
 
-    def write_txt_report(self, suite: SuiteResult) -> str:
-        fname = os.path.join(
-            self.output_root,
-            f"{suite.dataset_name.replace(' ', '_')}_{self.run_ts}.txt"
-        )
-        os.makedirs(self.output_root, exist_ok=True)
+    def write_txt_report(self, suite_results: List[SuiteResult], fname: str):
         with open(fname, 'w', encoding='utf-8') as f:
-            f.write(f"DATA_SET    = {suite.dataset_name}\n")
-            f.write(f"GIT_BRANCH  = \"{suite.git_branch}\"\n")
-            f.write(f"GIT_COMMIT  = \"{suite.git_commit}\"\n")
-            f.write(f"START_TIME  = {suite.start_time}\n")
-            f.write(f"END_TIME    = {suite.end_time}\n")
+            f.write(f"GIT_BRANCH  = \"{self.git_branch}\"\n")
+            f.write(f"GIT_COMMIT  = \"{self.git_commit}\"\n")
             f.write("-" * 65 + "\n")
-            for r in suite.test_results:
-                f.write(
-                    "{},\t{},\tate={}\n".format(r.bag_name, r.points_count, r.ate)
-                )
+            for suite_result in suite_results:
+                for test_result in suite_result.test_results:
+                    f.write("{},\t{},\t{}、n\n".format(test_result.bag_name, test_result.duration_sec, test_result.ate))
             f.write("-" * 65 + "\n")
-        return fname
+
 
     # ── Main entry ────────────────────────────────
 
@@ -433,8 +428,8 @@ class SLAMTestRunner:
         suite_results = []
         for dataset in datasets:
             suite_result = self.run_dataset(dataset)
-            self.write_txt_report(suite_result)
             suite_results.append(suite_result)
+        self.write_txt_report(suite_results, os.path.join(self.output_root, self.run_time + ".txt"))
 
         return suite_results
 
@@ -443,24 +438,6 @@ class SLAMTestRunner:
 # CLI
 # ──────────────────────────────────────────────
 def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
-    """Default datasets equivalent to original two test scripts"""
-    botanic_garden = DatasetConfig(
-        name="botanic_garden",
-        config={".":"../config/botanic_garden.yaml"},
-        bag_files=[
-            "/mnt/data/home/hsiaochuan/data/Botanic/1005_00_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1005_01_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1005_05_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1005_07_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1006_01_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1006_03_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1008_01_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1008_03_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1018_00_LIO.bag",
-            "/mnt/data/home/hsiaochuan/data/Botanic/1018_13_LIO.bag",
-        ],
-        run_mode=RunMode.OFFLINE,
-    )
 
     mcd_viral = DatasetConfig(
         name="mcd_viral",
@@ -508,64 +485,36 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ground_truth",
     )
+
     mcd_viral_ouster = DatasetConfig(
         name="mcd_viral_ouster",
         config={".":"../config/mcd_viral_ouster.yaml"},
         bag_files=[
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/kth_day_09_os1_64.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/kth_day_10_os1_64.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/kth_night_04_os1_64.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/ntu_day_02_os1_128.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/ntu_day_10_os1_128.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/ntu_night_04_os1_128.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/ntu_night_13_os1_128.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/tuhh_day_02_os1_64.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/tuhh_night_07_os1_64.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/tuhh_night_08_os1_64.bag",
-            "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/ouster_raw/tuhh_night_09_os1_64.bag",
-        ],
-        run_mode=RunMode.ONLINE,
-    )
-
-    newer_college = DatasetConfig(
-        name="newer_college",
-        config={".":"../config/newer_college.yaml"},
-        is_localization=False,
-        prior_map={
-            "math": "/mnt/data/home/hsiaochuan/data/newer_college2/prior/maths-institute.pcd",
-            "quad": "/mnt/data/home/hsiaochuan/data/newer_college2/prior/new-college-combined-5cm-v2.pcd",
-        },
-        prior_init_pose={
-            "2021-04-07-13-49-03_0-math-easy": "-23.7027, -31.2686, 1.0525, -0.0143745, 0.0104179, 0.8413119999999999, 0.540259",
-            "2021-07-01-10-37-38-quad-easy": "6.480905467, -56.18264898, 0.9662902927, -0.008606563288, 0.02200112682, 0.473694466, 0.8803723248999999",
-        },
-        bag_files=[
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-04-07-13-49-03_0-math-easy.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-04-07-13-52-31_1-math-easy.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-04-07-13-55-18-math-medium.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-04-07-13-58-54_0-math-hard.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-04-07-14-02-18_1-math-hard.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-07-01-10-37-38-quad-easy.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-07-01-10-40-50_0-stairs.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-07-01-11-31-35_0-quad-medium.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-07-01-11-35-14_0-quad-hard.bag",
-            "/mnt/data/home/hsiaochuan/data/newer_college2/2021-12-02-10-15-59_0-cloister.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MCD_VIRAL/raw/ouster/ntu_day_02_os1_128.bag",
         ],
         run_mode=RunMode.OFFLINE,
     )
+
 
     hilti_2022 = DatasetConfig(
         name="hilti_2022",
         config={".":"../config/hilti_2022.yaml"},
         bag_files=[
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp04_construction_upper_level.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp07_long_corridor.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp11_lower_gallery.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp14_basement_2.bag",
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp18_corridor_lower_gallery_2.bag"
-            "/mnt/data/home/hsiaochuan/data/Hilti2022/exp21_outside_building.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp01_construction_ground_level.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp03_construction_stairs.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp04_construction_upper_level.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp06_construction_upper_level_3.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp07_long_corridor.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp09_cupola.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp11_lower_gallery.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp14_basement_2.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp15_attic_to_upper_gallery.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp16_attic_to_upper_gallery_2.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp18_corridor_lower_gallery_2.bag",
+            "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp21_outside_building.bag",
         ],
         run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/hilti2022/groundtruth",
     )
 
     fast_livo2 = DatasetConfig(
@@ -574,63 +523,21 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
             "Retail_Street": "../config/fast_livo2.yaml",
             "CBD_Building_01": "../config/fast_livo2.yaml",
             "Bright_Screen_Wall": "../config/fast_livo2.yaml",
-
-            "HKU_Landmark": "../config/fast_livo2_1.yaml",
-            "HKU_Centennial_Garden": "../config/fast_livo2_1.yaml",
-            "HKU_Main_Building": "../config/fast_livo2_1.yaml",
-            "HKU_Lecture_Center_01": "../config/fast_livo2_1.yaml",
-
-            "SYSU_01": "../config/fast_livo2_2.yaml",
+            "HKU_Landmark": "../config/fast_livo2.yaml",
+            "HKU_Centennial_Garden": "../config/fast_livo2.yaml",
+            "HKU_Main_Building": "../config/fast_livo2.yaml",
+            "HKU_Lecture_Center_01": "../config/fast_livo2.yaml",
+            "SYSU_01": "../config/fast_livo2.yaml",
         },
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Retail_Street.bag",
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/CBD_Building_01.bag",
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/Bright_Screen_Wall.bag",
-
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Landmark.bag",
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Centennial_Garden_01.bag",
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Main_Building.bag",
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/HKU_Lecture_Center_01.bag",
-
             "/mnt/data/home/hsiaochuan/data/FAST-LIVO2/SYSU_01.bag",
-        ],
-        run_mode=RunMode.OFFLINE,
-    )
-
-    urban_loco = DatasetConfig(
-        name="urban_loco",
-        config={".":"../config/urban_loco.yaml"},
-        bag_files=[
-            "/mnt/data/home/hsiaochuan/data/urban_loco/test2.bag",
-        ],
-        run_mode=RunMode.OFFLINE,
-    )
-
-    geocode = DatasetConfig(
-        name="geocode",
-        config={
-            "alpha": "../config/geocode_alpha.yaml",
-            "gamma": "../config/geocode_gamma.yaml",
-        },
-        bag_files=[
-            "/mnt/data/home/hsiaochuan/data/geode/Offroad3_alpha.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Offroad3_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Offroad7_alpha.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Offroad7_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Shield_tunnel1_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Shield_tunnel2_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Shield_tunnel3_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/stairs_alpha.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/stairs_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel2_alpha.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel2_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel3_alpha.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel3_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel4_alpha.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Tunneling_tunnel4_gamma.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Urban_Tunnel01.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Urban_Tunnel02.bag",
-            "/mnt/data/home/hsiaochuan/data/geode/Urban_Tunnel03.bag"
         ],
         run_mode=RunMode.OFFLINE,
     )
@@ -643,8 +550,17 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
     )
-    all_datasets = [botanic_garden, mcd_viral, mcd_viral_ouster, newer_college, hilti_2022, fast_livo2, urban_loco,
-                    geocode, ntu_viral]
+    mars_lvig = DatasetConfig(
+        name="mars_lvig",
+        config={".":"../config/mars_lvig.yaml"},
+        bag_files=[
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS03.bag",
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
+    )
+    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:

@@ -2,24 +2,18 @@
 #define FASTER_LIO_LASER_MAPPING_H
 #include "laser_mapping_param.h"
 #include "livox_ros_driver/CustomMsg.h"
-#include <nav_msgs/Path.h>
-#include <pcl/filters/voxel_grid.h>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/CompressedImage.h>
-#include <visualization_msgs/Marker.h>
 
-// Heavy dependencies are forward-declared below to reduce rebuilds.
 #include <rosbag/bag.h>
-
-#include "global_optimizor.h"
-#include "ieskf_lio.h"
+#include "im.h"
 #include "pointcloud_preprocess.h"
-#include "pose3.h"
+#include "resple_lio.h"
 #include "stamp_pose.h"
-#include "types.h"
+#include <cv_bridge/cv_bridge.h>
 namespace faster_lio {
 
 /// Data pipeline around the odometry algorithm: ROS IO, buffering and time sync,
@@ -36,7 +30,6 @@ class LaserMapping {
 
     /// init without ros
     bool Init(const std::string &config_fname);
-    void LoadPriorMap(const std::string &prior_map_fname);
     void Run();
     void PostUpdate();
     void PublishROSMsg();
@@ -45,37 +38,27 @@ class LaserMapping {
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
     void VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
-    void ImageCallBack(Image& image);
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     // sync lidar with imu
-    bool SyncPackages();
-
-    /// build the colored scan for publishing / saving
-    void BuildColorScan();
-
+    bool CollectMeasures(const std::int64_t& meas_end);
     ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
     void PublishOdometry();
     void PublishFrameWorld();
     void PublishFrameEffectWorld();
     void PublishImage();
     void PublishFrustrum();
-    void Savetrajectory(const std::string &traj_file);
+    void Savetrajectory();
 
     void Finish();
 
-    void SubAndPubToROS(ros::NodeHandle &nh);
-
+    void InitialSubscribers(ros::NodeHandle& nh);
+    void InitialPublishers(ros::NodeHandle& nh);
    public:
     /// modules
-    std::shared_ptr<IeskfLio> ieskf_lio = nullptr;                    // state estimation algorithm
+    std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
-    std::shared_ptr<GlobalOptimizor> mapper = nullptr;
-
-    /// point clouds data
-    ColorPointCloud::Ptr color_scan_world_{new ColorPointCloud()};  // downsampled scan in world with color
-    pcl::VoxelGrid<Point> scan_sampler_;  // voxel filter for saved map clouds
 
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
@@ -99,8 +82,7 @@ class LaserMapping {
     double last_timestamp_camera_ = 0.0;
 
     MeasureGroup measures_;
-    int pcd_idx = 0;
-    PointCloud::Ptr pcl_wait_save_{new PointCloud()};
+    PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
 
     std::shared_ptr<LaserMappingParam> param;

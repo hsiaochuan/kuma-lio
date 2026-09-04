@@ -2,7 +2,10 @@
 #define FASTER_LIO_SO3_MATH_H
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace faster_lio {
 template <typename Scalar>
@@ -59,7 +62,8 @@ inline Eigen::Matrix<typename Derived::Scalar, 3, 1> LogMat(const Eigen::MatrixB
     using Scalar = typename Derived::Scalar;
     using std::atan2;
     Eigen::Quaternion<Scalar> q(R);
-    if (q.norm() <= std::numeric_limits<Scalar>::epsilon()) {
+
+    if (q.vec().squaredNorm() < Eigen::NumTraits<Scalar>::epsilon() * Eigen::NumTraits<Scalar>::epsilon()) {
         Eigen::Matrix<Scalar, 3, 1> phi_u;
         phi_u = Scalar(2.0) * q.vec() / q.w() * (Scalar(1.0) - q.vec().squaredNorm() / (Scalar(3.0) * q.w() * q.w()));
         return phi_u;
@@ -275,6 +279,27 @@ inline void leftJacobianInvSO3(const Eigen::MatrixBase<Derived1> &phi,
   }
 }
 
+template <typename Scalar>
+inline Eigen::Matrix<Scalar, 4, 4> Qleft(const Eigen::Quaternion<Scalar>& q) {
+    Scalar w = q.w(), x = q.x(), y = q.y(), z = q.z();
+    Eigen::Matrix<Scalar, 4, 4> m;
+    m << w, -x, -y, -z,
+         x,  w, -z,  y,
+         y,  z,  w, -x,
+         z, -y,  x,  w;
+    return m;
+}
+
+template <typename Scalar>
+inline Eigen::Matrix<Scalar, 4, 4> Qright(const Eigen::Quaternion<Scalar>& q) {
+    Scalar w = q.w(), x = q.x(), y = q.y(), z = q.z();
+    Eigen::Matrix<Scalar, 4, 4> m;
+    m << w, -x, -y, -z,
+         x,  w,  z, -y,
+         y, -z,  w,  x,
+         z,  y, -x,  w;
+    return m;
+}
 
 inline Eigen::Vector3d EulerZYX(const Eigen::Matrix3d& rot) {
     Eigen::Vector3d result;
