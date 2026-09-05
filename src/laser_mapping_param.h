@@ -29,6 +29,7 @@ class LaserMappingParam {
 
     Pose3 extrin_il_ = Pose3::Identity();
     Pose3 extrin_ic_ = Pose3::Identity();
+    CamModel::Ptr cam_model_ = nullptr;
 
     double cov_P0 = 0.02;
     Vec3 cov_ba = Vec3(0.2, 0.2, 0.2);
@@ -58,7 +59,7 @@ class LaserMappingParam {
     bool pcd_save_en_ = false;
     double pcd_save_interval_ = 30;
     bool bag_save_en_ = false;
-    bool LoadFromYaml(const std::string& config_fname) {
+    void LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
         try {
             lidar_topic_ = yaml["common"]["lid_topic"].as<std::string>();
@@ -109,12 +110,8 @@ class LaserMappingParam {
                 }
             }
         } catch (...) {
-            LOG(ERROR) << "bad conversion";
-            return false;
+            throw std::runtime_error("bad conversion");
         }
-
-
-        return true;
     }
 };
 

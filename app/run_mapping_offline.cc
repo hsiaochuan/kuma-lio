@@ -21,6 +21,7 @@ DEFINE_double(start, 0.0, "start time in seconds from beginning of bag");
 DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
 DEFINE_string(prior_map_fname, "", "path to prior map file");
 DEFINE_string(prior_init_pose, "", "");
+DEFINE_string(camera_fname, "", "");
 bool if_exit = false;
 void SigHandle(int sig) {
     if_exit = true;
@@ -35,7 +36,7 @@ int main(int argc, char **argv) {
     const std::string config_file = FLAGS_config_file;
     const std::string output_dir = FLAGS_output_dir;
     const std::string prior_map_file = FLAGS_prior_map_file;
-
+    const std::string camera_fname = FLAGS_camera_fname;
     // glog
     FLAGS_stderrthreshold = google::INFO;
     FLAGS_colorlogtostderr = true;
@@ -47,7 +48,7 @@ int main(int argc, char **argv) {
 
     // laser mapping
     auto laser_mapping = std::make_shared<faster_lio::LaserMapping>();
-    if (!laser_mapping->Init(FLAGS_config_file)) {
+    if (!laser_mapping->Init(config_file,camera_fname)) {
         LOG(ERROR) << "laser mapping init failed.";
         return -1;
     }
@@ -69,8 +70,11 @@ int main(int argc, char **argv) {
 
     // read the bag
     LOG(INFO) << "Opening rosbag, be patient";
-    rosbag::Bag bag(FLAGS_bag_file, rosbag::bagmode::Read);
-
+    rosbag::Bag bag(bag_file, rosbag::bagmode::Read);
+    if (!bag.isOpen()) {
+        LOG(ERROR) << "Failed to open bag";
+        return -1;
+    }
     rosbag::View full_view(bag);
     ros::Time bag_start = full_view.getBeginTime();
     ros::Time bag_end = full_view.getEndTime();

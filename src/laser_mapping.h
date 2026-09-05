@@ -30,7 +30,7 @@ class LaserMapping {
     }
 
     /// init without ros
-    bool Init(const std::string &config_fname);
+    bool Init(const std::string &config_fname, const std::string& camera_fname);
     void Run();
     void PostUpdate();
     void PublishROSMsg();

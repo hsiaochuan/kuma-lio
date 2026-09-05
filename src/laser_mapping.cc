@@ -177,10 +177,15 @@ void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &
     gnss_sol_buffer_.emplace_back(sol);
 }
 
-bool LaserMapping::Init(const std::string &config_fname) {
+bool LaserMapping::Init(const std::string &config_fname, const std::string &camera_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
     param = std::make_shared<LaserMappingParam>();
-    if (!param->LoadFromYaml(config_fname)) return false;
+    param->LoadFromYaml(config_fname);
+    if (param->camera_enable_ && !camera_fname.empty()) {
+        param->cam_model_ = ReadCameraFromCamerasText(camera_fname);
+        if (!param->cam_model_)
+            LOG(INFO) << "Null camera model";
+    }
     preprocess_ = std::make_shared<PointCloudPreprocess>();
     preprocess_->param = param;
 
