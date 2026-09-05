@@ -308,23 +308,22 @@ void LaserMapping::Run() {
 }
 
 void LaserMapping::PostUpdate() {
-    if (measures_.gnss_local_time.empty()) {
-        int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
-        Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
-        trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
-    } else {
+    int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
+    Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
+    trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
+
+    if (!measures_.gnss_local_time.empty()) {
         for (int i = 0; i < measures_.gnss_local_time.size(); ++i) {
-            int64_t interp_time_ns = measures_.gnss_local_time[i];
-            Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
-            trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
+            Eigen::Isometry3d gnss_state = resple_lio_->spl.Interpolate(measures_.gnss_local_time[i]);
+            gtime_t gnss_time = measures_.gnss_sol[i].time;
+            gnss_states.push_back({gnss_time, Pose3(gnss_state)});
         }
     }
 
     if (!measures_.images.empty()) {
         for (int i = 0; i < measures_.images.size(); ++i) {
-            int64_t interp_time_ns = measures_.images[i].time_ns_;
-            Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
-            cam_states[interp_time_ns] = Pose3(body_pose) * param->extrin_ic_;
+            Eigen::Isometry3d cam_state = resple_lio_->spl.Interpolate(measures_.images[i].time_ns_);
+            cam_states.push_back({measures_.images[i].time_ns_, Pose3(cam_state) * param->extrin_ic_});
         }
     }
 
@@ -561,18 +560,29 @@ void LaserMapping::PublishFrustrum() {
 }
 
 void LaserMapping::Savetrajectory() {
-    // save body pose
     TrajectoryGenerator::save_to_tumtxt(trajectory_, (fs::path(output_dir) / "traj_log.txt").string());
     TrajectoryGenerator::save_to_pcd(trajectory_, (fs::path(output_dir) / "traj.pcd").string());
-
-    // save camera pose
-    Trajectory cam_traj;
-    for (auto stamp_pose : trajectory_) {
-        stamp_pose.pose = stamp_pose.pose * param->extrin_ic_.Isometry3d();
-        cam_traj.emplace_back(stamp_pose);
+    std::ofstream cam_ofs((fs::path(output_dir) / "cam_log.txt").string());
+    cam_ofs << std::fixed;
+    for (int i = 0; i < cam_states.size(); ++i) {
+        int64_t& time_ns = cam_states[i].first;
+        Pose3& cam_pose = cam_states[i].second;
+        cam_ofs << std::to_string(time_ns) + ".jpg" << " ";
+        cam_ofs << cam_pose.Trans().x() << " " << cam_pose.Trans().y() << " " << cam_pose.Trans().z() << " ";
+        cam_ofs << cam_pose.Quat().x() << " " << cam_pose.Quat().y() << " " << cam_pose.Quat().z() << " " << cam_pose.Quat().w() << std::endl;
     }
-    TrajectoryGenerator::save_to_tumtxt(cam_traj, (fs::path(output_dir) / "cam_traj_log.txt").string());
-    TrajectoryGenerator::save_to_pcd(cam_traj, (fs::path(output_dir) / "cam_traj.pcd").string());
+    cam_ofs.close();
+
+    std::ofstream gnss_ofs((fs::path(output_dir) / "gnss_log.txt").string());
+    gnss_ofs << std::fixed;
+    for (int i = 0; i < gnss_states.size(); ++i) {
+        gtime_t& gnss_time = gnss_states[i].first;
+        Pose3& gnss_pose = gnss_states[i].second;
+        gnss_ofs << gnss_time.time << " " << gnss_time.sec << " ";
+        gnss_ofs << gnss_pose.Trans().x() << " " << gnss_pose.Trans().y() << " " << gnss_pose.Trans().z() << " ";
+        gnss_ofs << gnss_pose.Quat().x() << " " << gnss_pose.Quat().y() << " " << gnss_pose.Quat().z() << " " << gnss_pose.Quat().w() << std::endl;
+    }
+    gnss_ofs.close();
 }
 
 void LaserMapping::Finish() {

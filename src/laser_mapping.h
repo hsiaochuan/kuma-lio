@@ -84,7 +84,8 @@ class LaserMapping {
     MeasureGroup measures_;
     PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
-    std::unordered_map<int64_t, Pose3> cam_states;
+    std::vector<std::pair<int64_t, Pose3>> cam_states;
+    std::vector<std::pair<gtime_t, Pose3>> gnss_states;
 
     std::shared_ptr<LaserMappingParam> param;
     rosbag::Bag bag_;
