@@ -8,6 +8,7 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <boost/filesystem.hpp>
 #include "laser_mapping.h"
+#include <opencv2/opencv.hpp>
 namespace fs = boost::filesystem;
 namespace faster_lio {
 LaserMapping::LaserMapping() = default;
@@ -42,12 +43,6 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
 
     // time offset
     timestamp += param->lidar_time_offset_;
-
-    // loop
-    if (timestamp < last_timestamp_lidar_) {
-        LOG(ERROR) << "lidar loop back, clear buffer";
-    }
-    last_timestamp_lidar_ = timestamp;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     timestamp = timestamp - global_offset_time;
     // push to buffer
@@ -75,12 +70,6 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
 
     // time offset
     timestamp += param->lidar_time_offset_;
-
-    // loop
-    if (timestamp < last_timestamp_lidar_) {
-        LOG(ERROR) << "lidar loop back, clear buffer";
-    }
-    last_timestamp_lidar_ = timestamp;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) {
         return;
     }
@@ -99,12 +88,6 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
 
     // time offset
     timestamp += param->lidar_time_offset_;
-
-    // loop
-    if (timestamp < last_timestamp_lidar_) {
-        LOG(ERROR) << "lidar loop back, clear buffer";
-    }
-    last_timestamp_lidar_ = timestamp;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     timestamp = timestamp - global_offset_time;
     // push to buffer
@@ -116,13 +99,6 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
 void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     double timestamp = msg_in->header.stamp.toSec();
-
-    // loop
-    if (timestamp < last_timestamp_imu_) {
-        LOG(WARNING) << "imu loop back, clear buffer";
-        imu_buffer_.clear();
-    }
-    last_timestamp_imu_ = timestamp;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     timestamp = timestamp - global_offset_time;
     // push to buffer
@@ -144,18 +120,13 @@ void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) 
     if (img_count % param->image_skip_ == 0) {
         double timestamp = msg_in->header.stamp.toSec();
         timestamp += param->camera_time_offset_;
-        if (timestamp < last_timestamp_camera_) {
-            LOG(WARNING) << "image loop back, clear buffer";
-            image_buffer_.clear();
-        }
-        last_timestamp_camera_ = timestamp;
         if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
         timestamp = timestamp - global_offset_time;
-        Image image;
-        cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        image.image_data_ = img;
-        image.time_ns_ = S_TO_NS(timestamp);
-        image_buffer_.emplace_back(image);
+        RgbImage im;
+        im.image_data_ = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
+        im.time_ns_ = S_TO_NS(timestamp);
+        im.filename = std::to_string(im.time_ns_) + ".jpg";
+        image_buffer_.emplace_back(im);
     }
     img_count++;
 }
@@ -166,20 +137,44 @@ void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::C
     if (img_count % param->image_skip_ == 0) {
         double timestamp = msg_in->header.stamp.toSec();
         timestamp += param->camera_time_offset_;
-        if (timestamp < last_timestamp_camera_) {
-            LOG(WARNING) << "image loop back, clear buffer";
-            image_buffer_.clear();
-        }
-        last_timestamp_camera_ = timestamp;
         if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
         timestamp = timestamp - global_offset_time;
-        Image image;
-        cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        image.image_data_ = img;
-        image.time_ns_ = S_TO_NS(timestamp);
-        image_buffer_.emplace_back(image);
+        RgbImage im;
+        im.image_data_ = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
+        im.time_ns_ = S_TO_NS(timestamp);
+        im.filename = std::to_string(im.time_ns_) + ".jpg";
+        image_buffer_.emplace_back(im);
     }
     img_count++;
+}
+void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg) {
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    double timestamp = msg->header.stamp.toSec();
+    double local_time = timestamp - global_offset_time;
+    gnss_local_time_buffer_.emplace_back(S_TO_NS(local_time));
+
+    sol_t sol{};
+    sol.time.time = static_cast<time_t>(timestamp);
+    sol.time.sec = timestamp - sol.time.time;
+    const double pos[3] = {
+        msg->latitude  * D2R,
+        msg->longitude * D2R,
+        msg->altitude
+    };
+    pos2ecef(pos, sol.rr);
+    const uint8_t fix_type  = static_cast<uint8_t>(msg->status.status);
+    const uint8_t carr_soln = static_cast<uint8_t>(msg->status.service);
+    if (fix_type == 0 || fix_type == 5) {
+        sol.stat = SOLQ_NONE;
+    } else if (carr_soln == 2) {
+        sol.stat = SOLQ_FIX;
+    } else if (carr_soln == 1) {
+        sol.stat = SOLQ_FLOAT;
+    } else {
+        sol.stat = SOLQ_SINGLE;
+    }
+    sol.type = 0;
+    gnss_sol_buffer_.emplace_back(sol);
 }
 
 bool LaserMapping::Init(const std::string &config_fname) {
@@ -308,10 +303,36 @@ void LaserMapping::Run() {
 }
 
 void LaserMapping::PostUpdate() {
-    int64_t t_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
-    Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(t_ns);
-    trajectory_.emplace_back(global_offset_time + t_ns * 1e-9, body_pose);
+    if (measures_.gnss_local_time.empty()) {
+        int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
+        Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
+        trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
+    } else {
+        for (int i = 0; i < measures_.gnss_local_time.size(); ++i) {
+            int64_t interp_time_ns = measures_.gnss_local_time[i];
+            Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
+            trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
+        }
+    }
 
+    if (!measures_.images.empty()) {
+        for (int i = 0; i < measures_.images.size(); ++i) {
+            int64_t interp_time_ns = measures_.images[i].time_ns_;
+            Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
+            cam_states[interp_time_ns] = Pose3(body_pose) * param->extrin_ic_;
+        }
+    }
+
+    if (param->bag_save_en_ && !measures_.images.empty()) {
+        static int call_once = [&]() {
+            fs::create_directories(fs::path(output_dir) / "images");
+            return 0;
+        }();
+        for (int i = 0; i < measures_.images.size(); ++i) {
+            fs::path im_save_fname = fs::path(output_dir) / "images" / measures_.images[i].filename;
+            cv::imwrite(im_save_fname.string(),measures_.images[i].image_data_);
+        }
+    }
     if (param->pcd_save_en_) {
         static int call_once = [&]() {
             fs::create_directories(fs::path(output_dir) / "map");
@@ -353,12 +374,11 @@ void LaserMapping::PublishROSMsg() {
 }
 bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
     if (points_buffer_.empty()) return false;
-    if (param->imu_enable_ && imu_buffer_.empty()) return false;
 
-    // imu buffer is not beyond the measures end
+    // buffer is not beyond the measures end
     if (imu_buffer_.back().time_ns < meas_end) return false;
-    // points buffer is not beyond the measures end
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
+    if (gnss_local_time_buffer_.back() < meas_end) return false;
 
     // push the imu data
     measures_.imu_.clear();
@@ -366,15 +386,21 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
         measures_.imu_.emplace_back(imu_buffer_.front());
         imu_buffer_.pop_front();
     }
-
+    // push the lidar points data
     measures_.lidar_->clear();
-    int num_collected = 0;
     while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < meas_end) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
-        num_collected++;
     }
-
+    // push the gnss
+    measures_.gnss_local_time.clear();
+    measures_.gnss_sol.clear();
+    while (!gnss_local_time_buffer_.empty() && gnss_local_time_buffer_.front() < meas_end) {
+        measures_.gnss_local_time.emplace_back(gnss_local_time_buffer_.front());
+        measures_.gnss_sol.emplace_back(gnss_sol_buffer_.front());
+        gnss_local_time_buffer_.pop_front();
+        gnss_sol_buffer_.pop_front();
+    }
     if (measures_.lidar_->empty()) {
         LOG(INFO) << "Empty lidar points in measures";
     }

@@ -2,9 +2,9 @@ common:
   lid_topic: "/hesai/pandar"
   imu_topic: "/alphasense/imu"
   camera_topic: "/alphasense/cam0/image_raw"
+  gnss_topic: ""
   camera_enable: false
-  visual_update: false
-  imu_enable: true
+  gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
   camera_time_offset: 0

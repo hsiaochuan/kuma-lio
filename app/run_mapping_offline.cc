@@ -136,6 +136,12 @@ int main(int argc, char **argv) {
             laser_mapping->CompressedImageCallBack(compress_img);
             continue;
         }
+        auto gnss_nav_msg = m.instantiate<sensor_msgs::NavSatFix>();
+        if (laser_mapping->param->gnss_enable_ && m.getTopic() == laser_mapping->param->gnss_topic_ &&
+            compress_img) {
+            laser_mapping->GnssSolutionCallback(gnss_nav_msg);
+            continue;
+            }
         if (if_exit) {
             break;
         }

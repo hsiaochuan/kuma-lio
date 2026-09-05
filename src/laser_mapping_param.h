@@ -13,9 +13,9 @@ class LaserMappingParam {
     std::string lidar_topic_;
     std::string imu_topic_;
     std::string camera_topic_;
+    std::string gnss_topic_;
     bool camera_enable_ = false;
-    bool visual_update_ = false;
-    bool imu_enable_ = true;
+    bool gnss_enable_ = false;
     bool acc_ratio_ = false;
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
@@ -64,9 +64,9 @@ class LaserMappingParam {
             lidar_topic_ = yaml["common"]["lid_topic"].as<std::string>();
             imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
             camera_topic_ = yaml["common"]["camera_topic"].as<std::string>();
+            gnss_topic_ = yaml["common"]["gnss_topic"].as<std::string>();
             camera_enable_ = yaml["common"]["camera_enable"].as<bool>();
-            visual_update_ = yaml["common"]["visual_update"].as<bool>();
-            imu_enable_ = yaml["common"]["imu_enable"].as<bool>();
+            gnss_enable_ = yaml["common"]["gnss_enable"].as<bool>();
             acc_ratio_ = yaml["common"]["acc_ratio"].as<bool>();
             camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
             lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();

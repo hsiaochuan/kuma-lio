@@ -12,14 +12,13 @@
 
 #include <Eigen/Core>
 #include <Eigen/Dense>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core/mat.hpp>
 
 #include <pcl/io/pcd_io.h>
-#include <boost/filesystem.hpp>
 #include "pose3.h"
 #include "so3_math.h"
 #include "eigen_type.h"
-
+#include "rtklib_.h"
 #define S_TO_NS(x) (int64_t((x) * 1e9))
 #define NS_TO_S(x) ((x) * 1e-9)
 namespace faster_lio {
@@ -91,14 +90,6 @@ struct EIGEN_ALIGN16 ColorPoint {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
-inline uint32_t RGBToU32(uint8_t r, uint8_t g, uint8_t b) {
-    return (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
-}
-inline void U32ToRGB(uint32_t color, uint8_t &r, uint8_t &g, uint8_t &b) {
-    r = (color >> 16) & 0xFF;
-    g = (color >> 8) & 0xFF;
-    b = color & 0xFF;
-}
 struct Imu {
     using Ptr = std::shared_ptr<Imu>;
     int64_t time_ns = -1;
@@ -186,10 +177,20 @@ inline Mat3 RotationFromArray(const std::vector<double> &v) {
 }
 
 
+struct RgbImage {
+    using Ptr = std::shared_ptr<RgbImage>;
+    std::string filename = std::string();
+    std::int64_t time_ns_;
+    cv::Mat image_data_;
+};
+
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
+    std::vector<int64_t> gnss_local_time;
+    std::vector<sol_t> gnss_sol;
+    std::vector<RgbImage> images;
 };
 
 }  // namespace faster_lio

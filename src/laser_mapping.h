@@ -7,17 +7,18 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/CompressedImage.h>
+#include <sensor_msgs/NavSatFix.h>
 
 #include <rosbag/bag.h>
-#include "im.h"
 #include "pointcloud_preprocess.h"
 #include "resple_lio.h"
 #include "stamp_pose.h"
 #include <cv_bridge/cv_bridge.h>
+
+#include "rtklib.h"
 namespace faster_lio {
 
-/// Data pipeline around the odometry algorithm: ROS IO, buffering and time sync,
-/// publishing and result saving. The estimation itself lives in IeskfLio.
+
 class LaserMapping {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
@@ -40,6 +41,7 @@ class LaserMapping {
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
+    void GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     // sync lidar with imu
     bool CollectMeasures(const std::int64_t& meas_end);
@@ -75,15 +77,14 @@ class LaserMapping {
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;
     std::deque<Imu> imu_buffer_;
-    std::deque<Image> image_buffer_;
-
-    double last_timestamp_lidar_ = 0;
-    double last_timestamp_imu_ = -1.0;
-    double last_timestamp_camera_ = 0.0;
+    std::deque<RgbImage> image_buffer_;
+    std::deque<sol_t> gnss_sol_buffer_;
+    std::deque<int64_t> gnss_local_time_buffer_;
 
     MeasureGroup measures_;
     PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
+    std::unordered_map<int64_t, Pose3> cam_states;
 
     std::shared_ptr<LaserMappingParam> param;
     rosbag::Bag bag_;

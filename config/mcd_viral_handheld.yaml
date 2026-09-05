@@ -2,9 +2,9 @@ common:
   lid_topic: "/livox/lidar"
   imu_topic: "/vn200/imu"
   camera_topic: ""
+  gnss_topic: ""
   camera_enable: false
-  visual_update: false
-  imu_enable: true
+  gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
   camera_time_offset: 0
