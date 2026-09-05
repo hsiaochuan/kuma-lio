@@ -250,7 +250,10 @@ void LaserMapping::Run() {
         std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
 
         if (!resple_lio_->if_inertial_initialized) {
-            if (static_cast<int>(imu_buffer_.size()) < kInitImuNum) return;
+            if (static_cast<int>(imu_buffer_.size()) < kInitImuNum) {
+                LOG(INFO) << "Imu buffer is not enough, wait";
+                return;
+            }
             Vec3 acc_sum = Vec3::Zero();
             Vec3 acc_gyro = Vec3::Zero();
             for (int i = 0; i < kInitImuNum; ++i) {
@@ -269,10 +272,13 @@ void LaserMapping::Run() {
             resple_lio_->gravity = q0 * gravity_body;
             resple_lio_->spl.init(param->dt_ns, 0, q0);
             resple_lio_->if_inertial_initialized = true;
-            LOG(INFO) << " s, gravity " << resple_lio_->gravity.transpose();
+            LOG(INFO) << "Inertial initialized, gravity: " << resple_lio_->gravity.transpose();
         }
 
-        if (points_buffer_.back().GetTimeNs() < first_point_time_ns + kInitMapSpanNs) return;
+        if (points_buffer_.back().GetTimeNs() < first_point_time_ns + kInitMapSpanNs) {
+            LOG(INFO) << "Points buffer is not enough, wait";
+            return;
+        }
         std::int64_t end_time_ns = first_point_time_ns + kInitMapSpanNs;
         PointCloud::Ptr init_points(new PointCloud);
         while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < end_time_ns) {
@@ -281,6 +287,10 @@ void LaserMapping::Run() {
         }
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < end_time_ns) {
             imu_buffer_.pop_front();
+        }
+        while (!gnss_local_time_buffer_.empty() && gnss_local_time_buffer_.front() < end_time_ns) {
+            gnss_local_time_buffer_.pop_front();
+            gnss_sol_buffer_.pop_front();
         }
         while (resple_lio_->spl.maxTimeNs() < end_time_ns) {
             resple_lio_->spl.addOneStateKnot(Vec3::Zero(), Vec3::Zero());
@@ -316,14 +326,14 @@ void LaserMapping::PostUpdate() {
         for (int i = 0; i < measures_.gnss_local_time.size(); ++i) {
             Eigen::Isometry3d gnss_state = resple_lio_->spl.Interpolate(measures_.gnss_local_time[i]);
             gtime_t gnss_time = measures_.gnss_sol[i].time;
-            gnss_states.push_back({gnss_time, Pose3(gnss_state)});
+            gnss_states.emplace_back(gnss_time, Pose3(gnss_state));
         }
     }
 
     if (!measures_.images.empty()) {
         for (int i = 0; i < measures_.images.size(); ++i) {
             Eigen::Isometry3d cam_state = resple_lio_->spl.Interpolate(measures_.images[i].time_ns_);
-            cam_states.push_back({measures_.images[i].time_ns_, Pose3(cam_state) * param->extrin_ic_});
+            cam_states.emplace_back(measures_.images[i].time_ns_, Pose3(cam_state) * param->extrin_ic_);
         }
     }
 
@@ -378,11 +388,12 @@ void LaserMapping::PublishROSMsg() {
 }
 bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
     if (points_buffer_.empty()) return false;
+    if (imu_buffer_.empty()) return false;
 
     // buffer is not beyond the measures end
     if (imu_buffer_.back().time_ns < meas_end) return false;
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
-    if (gnss_local_time_buffer_.back() < meas_end) return false;
+    if (!gnss_local_time_buffer_.empty() && gnss_local_time_buffer_.back() < meas_end) return false;
 
     // push the imu data
     measures_.imu_.clear();
@@ -560,24 +571,27 @@ void LaserMapping::PublishFrustrum() {
 }
 
 void LaserMapping::Savetrajectory() {
+    LOG(INFO) << "Save states in imu frame";
     TrajectoryGenerator::save_to_tumtxt(trajectory_, (fs::path(output_dir) / "traj_log.txt").string());
-    TrajectoryGenerator::save_to_pcd(trajectory_, (fs::path(output_dir) / "traj.pcd").string());
+
+    LOG(INFO) << "Save states in camera frame";
     std::ofstream cam_ofs((fs::path(output_dir) / "cam_log.txt").string());
     cam_ofs << std::fixed;
-    for (int i = 0; i < cam_states.size(); ++i) {
-        int64_t& time_ns = cam_states[i].first;
-        Pose3& cam_pose = cam_states[i].second;
+    for (auto & cam_state : cam_states) {
+        int64_t& time_ns = cam_state.first;
+        Pose3& cam_pose = cam_state.second;
         cam_ofs << std::to_string(time_ns) + ".jpg" << " ";
         cam_ofs << cam_pose.Trans().x() << " " << cam_pose.Trans().y() << " " << cam_pose.Trans().z() << " ";
         cam_ofs << cam_pose.Quat().x() << " " << cam_pose.Quat().y() << " " << cam_pose.Quat().z() << " " << cam_pose.Quat().w() << std::endl;
     }
     cam_ofs.close();
 
+    LOG(INFO) << "Save states for GNSS process";
     std::ofstream gnss_ofs((fs::path(output_dir) / "gnss_log.txt").string());
     gnss_ofs << std::fixed;
-    for (int i = 0; i < gnss_states.size(); ++i) {
-        gtime_t& gnss_time = gnss_states[i].first;
-        Pose3& gnss_pose = gnss_states[i].second;
+    for (auto & gnss_state : gnss_states) {
+        gtime_t& gnss_time = gnss_state.first;
+        Pose3& gnss_pose = gnss_state.second;
         gnss_ofs << gnss_time.time << " " << gnss_time.sec << " ";
         gnss_ofs << gnss_pose.Trans().x() << " " << gnss_pose.Trans().y() << " " << gnss_pose.Trans().z() << " ";
         gnss_ofs << gnss_pose.Quat().x() << " " << gnss_pose.Quat().y() << " " << gnss_pose.Quat().z() << " " << gnss_pose.Quat().w() << std::endl;

@@ -87,8 +87,7 @@ void TrajectoryGenerator::save_to_tumtxt(const Trajectory &traj, const std::stri
 void TrajectoryGenerator::save_to_pcd(const Trajectory &traj, const std::string &filename, double axis_length,
                                       int points_per_axis) {
     pcl::PointCloud<pcl::PointXYZRGB> cloud;
-    cloud.clear();
-
+    cloud.reserve(traj.size() * 3 * points_per_axis);
     // For each pose in trajectory, create coordinate axes represented by points
     for (const auto &stamped_pose : traj) {
         const Eigen::Vector3d &pos = stamped_pose.pose.translation();
@@ -154,7 +153,7 @@ void TrajectoryGenerator::save_to_pcd(const Trajectory &traj, const std::string 
 
     // Save to PCD file
     if (cloud.size() > 0)
-        pcl::io::savePCDFileASCII(filename, cloud);
+        pcl::io::savePCDFileBinary(filename, cloud);
 }
 
 Eigen::Isometry3d interpolate_pose(const Eigen::Isometry3d &T0, const Eigen::Isometry3d &T1, double t) {
