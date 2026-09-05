@@ -96,25 +96,8 @@ class LaserMappingParam {
             pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
             bag_save_en_ = yaml["bag_save_en"].as<bool>();
             image_save_en_ = yaml["image_save_en"].as<bool>();
-        } catch (...) {
-            LOG(ERROR) << "bad conversion";
-            return false;
-        }
 
-        if (camera_enable_) {
-            try {
-                std::vector<double> resolution;
-                std::vector<double> distort_param;
-                std::vector<double> pinhole_param;
-                auto camera_type = yaml["cam"]["camera_model"].as<std::string>();
-                CAMERA_MODEL camera_model = ToCameraModel(camera_type);
-                resolution = yaml["cam"]["resolution"].as<std::vector<double>>();
-                if (IsPinhole(camera_model)) {
-                    pinhole_param = yaml["cam"]["pinhole_param"].as<std::vector<double>>();
-                }
-                if (IsDistorted(camera_model)) {
-                    distort_param = yaml["cam"]["distortion_param"].as<std::vector<double>>();
-                }
+            if (camera_enable_) {
                 if (yaml["cam"]["extrin_R_cl"].IsDefined()) {
                     Pose3 extrin_cl;
                     extrin_cl.q_ = RotationFromArray(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
@@ -123,34 +106,14 @@ class LaserMappingParam {
                 } else if (yaml["cam"]["extrin_R_ic"].IsDefined()) {
                     extrin_ic_.q_ = RotationFromArray(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
                     extrin_ic_.t_ = VecFromArray(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
-                } else
-                    throw std::runtime_error("cam extrinsic does not exist");
-
-                std::vector<double> param;
-                param.insert(param.end(), pinhole_param.begin(), pinhole_param.end());
-                param.insert(param.end(), distort_param.begin(), distort_param.end());
-                switch (camera_model) {
-                    case PINHOLE:
-                        camera_ = std::make_shared<PinholeCamera>();
-                        break;
-                    case PINHOLE_RADIAL:
-                        camera_ = std::make_shared<PinholeRadialCamera>();
-                        break;
-                    case PINHOLE_FISHEYE:
-                        camera_ = std::make_shared<PinholeFisheyeCamera>();
-                        break;
-                    case SPHERICAL:
-                        camera_ = std::make_shared<SphericalCamera>();
-                        break;
                 }
-                camera_->update_params(param);
-                camera_->w_ = static_cast<unsigned int>(resolution[0]);
-                camera_->h_ = static_cast<unsigned int>(resolution[1]);
-            } catch (...) {
-                LOG(ERROR) << "bad conversion in camera load";
-                return false;
             }
+        } catch (...) {
+            LOG(ERROR) << "bad conversion";
+            return false;
         }
+
+
         return true;
     }
 };

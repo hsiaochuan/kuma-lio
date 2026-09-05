@@ -95,13 +95,3 @@ target_link_libraries(points_jet ${PROJECT_NAME})
 
 add_executable(points_merge ./src/points_merge.cpp)
 target_link_libraries(points_merge ${PROJECT_NAME})
-
-find_package(GTest REQUIRED)
-enable_testing()
-add_executable(camera_test src/camera_test.cpp)
-target_link_libraries(camera_test
-        ${PROJECT_NAME}
-        GTest::GTest
-        GTest::Main
-)
-add_test(NAME camera_test COMMAND camera_test)

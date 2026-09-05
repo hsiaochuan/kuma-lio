@@ -17,34 +17,7 @@ enum CAMERA_MODEL {
     PINHOLE_FISHEYE = 2,  ///< Pinhole + fisheye polynomial (K1,K2,K3,K4)
     SPHERICAL = 3,        ///< Full spherical / equirectangular
 };
-inline CAMERA_MODEL ToCameraModel(const std::string& camera_model) {
-    if (camera_model == "pinhole") {
-        return PINHOLE;
-    } else if (camera_model == "pinhole_radial") {
-        return PINHOLE_RADIAL;
-    } else if (camera_model == "pinhole_fisheye") {
-        return PINHOLE_FISHEYE;
-    } else if (camera_model == "spherical") {
-        return SPHERICAL;
-    } else {
-        LOG(ERROR) << "Unknown camera type: " << camera_model;
-        return PINHOLE;
-    }
-}
-inline std::string CameraModelToString(CAMERA_MODEL camera_model) {
-    switch (camera_model) {
-        case PINHOLE:
-            return "pinhole";
-        case PINHOLE_RADIAL:
-            return "pinhole_radial";
-        case PINHOLE_FISHEYE:
-            return "pinhole_fisheye";
-        case SPHERICAL:
-            return "spherical";
-        default:
-            throw std::runtime_error("Unknown camera type");
-    }
-}
+
 /**
  * @brief Pure abstract base class for all camera models.
  *
@@ -93,9 +66,6 @@ class CamModel {
 
     virtual Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const = 0;
     virtual Vec2 project(const Vec3& X) const = 0;
-
-    virtual std::vector<double> get_params() const = 0;
-    virtual bool update_params(const std::vector<double>&) = 0;
 
     unsigned int w_;
     unsigned int h_;
