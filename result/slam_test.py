@@ -19,13 +19,12 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from evo.tools import plot
-from evo.tools.settings import SETTINGS
 
 # Use the evo checked out in third_party/evo (not any pip-installed evo) for ATE evaluation
 _EVO_DIR = str(Path(__file__).resolve().parent.parent / "third_party" / "evo")
 if _EVO_DIR not in sys.path:
     sys.path.insert(0, _EVO_DIR)
+from evo.tools.settings import SETTINGS
 from evo.core import metrics, sync
 from evo.tools import file_interface
 # ──────────────────────────────────────────────
@@ -200,10 +199,6 @@ class SLAMTestRunner:
     # ── Single bag run ───────────────────────────
 
     def run_offline(self, task: RunTask) -> bool:
-        rviz = subprocess.Popen(
-            ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
         try:
             subprocess.run(
                 [self.offline_app,
@@ -215,11 +210,10 @@ class SLAMTestRunner:
                  ],
                 check=True,
             )
-            rviz.terminate()
+
             return True
         except subprocess.CalledProcessError as e:
             print(f"  run_mapping_offline exited with code {e.returncode}")
-            rviz.terminate()
             return False
 
     def run_post_process(self, output_dir: str):
@@ -320,33 +314,37 @@ class SLAMTestRunner:
         return ape_metric.get_statistic(metrics.StatisticsType.rmse)
 
     def save_ate_plots(self, traj_ref, traj_est, ape_metric: "metrics.APE", output_dir: str):
-        """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
-        over the trajectory index, and the trajectory colored by APE error."""
-        error_array = ape_metric.error
-        stats = ape_metric.get_all_statistics()
+        try:
+            from evo.tools import plot
+            """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
+            over the trajectory index, and the trajectory colored by APE error."""
+            error_array = ape_metric.error
+            stats = ape_metric.get_all_statistics()
 
-        fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
-        plot.error_array(
-            fig_error.gca(), error_array,
-            statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
-            name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
-        )
-        fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
-        plt.close(fig_error)
+            fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
+            plot.error_array(
+                fig_error.gca(), error_array,
+                statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
+                name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
+            )
+            fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
+            plt.close(fig_error)
 
-        plot_mode = plot.PlotMode.xy
-        fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
-        ax = plot.prepare_axis(fig_traj, plot_mode)
-        plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
-                  color=SETTINGS.plot_reference_color, label="reference",
-                  alpha=SETTINGS.plot_reference_alpha)
-        plot.traj_colormap(
-            ax, traj_est, error_array, plot_mode,
-            min_map=stats["min"], max_map=stats["max"],
-            title="ATE mapped onto trajectory (aligned)",
-        )
-        fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
-        plt.close(fig_traj)
+            plot_mode = plot.PlotMode.xy
+            fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
+            ax = plot.prepare_axis(fig_traj, plot_mode)
+            plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
+                      color=SETTINGS.plot_reference_color, label="reference",
+                      alpha=SETTINGS.plot_reference_alpha)
+            plot.traj_colormap(
+                ax, traj_est, error_array, plot_mode,
+                min_map=stats["min"], max_map=stats["max"],
+                title="ATE mapped onto trajectory (aligned)",
+            )
+            fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
+            plt.close(fig_traj)
+        except :
+            print("Error in plotting ATE")
 
 
     # ── Dataset run ────────────────────────────
@@ -410,12 +408,9 @@ class SLAMTestRunner:
             f.write(f"GIT_BRANCH  = \"{self.git_branch}\"\n")
             f.write(f"GIT_COMMIT  = \"{self.git_commit}\"\n")
             f.write("-" * 65 + "\n")
-            f.write("{:<34}{:>10}{:>12}\n".format("sequence", "wall_s", "ate_rmse_m"))
             for suite_result in suite_results:
-                f.write("[{}]\n".format(suite_result.dataset_name))
                 for test_result in suite_result.test_results:
-                    f.write("{:<34}{:>10.1f}{:>12.4f}\n".format(
-                        test_result.bag_name, test_result.duration_sec, test_result.ate))
+                    f.write("{},\t{},\t{}、n\n".format(test_result.bag_name, test_result.duration_sec, test_result.ate))
             f.write("-" * 65 + "\n")
 
 
@@ -574,17 +569,21 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral","hilti_2022","mars_lvig"],
+                        default=["mcd_viral"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
-    parser.add_argument("--if_lvba", action="store_true", default=True, help="Run LVBA")
     parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
+    parser.add_argument("--if_rviz", action="store_true", default=False, help="Run rviz")
     parser.add_argument("--start", type=float, default=0.0, help="Start time (sec) for offline mode")
     parser.add_argument("--duration", type=float, default=-1.0,
                         help="Duration (sec) for offline mode, -1 for full length")
     args = parser.parse_args()
-
+    if args.if_rviz:
+        rviz = subprocess.Popen(
+            ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
     # decide the datasets to run
     data_name_list = args.datasets
     datasets = DatasetsList(data_name_list)
@@ -599,7 +598,6 @@ def main():
     runner = SLAMTestRunner()
     runner.if_delete_result_dir = args.if_delete_result_dir
     runner.if_slam = args.if_slam
-    runner.if_lvba = args.if_lvba
     runner.if_postprocess = args.if_postprocess
     runner.run_all(datasets)
 

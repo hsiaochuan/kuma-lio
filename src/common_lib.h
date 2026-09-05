@@ -16,10 +16,9 @@
 
 #include <pcl/io/pcd_io.h>
 #include <boost/filesystem.hpp>
-#include "eigen_type.h"
 #include "pose3.h"
-#include "rtklib.h"
 #include "so3_math.h"
+#include "eigen_type.h"
 
 #define S_TO_NS(x) (int64_t((x) * 1e9))
 #define NS_TO_S(x) ((x) * 1e-9)
@@ -191,8 +190,6 @@ struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
-    std::vector<int64_t> gnss_local_time;
-    std::vector<sol_t> gnss_sol;
 };
 
 }  // namespace faster_lio
