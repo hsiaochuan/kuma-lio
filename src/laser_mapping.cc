@@ -149,13 +149,19 @@ void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::C
 }
 void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
-    double timestamp = msg->header.stamp.toSec();
-    double local_time = timestamp - global_offset_time;
+    // it is gpst time, and start in 1970
+    gtime_t gpst{};
+    gpst.time = msg->header.stamp.sec;
+    gpst.sec = NS_TO_S(msg->header.stamp.nsec);
+    gtime_t utc_stamp = gpst2utc(gpst); // handle the leap
+    double utc_stamp_d = double(utc_stamp.time) + utc_stamp.sec;
+
+    if (std::isnan(global_offset_time) || utc_stamp_d < global_offset_time) return;
+    double local_time = utc_stamp_d - global_offset_time;
     gnss_local_time_buffer_.emplace_back(S_TO_NS(local_time));
 
     sol_t sol{};
-    sol.time.time = static_cast<time_t>(timestamp);
-    sol.time.sec = timestamp - sol.time.time;
+    sol.time = gpst;
     const double pos[3] = {
         msg->latitude  * D2R,
         msg->longitude * D2R,
