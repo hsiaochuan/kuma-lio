@@ -21,7 +21,7 @@ namespace faster_lio {
  *         + \bigl(T_1(r^2 + 2y_u^2) + 2T_2 x_u y_u\bigr)
  * \f]
  *
- * Parameters: [ f, cx, cy, K1, K2, K3, P1, P2 ]
+ * Parameters: [ fx, fy, cx, cy, K1, K2, K3, P1, P2 ]
  */
 class PinholeRadialCamera : public CamModel {
    public:
@@ -35,21 +35,20 @@ class PinholeRadialCamera : public CamModel {
 
     CAMERA_MODEL get_type() const override { return PINHOLE_RADIAL; }
 
-    double focal() const { return fx_ * 0.5 + fy_ * 0.5; }
-    Vec2 principal_point() const { return {cx_, cy_}; }
-
     // -- Coordinate transforms -----------------------------------------------
-    Vec2 cam2ima(const Vec2& p) const override { return focal() * p + Vec2{cx_, cy_}; }
-    Vec2 ima2cam(const Vec2& p) const override { return (p - Vec2{cx_, cy_}) / focal(); }
+    Vec2 cam2ima(const Vec2& p) const override { return {fx_ * p.x() + cx_, fy_ * p.y() + cy_}; }
+    Vec2 ima2cam(const Vec2& p) const override { return {(p.x() - cx_) / fx_, (p.y() - cy_) / fy_}; }
 
     Vec2 add_disto(const Vec2& p) const override { return p + distoFunction(k1_, k2_, k3_, p1_, p2_, p); }
     Vec2 remove_disto(const Vec2& p) const override {
         constexpr double kEps = 1e-10;
         Vec2 p_u = p;
         Vec2 d = distoFunction(k1_, k2_, k3_, p1_, p2_, p_u);
-        while ((p_u + d - p).template lpNorm<1>() > kEps) {
+        int idx = 0;
+        while ((p_u + d - p).template lpNorm<1>() > kEps && idx < 100) {
             p_u = p - d;
             d = distoFunction(k1_, k2_, k3_, p1_, p2_, p_u);
+            ++idx;
         }
         return p_u;
     }
@@ -58,13 +57,6 @@ class PinholeRadialCamera : public CamModel {
     Vec2 project(const Vec3& X) const override { return cam2ima(add_disto(X.hnormalized())); }
     Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const override {
         return ima2cam(get_ud_pixel(ima_point)).homogeneous().normalized();
-    }
-    std::vector<double> get_params() const override { return {fx_, fy_, cx_, cy_, k1_, k2_, k3_, p1_, p2_}; }
-    bool update_params(const std::vector<double>& params) override {
-        CHECK(params.size() == 9) << "Expected 9 parameters for PinholeRadialCamera, got " << params.size();
-        *this = PinholeRadialCamera(w_, h_, params[0], params[1], params[2], params[3], params[4], params[5], params[6],
-                                    params[7], params[8]);
-        return true;
     }
 
     double fx_;

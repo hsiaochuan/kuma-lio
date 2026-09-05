@@ -51,12 +51,11 @@ class SphericalCamera : public CamModel {
         return cam2ima({lon / (2.0 * M_PI), -lat / (2.0 * M_PI)});
     }
     Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const override {
-        return ima2cam(get_ud_pixel(ima_point)).homogeneous().normalized();
+        const Vec2 p = ima2cam(get_ud_pixel(ima_point));  // (lon / 2pi, -lat / 2pi)
+        const double lon = p.x() * 2.0 * M_PI;
+        const double lat = -p.y() * 2.0 * M_PI;
+        return {std::cos(lat) * std::sin(lon), -std::sin(lat), std::cos(lat) * std::cos(lon)};
     }
-
-    // -- Parameters ----------------------------------------------------------
-    std::vector<double> get_params() const override { return {}; }
-    bool update_params(const std::vector<double>& /*params*/) override { return true; }
 };
 
 }  // namespace faster_lio

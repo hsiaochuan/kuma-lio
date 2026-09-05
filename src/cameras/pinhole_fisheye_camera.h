@@ -17,7 +17,7 @@ namespace faster_lio {
  * \f]
  * where \f$\theta = \arctan(r)\f$ and \f$r = \|p\|\f$.
  *
- * Parameters: [ f, cx, cy, K1, K2, K3, K4 ]
+ * Parameters: [ fx, fy, cx, cy, K1, K2, K3, K4 ]
  */
 class PinholeFisheyeCamera : public CamModel {
    public:
@@ -29,11 +29,9 @@ class PinholeFisheyeCamera : public CamModel {
     ~PinholeFisheyeCamera() override = default;
 
     CAMERA_MODEL get_type() const override { return PINHOLE_FISHEYE; }
-    double focal() const { return fx_ * 0.5 + fy_ * 0.5; }
-    Vec2 principal_point() const { return {cx_, cy_}; }
 
-    Vec2 cam2ima(const Vec2& p) const override { return focal() * p + Vec2{cx_, cy_}; }
-    Vec2 ima2cam(const Vec2& p) const override { return (p - Vec2{cx_, cy_}) / focal(); }
+    Vec2 cam2ima(const Vec2& p) const override { return {fx_ * p.x() + cx_, fy_ * p.y() + cy_}; }
+    Vec2 ima2cam(const Vec2& p) const override { return {(p.x() - cx_) / fx_, (p.y() - cy_) / fy_}; }
 
     Vec2 add_disto(const Vec2& p) const override {
         constexpr double kEps = 1e-8;
@@ -65,14 +63,6 @@ class PinholeFisheyeCamera : public CamModel {
     Vec2 project(const Vec3& X) const override { return cam2ima(add_disto(X.hnormalized())); }
     Eigen::Vector3d bearing(const Eigen::Vector2d& ima_point) const override {
         return ima2cam(get_ud_pixel(ima_point)).homogeneous().normalized();
-    }
-
-    // -- Parameters ----------------------------------------------------------
-    std::vector<double> get_params() const override { return {fx_, fy_, cx_, cy_, k1_, k2_, k3_, k4_}; }
-    bool update_params(const std::vector<double>& params) override {
-        CHECK(params.size() == 8) << "Expected 8 parameters for PinholeFisheyeCamera, got " << params.size();
-        *this = PinholeFisheyeCamera(w_, h_, params[0], params[1], params[2], params[3], params[4], params[5], params[6], params[7]);
-        return true;
     }
 
     double fx_;
