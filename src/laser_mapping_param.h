@@ -52,6 +52,7 @@ class LaserMappingParam {
     double w_pt = 0.01;              // per-point measurement variance (RESPLE `w_pt`)
     double imu_acc_outlier = 10.0;   // |acc - predicted| gate per axis [m/s^2]
     double imu_gyro_outlier = 5.0;   // |gyro - predicted| gate per axis [rad/s]
+    int num_threads = 4;
 
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;

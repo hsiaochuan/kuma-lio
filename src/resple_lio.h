@@ -39,7 +39,7 @@ struct ImuData {
 
     ImuData(const ImuData& other)
         : time_ns(other.time_ns), gyro(other.gyro), accel(other.accel), H(other.H), imu_itp(other.imu_itp),
-          if_acc_valid(other.if_acc_valid), if_gyro_valid(other.if_gyro_valid) {}
+          z(other.z), if_acc_valid(other.if_acc_valid), if_gyro_valid(other.if_gyro_valid) {}
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 class RESPLE_LIO {
@@ -52,6 +52,7 @@ class RESPLE_LIO {
     static constexpr int BG_OFFSET = 27;
     static constexpr double GRAVITY_NORM = 9.81;
     static constexpr int MATCH_POINT = 5;
+    static constexpr int kMinParallelPoints = 2048;
     void Init() {
 
         const double dt_s = param->dt_ns * 1e-9;
@@ -137,8 +138,9 @@ class RESPLE_LIO {
         }
 
         IterativeUpdate();
-#pragma omp parallel for num_threads(8)
-        for (int i = 0; i < pt_meas.size(); ++i) {
+        const int num_pt = static_cast<int>(pt_meas.size());
+#pragma omp parallel for num_threads(param->num_threads) if (num_pt > kMinParallelPoints)
+        for (int i = 0; i < num_pt; ++i) {
             PointData& pt_data = pt_meas[i];
             Vec3 interp_pos = spl.itpPosition(pt_data.time_ns);
             Eigen::Quaterniond interp_q;
@@ -199,8 +201,9 @@ class RESPLE_LIO {
     int Match() {
         const float nn_radius = static_cast<float>(param->nn_search_radius);
         const float nn_max_sq = static_cast<float>(param->nn_search_radius * param->nn_search_radius);
-#pragma omp parallel for num_threads(8) schedule(dynamic)
-        for (int i = 0; i < pt_meas.size(); i++) {
+        const int num_pt = static_cast<int>(pt_meas.size());
+#pragma omp parallel for num_threads(param->num_threads) schedule(dynamic) if (num_pt > kMinParallelPoints)
+        for (int i = 0; i < num_pt; i++) {
             PointData& pt_data = pt_meas[i];
             pt_data.if_valid = false;
             // interp to point world
@@ -368,12 +371,12 @@ class RESPLE_LIO {
         cov_imu_inv(4) = 1. / param->cov_gyro(1);
         cov_imu_inv(5) = 1. / param->cov_gyro(2);
 
-#pragma omp parallel for num_threads(8) schedule(dynamic)
-        for (size_t i = 0; i < pt_meas.size(); i++) {
+        const int num_pt = static_cast<int>(pt_meas.size());
+#pragma omp parallel for num_threads(param->num_threads) schedule(dynamic) if (num_pt > kMinParallelPoints)
+        for (int i = 0; i < num_pt; i++) {
             PointData& pt_data = pt_meas[i];
             prepLiDAR(pt_data);
         }
-#pragma omp parallel for num_threads(8)
         for (size_t i = 0; i < imu_meas.size(); i++) {
             prepIMU(imu_meas[i]);
         }
