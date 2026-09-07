@@ -10,7 +10,6 @@
 #include <gtsam/geometry/Rot3.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
 #include "rtklib_.h"
-#include "rtklib_func.h"
 
 #include <Eigen/Dense>
 #include <cmath>
@@ -25,29 +24,19 @@ class GnssPsrFactor
     struct Params {
         Eigen::Vector3d le_arm_local{Eigen::Vector3d::Zero()};  ///< IMU->antenna lever arm, local frame
         Eigen::Vector3d sv_pos{Eigen::Vector3d::Zero()};     ///< satellite position, ECEF (m)
-        double svdt{0.0};                                    ///< satellite clock bias (s)
-        double base_var{1.0};              ///< upstream variance sum: vare + vmeas + Hatch-filtered code variance (m^2)
+        double svdt{0.0};                                    ///< satellite clock bias (s), precomputed externally
+        double ion_delay{0.0};           ///< ionospheric delay at the tracked frequency (m), precomputed externally
+        double tro_delay{0.0};                       ///< tropospheric delay (m), precomputed externally
+        double noise_var{1.0};  ///< total pseudorange variance: base_var + vion + vtrp + varerr (m^2), precomputed externally
         double weight{1.0};                      ///< global scale on the residual
-        double freq{FREQL1};                                 ///< carrier frequency of this signal (Hz)
         double psr_measure{0.0};                             ///< prange() output, code bias corrected (m)
-        const nav_t* nav{nullptr};                           ///< iono models / TEC grid for ionocorr()
-        const prcopt_t* prcopt{nullptr};                     ///< eratio[]/err[]/ionoopt for varerr()
-        const obsd_t* obs{nullptr};                          ///< SNR[0]/Pstd[0] for varerr()
-        gtime_t time{};                                      ///< observation epoch (GPST)
-        int sat{0};                                          ///< RTKLIB satellite number
-        int ionoopt{IONOOPT_BRDC};                           ///< prcopt.ionoopt handed to ionocorr()
-        int tropopt{TROPOPT_SAAS};                           ///< prcopt.tropopt handed to tropcorr()
         int sys_idx{0};                                      ///< index into `dt` for this constellation
     };
 
     GnssPsrFactor(gtsam::Key j1, gtsam::Key j2, gtsam::Key j3, gtsam::Key j4, const Params& p,
                       const gtsam::SharedNoiseModel& model)
         : gtsam::NoiseModelFactor4<gtsam::Vector3, gtsam::Vector4, gtsam::Vector3, gtsam::Rot3>(model, j1, j2, j3, j4),
-          p_(p) {
-        CHECK(p_.nav);
-        CHECK(p_.obs);
-        CHECK(p_.prcopt);
-    }
+          p_(p) {}
 
     ~GnssPsrFactor() override = default;
 
@@ -73,24 +62,10 @@ class GnssPsrFactor
             return gtsam::Vector1::Zero();
         }
         const Eigen::Vector3d rcv2sat_unit(e[0], e[1], e[2]);
-        double rcv_pos[3] = {0.0, 0.0, 0.0};  // {lat, lon, h} in rad/rad/m
-        double azel[2] = {0.0, PI / 2.0};
-        double ion_delay = 0.0, vion = 0.0, tro_delay = 0.0, vtrp = 0.0;
-        ecef2pos(P_ecef.data(), rcv_pos);
-        satazel(rcv_pos, e, azel);
-        ionocorr(p_.time, p_.nav, p_.sat, rcv_pos, azel, p_.ionoopt, &ion_delay, &vion);
-        ion_delay *= (FREQL1 / p_.freq) * (FREQL1 / p_.freq);  // ionocorr() reports the L1 delay
-        tropcorr(p_.time, p_.nav, rcv_pos, azel, p_.tropopt, &tro_delay, &vtrp);
 
-        // vion is reported at L1; it scales with delay^2, so rescaling to the tracked
-        // frequency takes the fourth power.
-        vion *= (FREQL1 / p_.freq) * (FREQL1 / p_.freq) * (FREQL1 / p_.freq) * (FREQL1 / p_.freq);
-        const int sys = satsys(p_.sat, nullptr);
-        const double varerr_term = rtklib::varerr(p_.prcopt, p_.obs, azel[1], sys);
-        const double total_var = std::max(0.01, p_.base_var + vion + vtrp + varerr_term);
-        const double pr_weight = p_.weight / std::sqrt(total_var);
+        const double pr_weight = p_.weight / std::sqrt(std::max(0.01, p_.noise_var));
 
-        const double psr_estimated = range + dt[p_.sys_idx] - CLIGHT * p_.svdt + ion_delay + tro_delay;
+        const double psr_estimated = range + dt[p_.sys_idx] - CLIGHT * p_.svdt + p_.ion_delay + p_.tro_delay;
 
         gtsam::Vector1 residual;
         residual[0] = (psr_estimated - p_.psr_measure) * pr_weight;

@@ -111,7 +111,7 @@ void GnssProcessor::SetupOptions() {
     solopt.posf = SOLF_XYZ;     // ECEF, so readsolt() hands back sol.rr directly
     solopt.times = TIMES_GPST;  // same time base as the observations
     solopt.timef = 0;           // week + tow
-    solopt.timeu = 3;
+    solopt.timeu = 6;
     solopt.outhead = 1;    // readsolt() needs the header to pick the decoder
     solopt.outvel = 1;     // velocity round-trips through the file as well
     solopt.solstatic = 0;  // one line per epoch, even in a static mode
@@ -232,7 +232,7 @@ int GnssProcessor::BuildNodes() {
     nodes_.clear();
 
     size_t si = 0, li = 0;
-    int no_sol = 0, no_lio = 0, few_sat = 0, epoch = 0;
+    int no_sol = 0, no_lio = 0, few_sat = 0;
     for (int i = 0; i < obs.n;) {
         int n = 0;
         while (i + n < obs.n && n < MAXOBS && fabs(timediff(obs.data[i + n].time, obs.data[i].time)) <= DTTOL) {
@@ -622,23 +622,26 @@ void GnssProcessor::AddFactor() {
                 sat_tk.last_cp = cp_lambda;
             }
 
+            double ion_delay = 0.0, vion = 0.0, tro_delay = 0.0, vtrp = 0.0;
+            ionocorr(sol.time, &nav, o.sat, rcv_llh, azel, prcopt.ionoopt, &ion_delay, &vion);
+            ion_delay *= (FREQL1 / freq) * (FREQL1 / freq);  // ionocorr() reports the L1 delay
+            tropcorr(sol.time, &nav, rcv_llh, azel, prcopt.tropopt, &tro_delay, &vtrp);
+            // vion is reported at L1; it scales with delay^2, so rescaling to the tracked
+            // frequency takes the fourth power.
+            vion *= (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq);
+            const double varerr_term = rtklib::varerr(&prcopt, &o, azel[1], satsys(o.sat, nullptr));
+
             faster_lio::GnssPsrFactor::Params p;
             const Eigen::Vector3d le_arm_local = lio_state.quat.toRotationMatrix() * config_.lever_arm;
             p.le_arm_local = le_arm_local;
             p.sv_pos = sv_pos;
             p.svdt = svdt;
+            p.ion_delay = ion_delay;
+            p.tro_delay = tro_delay;
             const double code_var = od[j].Pstd[0] * od[j].Pstd[0];
-            p.base_var = sv_var + vmeas + code_var;
+            p.noise_var = sv_var + vmeas + code_var + vion + vtrp + varerr_term;
             p.weight = config_.psr_weight;
-            p.freq = freq;
             p.psr_measure = psr_used;
-            p.nav = &nav;
-            p.prcopt = &prcopt;
-            p.obs = &o;
-            p.time = sol.time;
-            p.sat = od[j].sat;
-            p.ionoopt = prcopt.ionoopt;
-            p.tropopt = prcopt.tropopt;
             p.sys_idx = sys_idx;
             graph_.add(faster_lio::GnssPsrFactor(A(k), B(k), E(0), P(0), p, psr_noise));
             ++n_psr;
