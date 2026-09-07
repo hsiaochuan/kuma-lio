@@ -50,19 +50,6 @@ using gtsam::symbol_shorthand::E;  // Vector3, ECEF position of the LIO frame or
 using gtsam::symbol_shorthand::P;  // Rot3,    R_ecef_local
 
 namespace {
-
-/// UNIX epoch, so that a ROS stamp can be turned into an RTKLIB gtime_t.
-const double kEp1970[6] = {1970, 1, 1, 0, 0, 0};
-
-gtime_t UnixToGtime(double unix_sec, bool utc) {
-    gtime_t t = timeadd(epoch2time(kEp1970), unix_sec);
-    return utc ? utc2gpst(t) : t;
-}
-
-double GtimeToUnix(gtime_t t) { return timediff(t, epoch2time(kEp1970)); }
-
-/// R_enu_ecef at the geodetic position `pos` = {lat, lon, h}.  RTKLIB stores matrices
-/// column-major, which is exactly Eigen's default, so the map needs no transpose.
 Eigen::Matrix3d EnuFromEcefRotation(const double* pos) {
     double e[9];
     xyz2enu(pos, e);
@@ -112,28 +99,22 @@ void GnssProcessor::SetupOptions() {
     prcopt = prcopt_default;
     prcopt.mode = PMODE_SINGLE;
     prcopt.soltype = 0;
-    prcopt.nf = 1;  // the graph re-linearises L1/E1/B1 only
+    prcopt.nf = 1;
     prcopt.navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_CMP | SYS_QZS;
-    prcopt.glomodear = GLO_ARMODE_ON;  // prcopt_default asks for an external calibration we have none of
-    // prcopt_default leaves the base coordinate at {0,0,0}, which silently yields an empty
-    // solution in the relative modes; rnx2rtkp's post-processing default is used instead.
+    prcopt.glomodear = GLO_ARMODE_ON;
     prcopt.refpos = POSOPT_SINGLE;
-    // Doppler slip threshold, shared with the TDCP track in AddFactor().
     prcopt.thresdop = 1.0;
-    // ena stays off so postpos() does not mask: RTKLIB rejects a satellite whenever the SNR
-    // is absent, which throws away every observation of a RINEX file that carries no S#
-    // records.  The screening in EstimateClockBias()/AddFactor() reads the table regardless.
     SetSnrMask(25.0);
     prcopt.snrmask.ena[0] = prcopt.snrmask.ena[1] = 0;
 
     solopt = solopt_default;
-    solopt.posf = SOLF_XYZ;    // ECEF, so readsolt() hands back sol.rr directly
-    solopt.times = TIMES_GPST; // same time base as the observations
-    solopt.timef = 0;          // week + tow
+    solopt.posf = SOLF_XYZ;     // ECEF, so readsolt() hands back sol.rr directly
+    solopt.times = TIMES_GPST;  // same time base as the observations
+    solopt.timef = 0;           // week + tow
     solopt.timeu = 3;
-    solopt.outhead = 1;        // readsolt() needs the header to pick the decoder
-    solopt.outvel = 1;         // velocity round-trips through the file as well
-    solopt.solstatic = 0;      // one line per epoch, even in a static mode
+    solopt.outhead = 1;    // readsolt() needs the header to pick the decoder
+    solopt.outvel = 1;     // velocity round-trips through the file as well
+    solopt.solstatic = 0;  // one line per epoch, even in a static mode
     solopt.sstat = 0;
     solopt.maxsolstd = 0.0;
 }
@@ -162,27 +143,27 @@ bool GnssProcessor::LoadLioStates() {
     }
 
     std::string line;
-    std::vector<double> stamps;
     while (std::getline(fin, line)) {
         if (line.empty() || line[0] == '#') continue;
         std::istringstream iss(line);
-        double t, x, y, z, qx, qy, qz, qw;
-        if (!(iss >> t >> x >> y >> z >> qx >> qy >> qz >> qw)) continue;
-
-        LioState s;
-        s.time = UnixToGtime(t + config_.lio_time_offset, config_.lio_time_is_utc);
-        s.pos << x, y, z;
-        s.quat = Eigen::Quaterniond(qw, qx, qy, qz).normalized();
-        lio_states.push_back(s);
-        stamps.push_back(t + config_.lio_time_offset);
+        gtime_t gpst;
+        Eigen::Vector3d pos;
+        Eigen::Quaterniond quat;
+        iss >> gpst.time >> gpst.sec >> pos.x() >> pos.y() >> pos.z() >> quat.x() >> quat.y() >> quat.z() >> quat.w();
+        LioState ls;
+        ls.time = gpst;
+        ls.pos = pos;
+        ls.quat = quat;
+        lio_states.push_back(ls);
     }
+    fin.close();
+
     if (lio_states.size() < 2) {
         LOG(ERROR) << "lio trajectory has fewer than two poses: " << config_.lio_fname;
         return false;
     }
 
-    LOG(INFO) << "loaded " << lio_states.size() << " lio states spanning " << (stamps.back() - stamps.front())
-              << " s from " << config_.lio_fname;
+    LOG(INFO) << "loaded " << lio_states.size() << " lio states";
     return true;
 }
 
@@ -203,8 +184,7 @@ bool GnssProcessor::ReadRinex() {
     sortobs(&obs);
     uniqnav(&nav);
 
-    LOG(INFO) << "read " << obs.n << " observations, " << nav.n << " eph, " << nav.ng << " geph, " << nav.ns
-              << " seph";
+    LOG(INFO) << "read " << obs.n << " observations, " << nav.n << " eph, " << nav.ng << " geph, " << nav.ns << " seph";
     if (obs.n <= 0 || nav.n + nav.ng <= 0) {
         LOG(ERROR) << "no usable GNSS data; check that RTKLIB is built with -DENAGLO/-DENAGAL/-DENACMP";
         return false;
@@ -213,26 +193,23 @@ bool GnssProcessor::ReadRinex() {
 }
 
 bool GnssProcessor::RunPostpos() {
-    if (config_.sol_fname.empty()) {
-        config_.sol_fname = (config_.out_prefix.empty() ? std::string("gnss") : config_.out_prefix) + "_postpos.pos";
-    }
-
     std::vector<std::string> files{config_.obs_fname, config_.nav_fname};
     files.insert(files.end(), config_.extra_files.begin(), config_.extra_files.end());
     std::vector<const char*> infile;
     for (const auto& f : files) infile.push_back(f.c_str());
 
-    gtime_t ts{}, te{};  // zero epochs disable the time window filter
+    // position
+    gtime_t ts{}, te{};
     filopt_t filopt{};
     LOG(INFO) << "postpos: mode " << prcopt.mode << ", " << infile.size() << " input files -> " << config_.sol_fname;
-
-    const int ret = postpos(ts, te, 0.0, 0.0, &prcopt, &solopt, &filopt, infile.data(),
-                            static_cast<int>(infile.size()), config_.sol_fname.c_str(), "", "");
+    const int ret = postpos(ts, te, 0.0, 0.0, &prcopt, &solopt, &filopt, infile.data(), static_cast<int>(infile.size()),
+                            config_.sol_fname.c_str(), "", "");
     if (ret != 0) {
         LOG(ERROR) << "postpos failed with status " << ret;
         return false;
     }
 
+    // read position result
     const char* solfiles[1] = {config_.sol_fname.c_str()};
     readsolt(solfiles, 1, ts, te, 0.0, 0, 0, &solbuf);
     if (solbuf.n <= 0) {
@@ -240,15 +217,14 @@ bool GnssProcessor::RunPostpos() {
         return false;
     }
     LOG(INFO) << "postpos produced " << solbuf.n << " epochs";
-    if (!ReadRinex()) return false;
-    return BuildNodes() >= 2;
+    return true;
 }
 
 int GnssProcessor::BuildNodes() {
     nodes_.clear();
 
     size_t si = 0, li = 0;
-    int no_sol = 0, no_lio = 0, few_sat = 0;
+    int no_sol = 0, no_lio = 0, few_sat = 0, epoch = 0;
     for (int i = 0; i < obs.n;) {
         int n = 0;
         while (i + n < obs.n && n < MAXOBS && fabs(timediff(obs.data[i + n].time, obs.data[i].time)) <= DTTOL) {
@@ -288,7 +264,7 @@ int GnssProcessor::BuildNodes() {
         nd.sol_i = static_cast<int>(si);
         nd.lio_i = static_cast<int>(li);
         nodes_.push_back(nd);
-    } // for obs
+    }  // for obs
 
     LOG(INFO) << "paired " << nodes_.size() << " epochs (dropped " << no_sol << " without a postpos fix, " << few_sat
               << " below min_sat, " << no_lio << " without a lio state)";
@@ -311,41 +287,48 @@ void GnssProcessor::EstimateClockBias(size_t k, double* dt) const {
     svh.assign(n, 0);
     satposs(EpochSol(k).time, EpochObs(k), n, &nav, prcopt.sateph, rs.data(), dts.data(), var.data(), svh.data());
 
-    const obsd_t* od = EpochObs(k);
     const sol_t& sol = EpochSol(k);
     double rcv_llh[3];
     ecef2pos(sol.rr, rcv_llh);
 
     std::vector<double> per_sys[SYSTOTAL];
     for (int j = 0; j < n; ++j) {
-        const int sys_idx = SysToIdx(satsys(od[j].sat, nullptr));
-        if (sys_idx < 0) continue;
+        const obsd_t& o = EpochObs(k)[j];
 
-        // satellite
-        if (satexclude(od[j].sat, var[j], svh[j], &prcopt)) continue;
-        double e[3], azel[2] = {0.0, PI / 2.0};
-        const double r = geodist(&rs[j * 6], sol.rr, e);
-        if (r <= 0.0) continue;
-        // el
+        const int sys_idx = SysToIdx(satsys(o.sat, nullptr));
+        if (sys_idx < 0) continue;  // no clock slot for this constellation
+
+        if (satexclude(o.sat, var[j], svh[j], &prcopt)) continue;
+
+        double e[3];
+        const double range = geodist(&rs[j * 6], sol.rr, e);
+        if (range <= 0.0) continue;
+        double azel[2] = {0.0, PI / 2.0};
         if (satazel(rcv_llh, e, azel) < prcopt.elmin) continue;
 
-        // snr
+        // prcopt.snrmask.ena is left off so that postpos() does not drop every observation of a
+        // file without S# records; the mask still has to apply here, so enable it on a local copy.
         snrmask_t mask = prcopt.snrmask;
         mask.ena[0] = 1;
-        if (testsnr(0, 0, azel[1], od[j].SNR[0], &mask)) continue;
+        if (testsnr(0, 0, azel[1], o.SNR[0], &mask)) continue;
 
-        const double freq = sat2freq(od[j].sat, od[j].code[0], &nav);
+        // sat2freq() returns 0 for a GLONASS satellite with no frequency channel number and for
+        // an unknown code; letting that through makes lambda infinite and NaNs the whole solve.
+        const double freq = sat2freq(o.sat, o.code[0], &nav);
         if (freq <= 0.0) continue;
+
         double vmeas = 0.0;
-        const double P = rtklib::prange(&od[j], &nav, &prcopt, &vmeas);
-        if (P == 0.0) continue;
+        const double psr = rtklib::prange(&o, &nav, &prcopt, &vmeas);
+        if (psr == 0.0) continue;
+
+        const double svdt = dts[j * 2 + 0];
 
         // rescode()'s residual with the clock left in: v = P - (r - c*dts + dion + dtrp).
         double iono = 0.0, vion = 0.0, trop = 0.0, vtrp = 0.0;
-        ionocorr(sol.time, &nav, od[j].sat, rcv_llh, azel, prcopt.ionoopt, &iono, &vion);
+        ionocorr(sol.time, &nav, o.sat, rcv_llh, azel, prcopt.ionoopt, &iono, &vion);
         iono *= (FREQL1 / freq) * (FREQL1 / freq);
         tropcorr(sol.time, &nav, rcv_llh, azel, prcopt.tropopt, &trop, &vtrp);
-        per_sys[sys_idx].push_back(P - (r - dts[j * 2] * CLIGHT + iono + trop));
+        per_sys[sys_idx].push_back(psr - (range - svdt * CLIGHT + iono + trop));
     }
 
     const double gps = Median(per_sys[SYSGPS]);
@@ -412,7 +395,7 @@ bool GnssProcessor::Alignment() {
     for (size_t k = 0; k < nodes_.size(); ++k) {
         const LioState& ls = EpochLio(k);
         const sol_t& sol = EpochSol(k);
-        local.push_back(ls.pos + ls.quat.toRotationMatrix() * config_.Tex_imu_r);
+        local.push_back(ls.pos + ls.quat.toRotationMatrix() * config_.lever_arm);
         ecef.emplace_back(sol.rr[0], sol.rr[1], sol.rr[2]);
     }
 
@@ -422,7 +405,7 @@ bool GnssProcessor::Alignment() {
         span_max = span_max.cwiseMax(p);
     }
     const double span = (span_max - span_min).norm();
-    heading_observable_ = span > config_.align_min_span;
+    bool heading_observable_ = span > config_.align_min_span;
     if (!heading_observable_) {
         LOG(WARNING) << "local trajectory spans only " << span << " m; heading is not observable, assuming yaw = 0";
     }
@@ -505,25 +488,19 @@ void GnssProcessor::AddFactor() {
 
     const size_t nn = nodes_.size();
 
-
     gtsam::SharedNoiseModel psr_base = gtsam::noiseModel::Isotropic::Sigma(1, 1.0);
     gtsam::SharedNoiseModel cp_base = gtsam::noiseModel::Isotropic::Sigma(1, 1.0);
     gtsam::SharedNoiseModel psr_noise = psr_base, cp_noise = cp_base;
     if (config_.robust) {
         psr_noise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Cauchy::Create(config_.robust_psr_k), psr_base);
-        cp_noise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Cauchy::Create(config_.robust_cp_k), cp_base);
+        cp_noise = gtsam::noiseModel::Robust::Create(gtsam::noiseModel::mEstimator::Cauchy::Create(config_.robust_cp_k),
+                                                     cp_base);
     }
-
-    auto lio_noise = gtsam::noiseModel::Isotropic::Sigma(3, config_.lio_pos_std);
-    auto dt_noise = gtsam::noiseModel::Isotropic::Sigma(4, config_.dt_std);
-    auto ddt_noise = gtsam::noiseModel::Isotropic::Sigma(1, config_.ddt_std);
 
     // --- initial values -----------------------------------------------------------------
     std::vector<std::array<double, SYSTOTAL>> dt_init(nn);
-    for (size_t k = 0; k < nn; ++k)
-        EstimateClockBias(k, dt_init[k].data());
+    for (size_t k = 0; k < nn; ++k) EstimateClockBias(k, dt_init[k].data());
 
     // a single median over the whole run to init the ddt
     std::vector<double> ddts;
@@ -543,47 +520,26 @@ void GnssProcessor::AddFactor() {
     values_.insert(E(0), gtsam::Vector3(anc_ecef_));
     values_.insert(P(0), gtsam::Rot3(R_ecef_local_));
 
-
-    graph_.add(gtsam::PriorFactor<gtsam::Vector3>(E(0), gtsam::Vector3(anc_ecef_),
-                                                 gtsam::noiseModel::Isotropic::Sigma(3, config_.prior_anchor_std)));
-    // Heading is only pinned by the ranges when the platform actually travels.  On a short or
-    // stationary run the ranges say nothing about yaw, so the prior has to hold it instead of
-    // letting the optimiser wander freely inside a loose one.
-    const double ext_rot_std =
-        heading_observable_ ? config_.prior_ext_rot_std : std::min(config_.prior_ext_rot_std, 1e-4);
-    graph_.add(gtsam::PriorFactor<gtsam::Rot3>(P(0), gtsam::Rot3(R_ecef_local_),
-                                               gtsam::noiseModel::Isotropic::Sigma(3, ext_rot_std)));
-    graph_.add(gtsam::PriorFactor<gtsam::Vector4>(
-        B(0), values_.at<gtsam::Vector4>(B(0)), gtsam::noiseModel::Isotropic::Sigma(4, config_.prior_dt_std)));
-    graph_.add(gtsam::PriorFactor<gtsam::Vector1>(
-        C(0), gtsam::Vector1(ddt_init), gtsam::noiseModel::Isotropic::Sigma(1, config_.prior_ddt_std)));
-    // A weak prior on the first node keeps the Hessian well conditioned; the global gauge is
-    // already fixed by the anchor and rotation priors above.
-    graph_.add(gtsam::PriorFactor<gtsam::Vector3>(A(0), values_.at<gtsam::Vector3>(A(0)),
-                                                 gtsam::noiseModel::Isotropic::Sigma(3, config_.align_outlier)));
-
-    // --- per-epoch factors --------------------------------------------------------------
-    // sat -> what the TDCP factor needs from the last epoch on which that satellite was
-    // tracked without a slip.  This is the one piece of cross-epoch state RTKLIB does not
-    // keep for us, because postpos() has already thrown its own away.
-    struct CpTrack {
-        size_t node;
-        double time;
-        double cp;               ///< carrier phase, satellite clock and TGD corrected (m)
-        double dopp_range_rate;  ///< -lambda * D at that epoch (m/s), for the slip test
-        bool dopp_valid;
-        Eigen::Vector3d sv_pos;
-        Eigen::Vector3d Tex;
+    struct SatTrack {
+        size_t node = 0;
+        gtime_t last_time{-1, -1};
+        double cp = 0.0;               ///< carrier phase, satellite clock corrected (m)
+        double dopp_range_rate = 0.0;  ///< -lambda * D at that epoch (m/s), for the slip test
+        bool dopp_valid = false;
+        Eigen::Vector3d sv_pos = Eigen::Vector3d::Zero();
+        int hatch_n = 0;
+        double hatch = 0.0;
+        double last_cp = 0.0;
     };
-    std::map<int, CpTrack> cp_track;
+    std::map<int, SatTrack> sat_tracks;
 
     std::vector<double> rs, dts, var;
     std::vector<int> svh;
-    size_t n_psr = 0, n_cp = 0, n_dtddt = 0;
+    size_t n_psr = 0, n_cp = 0, n_dtddt = 0, n_slip = 0;
     for (size_t k = 0; k < nn; ++k) {
         const obsd_t* od = EpochObs(k);
         const sol_t& sol = EpochSol(k);
-        const LioState& ls = EpochLio(k);
+        const LioState& lio_state = EpochLio(k);
         const int n = nodes_[k].obs_n;
         rs.assign(6 * n, 0.0);
         dts.assign(2 * n, 0.0);
@@ -593,122 +549,178 @@ void GnssProcessor::AddFactor() {
         double rcv_llh[3];
         ecef2pos(sol.rr, rcv_llh);
 
-        // The factors expect the lever arm already rotated into the local frame; the LIO
-        // attitude is treated as known here, only the position is estimated.
-        const Eigen::Vector3d Tex_local = ls.quat.toRotationMatrix() * config_.Tex_imu_r;
-        const double epoch_time = GtimeToUnix(sol.time);
-
         for (int j = 0; j < n; ++j) {
-            const int sys_idx = SysToIdx(satsys(od[j].sat, nullptr));
-            if (sys_idx < 0) continue;
+            const obsd_t& o = od[j];
 
-            // satellite
-            if (satexclude(od[j].sat, var[j], svh[j], &prcopt)) continue;
-            double e[3], azel[2] = {0.0, PI / 2.0};
-            if (geodist(&rs[j * 6], sol.rr, e) <= 0.0) continue;
-            // el
+            const int sys_idx = SysToIdx(satsys(o.sat, nullptr));
+            if (sys_idx < 0) continue;  // no clock slot for this constellation
+
+            if (satexclude(o.sat, var[j], svh[j], &prcopt)) continue;
+
+            double e[3];
+            const double range = geodist(&rs[j * 6], sol.rr, e);
+            if (range <= 0.0) continue;
+            double azel[2] = {0.0, PI / 2.0};
             if (satazel(rcv_llh, e, azel) < prcopt.elmin) continue;
 
-            // snr
+            // prcopt.snrmask.ena is left off so that postpos() does not drop every observation of
+            // a file without S# records; the mask still has to apply here, so enable it on a copy.
             snrmask_t mask = prcopt.snrmask;
             mask.ena[0] = 1;
-            if (testsnr(0, 0, azel[1], od[j].SNR[0], &mask)) continue;
+            if (testsnr(0, 0, azel[1], o.SNR[0], &mask)) continue;
 
-            const double freq = sat2freq(od[j].sat, od[j].code[0], &nav);
+            // sat2freq() returns 0 for a GLONASS satellite with no frequency channel number and
+            // for an unknown code; letting that through makes lambda infinite and NaNs the solve.
+            const double freq = sat2freq(o.sat, o.code[0], &nav);
+            if (freq <= 0.0) continue;
+            const double lambda = CLIGHT / freq;
+
             double vmeas = 0.0;
-            const double psr = rtklib::prange(&od[j], &nav, &prcopt, &vmeas);
+            const double psr = rtklib::prange(&o, &nav, &prcopt, &vmeas);
             if (psr == 0.0) continue;
 
-            const double lambda = CLIGHT / freq;
-            const bool dopp_valid = od[j].D[0] != 0.0f;
+            const Eigen::Vector3d sv_pos(rs[j * 6 + 0], rs[j * 6 + 1], rs[j * 6 + 2]);
+            const double svdt = dts[j * 2 + 0];
+            const double sv_var = std::max(var[j], 0.0);
 
-            faster_lio::GnssPsrDoppFactor::Params p;
-            p.Tex_imu_r = Tex_local;
-            p.sv_pos << rs[j * 6 + 0], rs[j * 6 + 1], rs[j * 6 + 2];
-            p.svdt = dts[j * 2 + 0];
-            // Broadcast ephemeris variance from satposs() plus the receiver code noise; the
-            // factor divides by this and multiplies by sin^2(el), so it is a sigma in metres.
-            const double code_std = od[j].Pstd[0] > 0.0f ? od[j].Pstd[0] : config_.psr_std;
-            p.pr_uura = std::max(0.1, std::sqrt(std::max(var[j], 0.0) + vmeas + code_std * code_std));
-            p.relative_sqrt_info = config_.relative_sqrt_info;
+            SatTrack& sat_tk = sat_tracks[od[j].sat];
+            const bool dopp_valid = od[j].D[0] != 0.0f;
+            const bool phase_valid = od[j].L[0] != 0.0;
+            const double cp_lambda = od[j].L[0] * lambda;
+
+            bool arc_continues = true;
+            if (sat_tk.last_time.time < 0 || !dopp_valid || !phase_valid || (od[j].LLI[0] & 0x3) == 0 ||
+                timediff(sol.time, sat_tk.last_time) > config_.cp_max_gap)
+                arc_continues = false;
+
+            // doppler integrated to detect the slip
+            if (arc_continues && sat_tk.dopp_valid) {
+                const double cp_now = cp_lambda + svdt * CLIGHT;
+                const double gap = timediff(sol.time, sat_tk.last_time);
+                const double predicted = 0.5 * (-lambda * od[j].D[0] + sat_tk.dopp_range_rate) * gap;
+                if (std::fabs((cp_now - sat_tk.cp) - predicted) > prcopt.thresdop) arc_continues = false;
+            }
+
+            // hatch filter
+            double psr_used = psr;
+            int hatch_n = 1;
+            if (config_.hatch_window > 0 && phase_valid) {
+                if (arc_continues && sat_tk.hatch_n > 0) {
+                    hatch_n = std::min(sat_tk.hatch_n + 1, config_.hatch_window);
+                    psr_used = psr / hatch_n + (hatch_n - 1.0) / hatch_n * (sat_tk.hatch + cp_lambda - sat_tk.last_cp);
+                }
+                sat_tk.hatch_n = hatch_n;
+                sat_tk.hatch = psr_used;
+                sat_tk.last_cp = cp_lambda;
+            }
+
+            faster_lio::GnssPsrFactor::Params p;
+            const Eigen::Vector3d le_arm_local = lio_state.quat.toRotationMatrix() * config_.lever_arm;
+            p.le_arm_local = le_arm_local;
+            p.sv_pos = sv_pos;
+            p.svdt = svdt;
+            const double code_var = od[j].Pstd[0] * od[j].Pstd[0];
+            p.base_var = sv_var + vmeas + code_var;
+            p.weight = config_.psr_weight;
             p.freq = freq;
-            p.psr_measure = psr;
+            p.psr_measure = psr_used;
             p.nav = &nav;
+            p.prcopt = &prcopt;
+            p.obs = &o;
             p.time = sol.time;
             p.sat = od[j].sat;
             p.ionoopt = prcopt.ionoopt;
             p.tropopt = prcopt.tropopt;
             p.sys_idx = sys_idx;
-            graph_.add(faster_lio::GnssPsrDoppFactor(A(k), B(k), E(0), P(0), p, psr_noise));
+            graph_.add(faster_lio::GnssPsrFactor(A(k), B(k), E(0), P(0), p, psr_noise));
             ++n_psr;
 
-
-            if (od[j].L[0] == 0.0 || std::fabs(od[j].L[0] * lambda) <= 100.0) {
-                cp_track.erase(od[j].sat);
-                continue;
-            }
-            // Only the satellite clock has to go: any constant per-satellite bias, the group
-            // delay included, cancels when two epochs of the same arc are differenced.
-            const double cp = od[j].L[0] * lambda + p.svdt * CLIGHT;
-            const double range_rate = -lambda * od[j].D[0];
-
-            auto it = cp_track.find(od[j].sat);
-            bool usable = (od[j].LLI[0] & 0x3) == 0 && it != cp_track.end();
-            if (usable) {
-                const double gap = epoch_time - it->second.time;
-                if (gap <= 0.0 || gap > config_.cp_max_gap) {
-                    usable = false;
-                } else if (dopp_valid && it->second.dopp_valid) {
-                    // A cycle slip shows up as a carrier-phase increment that disagrees with
-                    // the Doppler-integrated range change; both carry the receiver clock
-                    // drift, so it cancels out of the comparison.  Without Doppler only the
-                    // LLI flag and the arc gap above are left to catch a slip.
-                    const double predicted = 0.5 * (range_rate + it->second.dopp_range_rate) * gap;
-                    if (std::fabs((cp - it->second.cp) - predicted) > prcopt.thresdop) usable = false;
-                }
-            }
-
-            if (usable) {
+            const double cp = cp_lambda + svdt * CLIGHT;
+            if (arc_continues) {
                 faster_lio::GnssTdCpFactor::Params c;
-                c.Tex_imu_r_i = it->second.Tex;
-                c.Tex_imu_r_j = Tex_local;
-                c.sv_pos_i = it->second.sv_pos;
-                c.sv_pos_j = p.sv_pos;
-                c.cp_measured = cp - it->second.cp;
+                c.le_arm_local = le_arm_local;
+                c.sv_pos_i = sat_tk.sv_pos;
+                c.sv_pos_j = sv_pos;
+                c.cp_measured = cp - sat_tk.cp;
                 c.cp_weight = std::sin(azel[1]) / std::max(1e-3, config_.cp_std);
                 c.sys_idx = sys_idx;
-                graph_.add(faster_lio::GnssTdCpFactor(A(it->second.node), A(k), B(it->second.node), B(k), E(0), P(0), c,
-                                                      cp_noise));
+                graph_.add(
+                    faster_lio::GnssTdCpFactor(A(sat_tk.node), A(k), B(sat_tk.node), B(k), E(0), P(0), c, cp_noise));
                 ++n_cp;
+            } else {
+                ++n_slip;
             }
 
-            cp_track[od[j].sat] = CpTrack{k, epoch_time, cp, range_rate, dopp_valid, p.sv_pos, Tex_local};
-        }
+            sat_tk.node = k;
+            sat_tk.last_time = sol.time;
+            sat_tk.cp = cp;
+            sat_tk.dopp_range_rate = -lambda * od[j].D[0];
+            sat_tk.dopp_valid = dopp_valid;
+            sat_tk.sv_pos = sv_pos;
+        } // for sta
 
         if (k == 0) continue;
 
         const LioState& pls = EpochLio(k - 1);
         const double delta_t = timediff(sol.time, EpochSol(k - 1).time);
 
-        graph_.add(faster_lio::LioOdomFactor(A(k - 1), A(k), ls.pos - pls.pos, lio_noise));
-        graph_.add(faster_lio::GnssDdtSmoothFactor(C(k - 1), C(k), ddt_noise));
+        graph_.add(
+            faster_lio::LioOdomFactor(A(k - 1), A(k), lio_state.pos - pls.pos, gtsam::noiseModel::Isotropic::Sigma(3, config_.lio_pos_std)));
+        graph_.add(faster_lio::GnssDdtSmoothFactor(C(k - 1), C(k), gtsam::noiseModel::Isotropic::Sigma(1, config_.ddt_std)));
+        graph_.add(faster_lio::GnssDtDdtFactor(B(k - 1), B(k), C(k - 1), C(k), delta_t,
+                                                   gtsam::noiseModel::Isotropic::Sigma(4, config_.dt_std)));
 
-        // Receivers periodically steer their clock by a whole millisecond.  Propagating the
-        // bias across such a jump would drag the position with it, so the link is dropped and
-        // only the drift stays connected.
-        const double jump = std::fabs(dt_init[k][SYSGPS] - dt_init[k - 1][SYSGPS] - ddt_init * delta_t);
-        if (jump < 0.5 * 1e-3 * CLIGHT) {
-            graph_.add(faster_lio::GnssDtDdtFactor(B(k - 1), B(k), C(k - 1), C(k), delta_t, dt_noise));
-            ++n_dtddt;
+    } // for epoch
+
+    LOG(INFO) << "graph: " << nn << " nodes, " << n_psr << " psr, " << n_cp << " tdcp, " << n_dtddt
+              << " dt-ddt factors, " << graph_.size() << " factors total (" << n_slip
+              << " arc restarts, carrier smoothing " << (config_.hatch_window > 0 ? "on" : "off") << ")";
+}
+
+void GnssProcessor::LogResiduals(const gtsam::Values& v, const char* tag) const {
+    struct Acc {
+        const char* name;
+        const char* unit;
+        size_t n = 0, over3 = 0;
+        double sq = 0.0, max = 0.0;
+        void add(double r) {
+            ++n;
+            sq += r * r;
+            max = std::max(max, r);
+            if (r > 3.0) ++over3;
+        }
+        double rms() const { return n ? std::sqrt(sq / n) : 0.0; }
+    };
+
+    Acc psr{"psr", "sigma"}, cp{"tdcp", "sigma"}, lio{"lio", "m"}, dtddt{"dt-ddt", "m"}, ddt{"ddt", "m/s"},
+        prior{"priors", "mixed"};
+
+    for (const auto& f : graph_) {
+        // unwhitenedError() lives on NoiseModelFactor, not on the NonlinearFactor base.
+        const auto* nf = dynamic_cast<const gtsam::NoiseModelFactor*>(f.get());
+        if (!nf) continue;
+        const double r = nf->unwhitenedError(v).norm();
+        if (dynamic_cast<const faster_lio::GnssPsrFactor*>(f.get())) {
+            psr.add(r);
+        } else if (dynamic_cast<const faster_lio::GnssTdCpFactor*>(f.get())) {
+            cp.add(r);
+        } else if (dynamic_cast<const faster_lio::LioOdomFactor*>(f.get())) {
+            lio.add(r);
+        } else if (dynamic_cast<const faster_lio::GnssDtDdtFactor*>(f.get())) {
+            dtddt.add(r);
+        } else if (dynamic_cast<const faster_lio::GnssDdtSmoothFactor*>(f.get())) {
+            ddt.add(r);
         } else {
-            graph_.add(gtsam::PriorFactor<gtsam::Vector4>(B(k), values_.at<gtsam::Vector4>(B(k)),
-                                                         gtsam::noiseModel::Isotropic::Sigma(4, config_.prior_dt_std)));
-            LOG(WARNING) << "receiver clock jump of " << jump << " m before node " << k << "; dt link dropped";
+            prior.add(r);
         }
     }
 
-    LOG(INFO) << "graph: " << nn << " nodes, " << n_psr << " psr, " << n_cp << " tdcp, " << n_dtddt
-              << " dt-ddt factors, " << graph_.size() << " factors total";
+    for (const Acc* a : {&psr, &cp, &lio, &dtddt, &ddt, &prior}) {
+        if (a->n == 0) continue;
+        LOG(INFO) << "residuals " << tag << "  " << std::setw(7) << a->name << "  n " << std::setw(7) << a->n
+                  << "  rms " << std::setw(9) << a->rms() << " " << a->unit << "  max " << std::setw(9) << a->max
+                  << "  >3: " << a->over3 << " (" << (100.0 * a->over3 / a->n) << "%)";
+    }
 }
 
 bool GnssProcessor::Optimize() {
@@ -723,99 +735,25 @@ bool GnssProcessor::Optimize() {
     if (config_.verbose) params.setVerbosityLM("SUMMARY");
 
     const double err0 = graph_.error(values_);
+    LogResiduals(values_, "before");
     gtsam::LevenbergMarquardtOptimizer optimizer(graph_, values_, params);
     result_ = optimizer.optimize();
     const double err1 = graph_.error(result_);
+    LogResiduals(result_, " after");
     LOG(INFO) << "LM: error " << err0 << " -> " << err1 << " in " << optimizer.iterations() << " iterations";
 
-    const Eigen::Matrix3d R_before = R_ecef_local_;
-    anc_ecef_ = result_.at<gtsam::Vector3>(E(0));
-    R_ecef_local_ = result_.at<gtsam::Rot3>(P(0)).matrix();
-    LOG(INFO) << "extrinsic rotation moved "
-              << gtsam::Rot3(R_before.transpose() * R_ecef_local_).axisAngle().second * R2D
-              << " deg from the alignment estimate";
-
-    opt_pos_.clear();
-    opt_ecef_.clear();
-    for (size_t k = 0; k < nodes_.size(); ++k) {
-        const Eigen::Vector3d pos = result_.at<gtsam::Vector3>(A(k));
-        opt_pos_.push_back(pos);
-        opt_ecef_.push_back(
-            R_ecef_local_ * (pos + EpochLio(k).quat.toRotationMatrix() * config_.Tex_imu_r) + anc_ecef_);
-    }
-
-    double anc_llh[3];
-    ecef2pos(anc_ecef_.data(), anc_llh);
-    LOG(INFO) << "refined anchor ecef " << anc_ecef_.transpose() << "  lla " << anc_llh[0] * R2D << " "
-              << anc_llh[1] * R2D << " " << anc_llh[2];
-
-    double sq = 0.0;
-    for (size_t k = 0; k < nodes_.size(); ++k) {
-        const sol_t& sol = EpochSol(k);
-        sq += (opt_ecef_[k] - Eigen::Vector3d(sol.rr[0], sol.rr[1], sol.rr[2])).squaredNorm();
-    }
-    LOG(INFO) << "rms distance to the postpos solution: " << std::sqrt(sq / static_cast<double>(nodes_.size()))
-              << " m";
     return true;
 }
 
 bool GnssProcessor::SaveResults() const {
-    if (config_.out_prefix.empty()) {
-        LOG(WARNING) << "no out_prefix given, skipping result files";
-        return true;
-    }
-    if (opt_ecef_.size() != nodes_.size()) {
-        LOG(ERROR) << "no optimised trajectory to save";
-        return false;
-    }
-
-    std::ofstream f_ref(config_.out_prefix + "_rtklib.txt");
-    std::ofstream f_fgo(config_.out_prefix + "_fgo.txt");
-    std::ofstream f_loc(config_.out_prefix + "_local.txt");
-    if (!f_ref || !f_fgo || !f_loc) {
-        LOG(ERROR) << "failed to open output files with prefix " << config_.out_prefix;
-        return false;
-    }
-    f_ref << "# unix_time ecef_x ecef_y ecef_z lat_deg lon_deg height stat nsat   (postpos solution)\n";
-    f_fgo << "# unix_time ecef_x ecef_y ecef_z lat_deg lon_deg height\n";
-    f_loc << "# unix_time x y z qx qy qz qw   (TUM, LIO frame, position refined by GNSS)\n";
-
-    f_ref << std::fixed << std::setprecision(6);
-    f_fgo << std::fixed << std::setprecision(6);
-    f_loc << std::fixed << std::setprecision(6);
-
-    for (size_t k = 0; k < nodes_.size(); ++k) {
-        const sol_t& sol = EpochSol(k);
-        const LioState& ls = EpochLio(k);
-        const double t = GtimeToUnix(sol.time);
-
-        double llh[3];
-        ecef2pos(sol.rr, llh);
-        f_ref << t << " " << sol.rr[0] << " " << sol.rr[1] << " " << sol.rr[2] << " " << llh[0] * R2D << " "
-              << llh[1] * R2D << " " << llh[2] << " " << static_cast<int>(sol.stat) << " "
-              << static_cast<int>(sol.ns) << "\n";
-
-        double ecef_o[3] = {opt_ecef_[k].x(), opt_ecef_[k].y(), opt_ecef_[k].z()};
-        ecef2pos(ecef_o, llh);
-        f_fgo << t << " " << opt_ecef_[k].transpose() << " " << llh[0] * R2D << " " << llh[1] * R2D << " " << llh[2]
-              << "\n";
-
-        f_loc << t << " " << opt_pos_[k].transpose() << " " << ls.quat.x() << " " << ls.quat.y() << " " << ls.quat.z()
-              << " " << ls.quat.w() << "\n";
-    }
-
-    LOG(INFO) << "wrote " << nodes_.size() << " epochs to " << config_.out_prefix << "_{rtklib,fgo,local}.txt";
     return true;
 }
 
 bool GnssProcessor::ProcessGnss() {
     if (!LoadLioStates()) return false;
-
-    // RTKLIB solves the trajectory in whatever mode prcopt asks for; the factor graph below
-    // always re-linearises the raw single-frequency observations on top of it.
     if (!RunPostpos()) return false;
-
-    // align the postpos and lio trajectory
+    if (!ReadRinex()) return false;
+    BuildNodes();
     if (!Alignment()) {
         LOG(ERROR) << "GNSS alignment failed";
         return false;

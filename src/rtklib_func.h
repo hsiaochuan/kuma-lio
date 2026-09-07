@@ -1,15 +1,6 @@
 //
 // Created by hsiaochuan on 2026/09/04.
 //
-// RTKLIB computes the pseudorange it actually feeds to rescode() in prange(), which removes
-// the differential code bias and the broadcast group delay of the tracked signal.  prange()
-// and its helper gettgd() are `static` inside pntpos.c, so there is no way to call them; the
-// two functions are copied here verbatim (only `static` -> `inline` and the trace() calls
-// dropped) so that the factor graph screens and corrects its observations with exactly the
-// same code RTKLIB's own point positioning uses.
-//
-// Source: RTKLIB third_party/RTKLIB/src/pntpos.c, Copyright (C) 2007-2020 by T.TAKASU.
-//
 
 #ifndef FASTER_LIO_RTKLIB_PRANGE_H
 #define FASTER_LIO_RTKLIB_PRANGE_H
@@ -21,6 +12,8 @@ namespace rtklib {
 #define SQR(x) ((x) * (x))
 
 #define ERR_CBIAS 0.3 /* code bias error Std (m) */
+#define MAX(x,y)    ((x)>=(y)?(x):(y))
+#define MIN_EL      (5.0*D2R)   /* min elevation for measurement error (rad) */
 
 /* get group delay parameter (m) ---------------------------------------------*/
 inline double gettgd(int sat, const nav_t *nav, int type)
@@ -122,8 +115,41 @@ inline double prange(const obsd_t *obs, const nav_t *nav, const prcopt_t *opt,
     return P1;
 }
 
+/* pseudorange measurement error variance ------------------------------------*/
+inline double varerr(const prcopt_t *opt, const obsd_t *obs, double el, int sys)
+{
+    double fact=1.0,varr;
+
+    switch (sys) {
+        case SYS_GPS: fact *= EFACT_GPS; break;
+        case SYS_GLO: fact *= EFACT_GLO; break;
+        case SYS_SBS: fact *= EFACT_SBS; break;
+        case SYS_CMP: fact *= EFACT_CMP; break;
+        case SYS_QZS: fact *= EFACT_QZS; break;
+        case SYS_IRN: fact *= EFACT_IRN; break;
+        default:      fact *= EFACT_GPS; break;
+    }
+    if (el<MIN_EL) el=MIN_EL;
+    /* var = R^2*(a^2 + (b^2/sin(el) + c^2*(10^(0.1*(snr_max-snr)))) + (d*rcv_std)^2) */
+    varr=SQR(opt->err[1])+SQR(opt->err[2])/sin(el);
+    if (opt->err[6]>0.0) {  /* if snr term not zero */
+        varr+=SQR(opt->err[6])*pow(10,0.1*MAX(opt->err[5]-obs->SNR[0],0));
+    }
+    varr*=SQR(opt->eratio[0]);
+    if (opt->err[7]>0.0) {
+        /* NOTE: err[7] defaults to 0 (disabled); if it's ever enabled, this Pstd term would
+         * double-count with gnss_processor.cpp's own Hatch-filtered code_var, which also uses
+         * obs->Pstd. Revisit code_var there before enabling err[7]. */
+        varr+=SQR(opt->err[7]*obs->Pstd[0]);
+    }
+    if (opt->ionoopt==IONOOPT_IFLC) varr*=SQR(3.0); /* iono-free */
+    return SQR(fact)*varr;
+}
+
 #undef SQR
 #undef ERR_CBIAS
+#undef MAX
+#undef MIN_EL
 
 }  // namespace rtklib_pntpos
 
