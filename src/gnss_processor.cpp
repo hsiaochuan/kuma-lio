@@ -193,6 +193,14 @@ bool GnssProcessor::ReadRinex() {
 }
 
 bool GnssProcessor::RunPostpos() {
+    if (config_.sol_fname.empty()) {
+        if (output_dir.empty()) {
+            LOG(ERROR) << "no --sol_fname and no --out_dir to derive one from";
+            return false;
+        }
+        config_.sol_fname = output_dir + "/gnss_postpos.pos";
+    }
+
     std::vector<std::string> files{config_.obs_fname, config_.nav_fname};
     files.insert(files.end(), config_.extra_files.begin(), config_.extra_files.end());
     std::vector<const char*> infile;
@@ -589,7 +597,7 @@ void GnssProcessor::AddFactor() {
             const double cp_lambda = od[j].L[0] * lambda;
 
             bool arc_continues = true;
-            if (sat_tk.last_time.time < 0 || !dopp_valid || !phase_valid || (od[j].LLI[0] & 0x3) == 0 ||
+            if (sat_tk.last_time.time < 0 || !dopp_valid || !phase_valid || (od[j].LLI[0] & 0x3) != 0 ||
                 timediff(sol.time, sat_tk.last_time) > config_.cp_max_gap)
                 arc_continues = false;
 
@@ -746,6 +754,54 @@ bool GnssProcessor::Optimize() {
 }
 
 bool GnssProcessor::SaveResults() const {
+    if (output_dir.empty()) {
+        LOG(WARNING) << "no --out_dir given, skipping result files";
+        return true;
+    }
+    const size_t nn = nodes_.size();
+    if (nn == 0) {
+        LOG(ERROR) << "no optimised trajectory to save";
+        return false;
+    }
+
+
+    std::ofstream f_ecef(output_dir + "/gnss_fgo.txt");
+    std::ofstream f_local(output_dir + "/gnss_local.txt");
+    if (!f_ecef || !f_local) {
+        LOG(ERROR) << "failed to open output files under " << output_dir;
+        return false;
+    }
+
+    f_ecef << "# unix_time(UTC) ecef_x ecef_y ecef_z lat_deg lon_deg height   (IMU)\n";
+    f_local << "# unix_time(UTC) x y z qx qy qz qw   (TUM, LIO frame, IMU, position refined by GNSS)\n";
+
+
+    for (auto* f : {&f_ecef, &f_local}) {
+        *f << std::fixed << std::setprecision(6);
+    }
+
+    const Eigen::Vector3d anc_ecef_opt = result_.at<gtsam::Vector3>(E(0));
+    const Eigen::Matrix3d R_ecef_local_opt = result_.at<gtsam::Rot3>(P(0)).matrix();
+
+    for (size_t k = 0; k < nn; ++k) {
+        const sol_t& sol = EpochSol(k);
+        const LioState& ls = EpochLio(k);
+        gtime_t utc_time = gpst2utc(sol.time);
+        double utc_d = double(utc_time.time) + utc_time.sec;
+
+        // optimized result transformed to  ECEF frame
+        const Eigen::Vector3d pos_local_opt = result_.at<gtsam::Vector3>(A(k));
+        const Eigen::Vector3d imu_ecef_fgo = R_ecef_local_opt * pos_local_opt + anc_ecef_opt;
+        double llh_fgo[3];
+        ecef2pos(imu_ecef_fgo.data(), llh_fgo);
+        f_ecef << utc_d << " " << imu_ecef_fgo.transpose() << " " << llh_fgo[0] * R2D << " " << llh_fgo[1] * R2D << " "
+              << llh_fgo[2] << "\n";
+
+        // optimized result
+        f_local << utc_d << " " << pos_local_opt.transpose() << " " << ls.quat.x() << " " << ls.quat.y() << " "
+                << ls.quat.z() << " " << ls.quat.w() << "\n";
+    }
+
     return true;
 }
 

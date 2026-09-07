@@ -35,7 +35,7 @@ class GnssProcessor {
         std::string sol_fname;
 
         double match_tol = 0.05;
-        Eigen::Vector3d lever_arm = Eigen::Vector3d::Zero();
+        Eigen::Vector3d lever_arm = Eigen::Vector3d(-0.30845, 0.18636, -0.0284);  ///< IMU->ublox antenna, body frame
 
         int min_sat = 5;
         double cp_std = 0.01;
