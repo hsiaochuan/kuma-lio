@@ -606,70 +606,78 @@ void GnssProcessor::AddFactor() {
             sat_tk.dopp_range_rate = -lambda * od[j].D[0];
             sat_tk.dopp_valid = dopp_valid;
             sat_tk.sv_pos = sv_pos;
-        } // for sta
+        }  // for sta
 
         if (k == 0) continue;
 
         const LioState& pls = EpochLio(k - 1);
         const double delta_t = timediff(sol.time, EpochSol(k - 1).time);
 
+        graph_.add(faster_lio::LioOdomFactor(A(k - 1), A(k), lio_state.pos - pls.pos,
+                                             gtsam::noiseModel::Isotropic::Sigma(3, config_.lio_pos_std)));
         graph_.add(
-            faster_lio::LioOdomFactor(A(k - 1), A(k), lio_state.pos - pls.pos, gtsam::noiseModel::Isotropic::Sigma(3, config_.lio_pos_std)));
-        graph_.add(faster_lio::GnssDdtSmoothFactor(C(k - 1), C(k), gtsam::noiseModel::Isotropic::Sigma(1, config_.ddt_std)));
+            faster_lio::GnssDdtSmoothFactor(C(k - 1), C(k), gtsam::noiseModel::Isotropic::Sigma(1, config_.ddt_std)));
         graph_.add(faster_lio::GnssDtDdtFactor(B(k - 1), B(k), C(k - 1), C(k), delta_t,
-                                                   gtsam::noiseModel::Isotropic::Sigma(4, config_.dt_std)));
+                                               gtsam::noiseModel::Isotropic::Sigma(4, config_.dt_std)));
 
-    } // for epoch
+    }  // for epoch
 
     LOG(INFO) << "graph: " << nn << " nodes, " << n_psr << " psr, " << n_cp << " tdcp, " << n_dtddt
               << " dt-ddt factors, " << graph_.size() << " factors total (" << n_slip
               << " arc restarts, carrier smoothing " << (config_.hatch_window > 0 ? "on" : "off") << ")";
 }
 
-void GnssProcessor::LogResiduals(const gtsam::Values& v, const char* tag) const {
-    struct Acc {
-        const char* name;
-        const char* unit;
-        size_t n = 0, over3 = 0;
-        double sq = 0.0, max = 0.0;
-        void add(double r) {
-            ++n;
-            sq += r * r;
-            max = std::max(max, r);
-            if (r > 3.0) ++over3;
+void GnssProcessor::LogResiduals(const gtsam::Values& v) const {
+    std::vector<double> psr_residuals;
+    std::vector<double> tdcp_residuals;
+    std::vector<double> lio_residuals;
+    std::vector<double> dtddt_residuals;
+    std::vector<double> ddt_residuals;
+    std::vector<double> prior_residuals;
+
+    for (const auto& factor : graph_) {
+        const auto* noise_factor = dynamic_cast<const gtsam::NoiseModelFactor*>(factor.get());
+        if (noise_factor == nullptr) continue;
+
+        const double residual_norm = noise_factor->unwhitenedError(v).norm();
+
+        if (dynamic_cast<const faster_lio::GnssPsrFactor*>(factor.get()) != nullptr) {
+            psr_residuals.push_back(residual_norm);
+        } else if (dynamic_cast<const faster_lio::GnssTdCpFactor*>(factor.get()) != nullptr) {
+            tdcp_residuals.push_back(residual_norm);
+        } else if (dynamic_cast<const faster_lio::LioOdomFactor*>(factor.get()) != nullptr) {
+            lio_residuals.push_back(residual_norm);
+        } else if (dynamic_cast<const faster_lio::GnssDtDdtFactor*>(factor.get()) != nullptr) {
+            dtddt_residuals.push_back(residual_norm);
+        } else if (dynamic_cast<const faster_lio::GnssDdtSmoothFactor*>(factor.get()) != nullptr) {
+            ddt_residuals.push_back(residual_norm);
+        } else {
+            prior_residuals.push_back(residual_norm);
         }
-        double rms() const { return n ? std::sqrt(sq / n) : 0.0; }
+    }
+
+    auto print_stats = [&](const char* name, const std::vector<double>& residuals) {
+        if (residuals.empty()) return;
+
+        double sum_of_squares = 0.0;
+        double max_residual = 0.0;
+        size_t count_over_3sigma = 0;
+        for (const double residual : residuals) {
+            sum_of_squares += residual * residual;
+            if (residual > max_residual) max_residual = residual;
+            if (residual > 3.0) ++count_over_3sigma;
+        }
+        const double rms = std::sqrt(sum_of_squares / static_cast<double>(residuals.size()));
+
+        LOG(INFO) << name << " " << residuals.size() << " " << rms << " " << max_residual << " " << count_over_3sigma;
     };
 
-    Acc psr{"psr", "sigma"}, cp{"tdcp", "sigma"}, lio{"lio", "m"}, dtddt{"dt-ddt", "m"}, ddt{"ddt", "m/s"},
-        prior{"priors", "mixed"};
-
-    for (const auto& f : graph_) {
-        // unwhitenedError() lives on NoiseModelFactor, not on the NonlinearFactor base.
-        const auto* nf = dynamic_cast<const gtsam::NoiseModelFactor*>(f.get());
-        if (!nf) continue;
-        const double r = nf->unwhitenedError(v).norm();
-        if (dynamic_cast<const faster_lio::GnssPsrFactor*>(f.get())) {
-            psr.add(r);
-        } else if (dynamic_cast<const faster_lio::GnssTdCpFactor*>(f.get())) {
-            cp.add(r);
-        } else if (dynamic_cast<const faster_lio::LioOdomFactor*>(f.get())) {
-            lio.add(r);
-        } else if (dynamic_cast<const faster_lio::GnssDtDdtFactor*>(f.get())) {
-            dtddt.add(r);
-        } else if (dynamic_cast<const faster_lio::GnssDdtSmoothFactor*>(f.get())) {
-            ddt.add(r);
-        } else {
-            prior.add(r);
-        }
-    }
-
-    for (const Acc* a : {&psr, &cp, &lio, &dtddt, &ddt, &prior}) {
-        if (a->n == 0) continue;
-        LOG(INFO) << "residuals " << tag << "  " << std::setw(7) << a->name << "  n " << std::setw(7) << a->n
-                  << "  rms " << std::setw(9) << a->rms() << " " << a->unit << "  max " << std::setw(9) << a->max
-                  << "  >3: " << a->over3 << " (" << (100.0 * a->over3 / a->n) << "%)";
-    }
+    print_stats("psr", psr_residuals);
+    print_stats("tdcp", tdcp_residuals);
+    print_stats("lio", lio_residuals);
+    print_stats("dt-ddt", dtddt_residuals);
+    print_stats("ddt", ddt_residuals);
+    print_stats("priors", prior_residuals);
 }
 
 bool GnssProcessor::Optimize() {
@@ -684,11 +692,11 @@ bool GnssProcessor::Optimize() {
     if (config_.verbose) params.setVerbosityLM("SUMMARY");
 
     const double err0 = graph_.error(values_);
-    LogResiduals(values_, "before");
+    LogResiduals(values_);
     gtsam::LevenbergMarquardtOptimizer optimizer(graph_, values_, params);
     result_ = optimizer.optimize();
     const double err1 = graph_.error(result_);
-    LogResiduals(result_, " after");
+    LogResiduals(result_);
     LOG(INFO) << "LM: error " << err0 << " -> " << err1 << " in " << optimizer.iterations() << " iterations";
 
     return true;
@@ -705,19 +713,17 @@ bool GnssProcessor::SaveResults() const {
         return false;
     }
 
-
-    std::ofstream f_ecef(output_dir + "/gnss_fgo.txt");
+    std::ofstream f_llh(output_dir + "/gnss_llh.txt");
     std::ofstream f_local(output_dir + "/gnss_local.txt");
-    if (!f_ecef || !f_local) {
+    if (!f_llh || !f_local) {
         LOG(ERROR) << "failed to open output files under " << output_dir;
         return false;
     }
 
-    f_ecef << "# unix_time(UTC) ecef_x ecef_y ecef_z lat_deg lon_deg height   (IMU)\n";
-    f_local << "# unix_time(UTC) x y z qx qy qz qw   (TUM, LIO frame, IMU, position refined by GNSS)\n";
+    f_llh << "# unix_time(UTC) lat_deg lon_deg height\n";
+    f_local << "# unix_time(UTC) x y z qx qy qz qw\n";
 
-
-    for (auto* f : {&f_ecef, &f_local}) {
+    for (auto* f : {&f_llh, &f_local}) {
         *f << std::fixed << std::setprecision(6);
     }
 
@@ -735,8 +741,7 @@ bool GnssProcessor::SaveResults() const {
         const Eigen::Vector3d imu_ecef_fgo = R_ecef_local_opt * pos_local_opt + anc_ecef_opt;
         double llh_fgo[3];
         ecef2pos(imu_ecef_fgo.data(), llh_fgo);
-        f_ecef << utc_d << " " << imu_ecef_fgo.transpose() << " " << llh_fgo[0] * R2D << " " << llh_fgo[1] * R2D << " "
-              << llh_fgo[2] << "\n";
+        f_llh << utc_d << " " << llh_fgo[0] * R2D << " " << llh_fgo[1] * R2D << " " << llh_fgo[2] << "\n";
 
         // optimized result
         f_local << utc_d << " " << pos_local_opt.transpose() << " " << ls.quat.x() << " " << ls.quat.y() << " "

@@ -96,7 +96,7 @@ class GnssProcessor {
     const sol_t& EpochSol(size_t k) const { return solbuf.data[nodes_[k].sol_i]; }
     const LioState& EpochLio(size_t k) const { return lio_states[nodes_[k].lio_i]; }
 
-    void LogResiduals(const gtsam::Values& v, const char* tag) const;
+    void LogResiduals(const gtsam::Values& v) const;
 
     void SetupOptions();
     bool ReadRinex();
