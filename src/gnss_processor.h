@@ -101,7 +101,6 @@ class GnssProcessor {
     void SetupOptions();
     bool ReadRinex();
     int BuildNodes();
-    void EstimateClockBias(size_t k, double* dt) const;
     bool FitTransform(const std::vector<Eigen::Vector3d>& local, const std::vector<Eigen::Vector3d>& ecef,
                       const std::vector<size_t>& idx, Eigen::Matrix3d& R, Eigen::Vector3d& t) const;
 

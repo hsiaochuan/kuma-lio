@@ -14,27 +14,25 @@
 #include <Eigen/Dense>
 #include <cmath>
 
-
 namespace faster_lio {
-class GnssPsrFactor
-    : public gtsam::NoiseModelFactor4<gtsam::Vector3, gtsam::Vector4, gtsam::Vector3, gtsam::Rot3> {
+class GnssPsrFactor : public gtsam::NoiseModelFactor4<gtsam::Vector3, gtsam::Vector4, gtsam::Vector3, gtsam::Rot3> {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     struct Params {
-        Eigen::Vector3d le_arm_local{Eigen::Vector3d::Zero()};  ///< IMU->antenna lever arm, local frame
-        Eigen::Vector3d sv_pos{Eigen::Vector3d::Zero()};     ///< satellite position, ECEF (m)
-        double svdt{0.0};                                    ///< satellite clock bias (s), precomputed externally
-        double ion_delay{0.0};           ///< ionospheric delay at the tracked frequency (m), precomputed externally
-        double tro_delay{0.0};                       ///< tropospheric delay (m), precomputed externally
-        double noise_var{1.0};  ///< total pseudorange variance: base_var + vion + vtrp + varerr (m^2), precomputed externally
-        double weight{1.0};                      ///< global scale on the residual
-        double psr_measure{0.0};                             ///< prange() output, code bias corrected (m)
-        int sys_idx{0};                                      ///< index into `dt` for this constellation
+        Eigen::Vector3d le_arm_local{Eigen::Vector3d::Zero()};
+        Eigen::Vector3d sv_pos{Eigen::Vector3d::Zero()};
+        double svdt{0.0};
+        double ion_delay{0.0};
+        double tro_delay{0.0};
+        double noise_var{1.0};
+        double weight{1.0};
+        double psr_measure{0.0};
+        int sys_idx{0};
     };
 
     GnssPsrFactor(gtsam::Key j1, gtsam::Key j2, gtsam::Key j3, gtsam::Key j4, const Params& p,
-                      const gtsam::SharedNoiseModel& model)
+                  const gtsam::SharedNoiseModel& model)
         : gtsam::NoiseModelFactor4<gtsam::Vector3, gtsam::Vector4, gtsam::Vector3, gtsam::Rot3>(model, j1, j2, j3, j4),
           p_(p) {}
 
@@ -50,7 +48,6 @@ class GnssPsrFactor
 
         const Eigen::Matrix3d R_ecef_local = ext_R.matrix();
         const Eigen::Vector3d P_ecef = R_ecef_local * local_pos + ref_ecef;
-
 
         double e[3] = {0.0, 0.0, 0.0};
         const double range = geodist(p_.sv_pos.data(), P_ecef.data(), e);

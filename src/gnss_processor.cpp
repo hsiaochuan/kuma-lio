@@ -282,71 +282,6 @@ int GnssProcessor::BuildNodes() {
     return static_cast<int>(nodes_.size());
 }
 
-void GnssProcessor::EstimateClockBias(size_t k, double* dt) const {
-    // Inverting the pseudorange residual of GnssPsrDoppFactor at the postpos position gives
-    // the receiver clock bias directly, which keeps the initial value consistent with the
-    // model the graph actually optimises (the .pos file does not carry sol.dtr).
-    std::vector<double> rs, dts, var;
-    std::vector<int> svh;
-    const int n = nodes_[k].obs_n;
-    rs.assign(6 * n, 0.0);
-    dts.assign(2 * n, 0.0);
-    var.assign(n, 0.0);
-    svh.assign(n, 0);
-    satposs(EpochSol(k).time, EpochObs(k), n, &nav, prcopt.sateph, rs.data(), dts.data(), var.data(), svh.data());
-
-    const sol_t& sol = EpochSol(k);
-    double rcv_llh[3];
-    ecef2pos(sol.rr, rcv_llh);
-
-    std::vector<double> per_sys[SYSTOTAL];
-    for (int j = 0; j < n; ++j) {
-        const obsd_t& o = EpochObs(k)[j];
-
-        const int sys_idx = SysToIdx(satsys(o.sat, nullptr));
-        if (sys_idx < 0) continue;  // no clock slot for this constellation
-
-        if (satexclude(o.sat, var[j], svh[j], &prcopt)) continue;
-
-        double e[3];
-        const double range = geodist(&rs[j * 6], sol.rr, e);
-        if (range <= 0.0) continue;
-        double azel[2] = {0.0, PI / 2.0};
-        if (satazel(rcv_llh, e, azel) < prcopt.elmin) continue;
-
-        // prcopt.snrmask.ena is left off so that postpos() does not drop every observation of a
-        // file without S# records; the mask still has to apply here, so enable it on a local copy.
-        snrmask_t mask = prcopt.snrmask;
-        mask.ena[0] = 1;
-        if (testsnr(0, 0, azel[1], o.SNR[0], &mask)) continue;
-
-        // sat2freq() returns 0 for a GLONASS satellite with no frequency channel number and for
-        // an unknown code; letting that through makes lambda infinite and NaNs the whole solve.
-        const double freq = sat2freq(o.sat, o.code[0], &nav);
-        if (freq <= 0.0) continue;
-
-        double vmeas = 0.0;
-        const double psr = rtklib::prange(&o, &nav, &prcopt, &vmeas);
-        if (psr == 0.0) continue;
-
-        const double svdt = dts[j * 2 + 0];
-
-        // rescode()'s residual with the clock left in: v = P - (r - c*dts + dion + dtrp).
-        double iono = 0.0, vion = 0.0, trop = 0.0, vtrp = 0.0;
-        ionocorr(sol.time, &nav, o.sat, rcv_llh, azel, prcopt.ionoopt, &iono, &vion);
-        iono *= (FREQL1 / freq) * (FREQL1 / freq);
-        tropcorr(sol.time, &nav, rcv_llh, azel, prcopt.tropopt, &trop, &vtrp);
-        per_sys[sys_idx].push_back(psr - (range - svdt * CLIGHT + iono + trop));
-    }
-
-    const double gps = Median(per_sys[SYSGPS]);
-    for (int s = 0; s < SYSTOTAL; ++s) {
-        // A constellation with no satellite this epoch inherits the GPS clock; the graph's
-        // inter-system offset then grows out of its own residuals.
-        dt[s] = per_sys[s].empty() ? gps : Median(per_sys[s]);
-    }
-}
-
 bool GnssProcessor::FitTransform(const std::vector<Eigen::Vector3d>& local, const std::vector<Eigen::Vector3d>& ecef,
                                  const std::vector<size_t>& idx, Eigen::Matrix3d& R, Eigen::Vector3d& t) const {
     if (idx.size() < 3) return false;
@@ -508,7 +443,10 @@ void GnssProcessor::AddFactor() {
 
     // --- initial values -----------------------------------------------------------------
     std::vector<std::array<double, SYSTOTAL>> dt_init(nn);
-    for (size_t k = 0; k < nn; ++k) EstimateClockBias(k, dt_init[k].data());
+    for (size_t k = 0; k < nn; ++k) {
+        const double dt_gps = CLIGHT * timediff(EpochObs(k)[0].time, EpochSol(k).time);
+        dt_init[k].fill(dt_gps);
+    }
 
     // a single median over the whole run to init the ddt
     std::vector<double> ddts;
