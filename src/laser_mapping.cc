@@ -10,6 +10,12 @@
 #include "laser_mapping.h"
 #include <opencv2/opencv.hpp>
 namespace fs = boost::filesystem;
+
+
+int showmsg(const char *format, ...) { return 0; }
+void settspan(gtime_t ts, gtime_t te) {}
+void settime(gtime_t time) {}
+
 namespace faster_lio {
 LaserMapping::LaserMapping() = default;
 void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
