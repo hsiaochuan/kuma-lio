@@ -305,9 +305,8 @@ void LaserMapping::Run() {
     static constexpr int kInitImuNum = 20;
     static constexpr int64_t kInitMapSpanNs = S_TO_NS(0.3);
     if (!resple_lio_->if_localmap_initialized) {
-        if (points_buffer_.empty()) return;
+        if (points_buffer_.empty() || imu_buffer_.empty()) return;
 
-        std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
 
         if (!resple_lio_->if_inertial_initialized) {
             if (static_cast<int>(imu_buffer_.size()) < kInitImuNum) {
@@ -335,26 +334,28 @@ void LaserMapping::Run() {
             LOG(INFO) << "Inertial initialized, gravity: " << resple_lio_->gravity.transpose();
         }
 
-        if (points_buffer_.back().GetTimeNs() < first_point_time_ns + kInitMapSpanNs) {
-            LOG(INFO) << "Points buffer is not enough, wait";
+        std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
+        std::int64_t end_time_ns = first_point_time_ns + kInitMapSpanNs;
+        if (points_buffer_.back().GetTimeNs() < end_time_ns || imu_buffer_.back().time_ns < end_time_ns) {
+            LOG(INFO) << "buffer is not enough, wait";
             return;
         }
-        std::int64_t end_time_ns = first_point_time_ns + kInitMapSpanNs;
         PointCloud::Ptr init_points(new PointCloud);
-        while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < end_time_ns) {
-            init_points->emplace_back(points_buffer_.front());
-            points_buffer_.pop_front();
-        }
-        while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < end_time_ns) {
-            imu_buffer_.pop_front();
-        }
-        while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < end_time_ns) {
-            obss_time_buffer_.pop_front();
-            obss_id_buffer_.pop_front();
-        }
         while (resple_lio_->spl.maxTimeNs() < end_time_ns) {
             resple_lio_->spl.addOneStateKnot(Vec3::Zero(), Vec3::Zero());
         }
+        while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < resple_lio_->spl.maxTimeNs()) {
+            init_points->emplace_back(points_buffer_.front());
+            points_buffer_.pop_front();
+        }
+        while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < resple_lio_->spl.maxTimeNs()) {
+            imu_buffer_.pop_front();
+        }
+        while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < resple_lio_->spl.maxTimeNs()) {
+            obss_time_buffer_.pop_front();
+            obss_id_buffer_.pop_front();
+        }
+
         if (init_points->size() < 100) {
             LOG(WARNING) << "only " << init_points->size() << " points for map init, waiting";
             return;

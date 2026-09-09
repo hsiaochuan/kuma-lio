@@ -297,12 +297,9 @@ void RESPLE_LIO::prepLiDAR(PointData& pt_data) const {
         Eigen::Matrix<double, 3, 4> drot;
         drotInv(pt_data.point_body, q_itp, drot);
         Eigen::Matrix<double, 1, 4> tmp = pt_data.ppl_normal.transpose() * drot;
-        const int recur_st_id = spl.num_knot - 4;
         for (int i = 0; i < 4; i++) {
-            int j = static_cast<int>(J_pos.start_idx) + i - recur_st_id;
-            if (j < 0) continue;
-            Hi.block(0, j * 6, 1, 3) = pt_data.ppl_normal.transpose() * J_pos.d_val_d_knot[i];
-            Hi.block(0, j * 6 + 3, 1, 3) = tmp * J_ortdel.d_val_d_knot[i];
+            Hi.block(0, i * 6, 1, 3) = pt_data.ppl_normal.transpose() * J_pos.d_val_d_knot[i];
+            Hi.block(0, i * 6 + 3, 1, 3) = tmp * J_ortdel.d_val_d_knot[i];
         }
         pt_data.H = Hi.leftCols<24>();
     }
