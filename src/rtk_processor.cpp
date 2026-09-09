@@ -13,7 +13,7 @@ RTKProcessor::RTKProcessor() {
     prcopt.mode = PMODE_SINGLE;
     prcopt.soltype = 0;
     prcopt.nf = 1;
-    prcopt.navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_CMP | SYS_QZS;
+    prcopt.navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_CMP;
     prcopt.glomodear = GLO_ARMODE_ON;
     prcopt.refpos = POSOPT_SINGLE;
     prcopt.thresdop = 1.0;
@@ -37,17 +37,15 @@ static int SysIdx(int sys) {
     if (sys == SYS_GPS) return 0;
     if (sys == SYS_GLO) return 1;
     if (sys == SYS_GAL) return 2;
-    if (sys == SYS_QZS) return 3;
-    if (sys == SYS_CMP) return 4;
+    if (sys == SYS_CMP) return 3;
+    if (sys == SYS_QZS) return 4;
     throw std::runtime_error("unknown system");
 }
 bool RTKProcessor::Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu) {
     CHECK(locals.size() == ecefs.size());
-    if (travel_len < param->ali_min_travel)
-        return false;
+    if (travel_len < param->ali_min_travel) return false;
     int N = locals.size();
-    if (N < 3)
-        return false;
+    if (N < 3) return false;
     Vec3 mean_l(Vec3::Zero());
     Vec3 mean_e(Vec3::Zero());
     for (int i = 0; i < N; ++i) {
@@ -73,17 +71,17 @@ bool RTKProcessor::Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu) {
     t_ecef_enu = mean_e - R_ecef_enu * mean_l;
     return true;
 }
-void RTKProcessor::ProcessMeasurements(const int & obs_i, const RtkState& lio_state) {
+void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_state) {
     // SPP
     int n = 0;
-    while (std::abs(timediff(obss.data[obs_i].time, obss.data[obs_i + n].time)) < DTTOL)
-        ++n;
+    while (std::abs(timediff(obss.data[obs_i].time, obss.data[obs_i + n].time)) < DTTOL) ++n;
     sol_t sol;
     char err_msg[128];
-    if (!pntpos(obss.data + obs_i, n, &nav, &prcopt, &sol, nullptr, nullptr,err_msg)) {
-        LOG(INFO) << "Error in single point position";
+    if (!pntpos(obss.data + obs_i, n, &nav, &prcopt, &sol, nullptr, nullptr, err_msg)) {
         printf("%s\n", err_msg);
         return;
+    } else {
+        outsolex(stdout,&sol, nullptr, &solopt);
     }
 
     // alignment
@@ -173,68 +171,77 @@ void RTKProcessor::ProcessMeasurements(const int & obs_i, const RtkState& lio_st
         bool cp_valid = obs.L[0] > 0.0;
         bool dopp_valid = obs.D[0] > 0.0;
         bool obs_valid = psr_valid && cp_valid && dopp_valid;
+
         bool arc_continu = true;
-        if (sat_tracks_[obs.sat].obs_ids.empty() && obs_valid) {
-            sat_tracks_[obs.sat].obs_ids.push_back(oi);
-            arc_continu = false;
-        } else {
+        do {
+            if (obs_valid) {
+                arc_continu = false;
+                break;
+            }
+            if (sat_tracks_[obs.sat].obs_ids.empty()) {
+                arc_continu = false;
+                break;
+            }
+            if ((obs.LLI[0] & 0x3) != 0) {
+                arc_continu = false;
+                break;
+            }
+
             int last_oi = sat_tracks_[obs.sat].obs_ids.back();
             obsd_t& last_obs = obss.data[last_oi];
-            // gap interval
-            if (!obs_valid || (obs.LLI[0] & 0x3) != 0)
+            double dt = timediff(obs.time, last_obs.time);
+            const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
+            const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
+            if (std::abs(dcp - dpt) > 3 * prcopt.thresdop) {
                 arc_continu = false;
-            if (arc_continu) {
-                double dt = timediff(obs.time, last_obs.time);
-                const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
-                const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
-                if (std::abs(dcp - dpt) > 3 * prcopt.thresdop)
-                    arc_continu = false;
+                break;
             }
+        } while (false);
 
-            Eigen::Vector3d sv(rs[si * 6],rs[si * 6 + 1],rs[si * 6 + 2]);
-            if (arc_continu) {
-                sat_tracks_[obs.sat].obs_ids.push_back(oi);
-                sat_tracks_[obs.sat].sv_poss.push_back(sv);
-                int N = sat_tracks_[obs.sat].obs_ids.size();
-                sat_tracks_[obs.sat].hatch = psr / N +
-                    (N - 1.0) / N * (sat_tracks_[obs.sat].hatch + obs.L[0] * lambda - last_obs.L[0] * lambda);
-                sat_tracks_[obs.sat].local_times.push_back(local_time);
-            } else {
-                // clear the track
-                sat_tracks_[obs.sat].obs_ids.clear();
-                sat_tracks_[obs.sat].sv_poss.clear();
-                sat_tracks_[obs.sat].hatch = 0.0;
-                sat_tracks_[obs.sat].local_times.clear();
-                // insert the one observation
-                sat_tracks_[obs.sat].obs_ids.push_back(oi);
-                sat_tracks_[obs.sat].sv_poss.push_back(sv);
-                sat_tracks_[obs.sat].hatch = psr;
-                sat_tracks_[obs.sat].local_times.push_back(local_time);
-            }
-
+        Eigen::Vector3d sv(rs[si * 6], rs[si * 6 + 1], rs[si * 6 + 2]);
+        if (arc_continu) {
+            int last_oi = sat_tracks_[obs.sat].obs_ids.back();
+            obsd_t& last_obs = obss.data[last_oi];
+            sat_tracks_[obs.sat].obs_ids.push_back(oi);
+            sat_tracks_[obs.sat].sv_poss.push_back(sv);
+            int N = sat_tracks_[obs.sat].obs_ids.size();
+            sat_tracks_[obs.sat].hatch =
+                psr / N + (N - 1.0) / N * (sat_tracks_[obs.sat].hatch + obs.L[0] * lambda - last_obs.L[0] * lambda);
+            sat_tracks_[obs.sat].local_times.push_back(local_time);
+        } else {
+            // clear the track
+            sat_tracks_[obs.sat].obs_ids.clear();
+            sat_tracks_[obs.sat].sv_poss.clear();
+            sat_tracks_[obs.sat].hatch = 0.0;
+            sat_tracks_[obs.sat].local_times.clear();
+            // insert the one observation
+            sat_tracks_[obs.sat].obs_ids.push_back(oi);
+            sat_tracks_[obs.sat].sv_poss.push_back(sv);
+            sat_tracks_[obs.sat].hatch = psr;
+            sat_tracks_[obs.sat].local_times.push_back(local_time);
         }
 
         // psr factor
         gtsam::SharedNoiseModel psr_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
-        GnssPsrFactor psr_factor(P(local_time), D(local_time), E(0), T(0),psr_weight);
+        GnssPsrFactor psr_factor(P(local_time), D(local_time), T(0), E(0), psr_weight);
         psr_factor.sv_pos = Eigen::Vector3d(rs[si * 6 + 0], rs[si * 6 + 1], rs[si * 6 + 2]);
         psr_factor.svdt = dts[si * 2 + 0];
         psr_factor.ion_delay = iono_delay;
         psr_factor.tro_delay = tro_delay;
         psr_factor.noise_var = svar[si] + vmeas + vion + vtrp + varerr;
-        psr_factor.psr_measure = psr;
+        psr_factor.psr_measure = sat_tracks_[obs.sat].hatch;
         psr_factor.sys_idx = sys_idx;
         factors.add(psr_factor);
         factor_times.push_back(local_time);
         // TDCP factor
         if (arc_continu && sat_tracks_[obs.sat].obs_ids.size() >= 2) {
             int N = sat_tracks_[obs.sat].obs_ids.size();
-            for (int i = 0; i < N-1; ++i) {
+            for (int i = 0; i < N - 1; ++i) {
                 SatTrack& sat_track = sat_tracks_[obs.sat];
-                if (sat_track.local_times[i] < slw_times.front())
-                    continue;
+                if (sat_track.local_times[i] < slw_times.front()) continue;
                 gtsam::SharedNoiseModel tdcp_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
-                GnssTdCpFactor tdcp_factor(P(sat_track.local_times[i]), P(local_time), D(sat_track.local_times[i]), D(local_time),E(0), T(0),tdcp_weight);
+                GnssTdCpFactor tdcp_factor(P(sat_track.local_times[i]), P(local_time), D(sat_track.local_times[i]),
+                                           D(local_time), T(0), E(0), tdcp_weight);
                 obsd_t& prev_obs = obss.data[sat_track.obs_ids[i]];
                 tdcp_factor.sv_pos_i = sat_track.sv_poss[i];
                 tdcp_factor.sv_pos_j = Vec3(rs[si * 6], rs[si * 6 + 1], rs[si * 6 + 2]);
@@ -245,32 +252,37 @@ void RTKProcessor::ProcessMeasurements(const int & obs_i, const RtkState& lio_st
                 factor_times.push_back(sat_track.local_times[i]);
             }
         }
-    } // for satellite
+    }  // for satellite
 
-    // dt factor
-    std::int64_t prev_time = slw_times.back();
-    gtsam::SharedNoiseModel dt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
-    double dt = NS_TO_S(local_time - prev_time);
-    GnssDtDdtFactor dt_factor(D(local_time), D(prev_time), O(local_time), O(prev_time),dt, dt_weight);
-    factors.add(dt_factor);
-    factor_times.push_back(prev_time);
+    if (slw_times.size() > 0) {
+        // dt factor
+        std::int64_t prev_time = slw_times.back();
+        gtsam::SharedNoiseModel dt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
+        double dt = NS_TO_S(local_time - prev_time);
+        GnssDtDdtFactor dt_factor(D(local_time), D(prev_time), O(local_time), O(prev_time), dt, dt_weight);
+        factors.add(dt_factor);
+        factor_times.push_back(prev_time);
 
-    // ddt factor
-    gtsam::SharedNoiseModel ddt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
-    GnssDdtSmoothFactor ddt_factor(O(local_time), O(prev_time), ddt_weight);
-    factors.add(ddt_factor);
-    factor_times.push_back(prev_time);
+        // ddt factor
+        gtsam::SharedNoiseModel ddt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
+        GnssDdtSmoothFactor ddt_factor(O(local_time), O(prev_time), ddt_weight);
+        factors.add(ddt_factor);
+        factor_times.push_back(prev_time);
+    }
 
     // update values
+    slw_times.push_back(local_time);
     gtsam::ISAM2Result isam_result = isam.update(factors, values);
     for (int i = 0; i < factors.size(); ++i) {
         std::int64_t factor_time = factor_times[i];
         auto factor_index = isam_result.newFactorsIndices.at(i);
         slw_factors[factor_time].push_back(factor_index);
     }
-    // find the factor that connect the oldest time
-    std::int64_t oldest_time = slw_times[0];
-    gtsam::FactorIndices delete_factors = slw_factors[oldest_time];
-    isam.update(gtsam::NonlinearFactorGraph{}, gtsam::Values{}, delete_factors);
-}
 
+    if (slw_times.size() > param->slw_size) {
+        // find the factor that connect the oldest time
+        std::int64_t oldest_time = slw_times[0];
+        gtsam::FactorIndices delete_factors = slw_factors[oldest_time];
+        isam.update(gtsam::NonlinearFactorGraph{}, gtsam::Values{}, delete_factors);
+    }
+}
