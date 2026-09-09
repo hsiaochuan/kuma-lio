@@ -10,8 +10,6 @@
 
 namespace faster_lio {
 
-/// Propagates the four per-constellation receiver clock biases with the common drift:
-/// dt_j - dt_i = 0.5 * (ddt_i + ddt_j) * delta_t.  Units are metres and metres/second.
 class GnssDtDdtFactor
     : public gtsam::NoiseModelFactor4<gtsam::Vector4, gtsam::Vector4, gtsam::Vector1, gtsam::Vector1> {
    public:
@@ -34,9 +32,9 @@ class GnssDtDdtFactor
         if (H4) *H4 = gtsam::Matrix::Constant(4, 1, -0.5 * delta_t_);
 
         gtsam::Vector4 residual;
-        const double propagated = 0.5 * (ddt_i[0] + ddt_j[0]) * delta_t_;
+        const double ddt_dt = 0.5 * (ddt_i[0] + ddt_j[0]) * delta_t_;
         for (int i = 0; i < 4; ++i) {
-            residual[i] = dt_j[i] - dt_i[i] - propagated;
+            residual[i] = dt_j[i] - dt_i[i] - ddt_dt;
         }
         return residual;
     }
@@ -45,8 +43,7 @@ class GnssDtDdtFactor
     double delta_t_;
 };
 
-/// Random-walk on the receiver clock drift.  `ddt` is only seen through the bias
-/// propagation above, so this keeps it from wandering between epochs.
+
 class GnssDdtSmoothFactor : public gtsam::NoiseModelFactor2<gtsam::Vector1, gtsam::Vector1> {
    public:
     GnssDdtSmoothFactor(gtsam::Key i, gtsam::Key j, const gtsam::SharedNoiseModel& model)

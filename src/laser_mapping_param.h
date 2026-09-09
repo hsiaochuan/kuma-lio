@@ -55,6 +55,13 @@ class LaserMappingParam {
     double imu_gyro_outlier = 5.0;   // |gyro - predicted| gate per axis [rad/s]
     int num_threads = 4;
 
+    Vec3 level_arm = Vec3(0.0, 0.0, 0.0);
+    double psr_weight = 1.0;
+    double tdcp_weight = 1.0;
+    double max_gap = 1.0;
+    int slw_size = 200;
+    double ali_min_travel = 5.0;
+
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;
     double pcd_save_interval_ = 30;

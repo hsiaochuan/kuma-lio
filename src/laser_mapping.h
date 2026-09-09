@@ -15,7 +15,7 @@
 #include "stamp_pose.h"
 #include <cv_bridge/cv_bridge.h>
 
-#include "rtklib.h"
+#include "rtk_processor.h"
 namespace faster_lio {
 
 
@@ -42,10 +42,9 @@ class LaserMapping {
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
     void GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg);
+    bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
-    // sync lidar with imu
     bool CollectMeasures(const std::int64_t& meas_end);
-    ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
     void PublishOdometry();
     void PublishFrameWorld();
     void PublishFrameEffectWorld();
@@ -61,7 +60,7 @@ class LaserMapping {
     /// modules
     std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
-
+    std::shared_ptr<RTKProcessor> rtk_pro = nullptr;
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
     ros::Subscriber sub_img_;
@@ -78,14 +77,15 @@ class LaserMapping {
     std::deque<Point> points_buffer_;
     std::deque<Imu> imu_buffer_;
     std::deque<RgbImage> image_buffer_;
-    std::deque<sol_t> gnss_sol_buffer_;
-    std::deque<int64_t> gnss_local_time_buffer_;
+    obs_t obss{};
+    nav_t nav{};
+    std::deque<int64_t> obss_time_buffer_;
+    std::deque<int> obss_id_buffer_;
 
     MeasureGroup measures_;
     PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
     std::vector<std::pair<int64_t, Pose3>> cam_states;
-    std::vector<std::pair<gtime_t, Pose3>> gnss_states;
 
     std::shared_ptr<LaserMappingParam> param;
     rosbag::Bag bag_;

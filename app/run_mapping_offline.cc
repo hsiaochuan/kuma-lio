@@ -22,6 +22,8 @@ DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
 DEFINE_string(prior_map_fname, "", "path to prior map file");
 DEFINE_string(prior_init_pose, "", "");
 DEFINE_string(camera_fname, "", "");
+DEFINE_string(gnss_obs_fname, "", "");
+DEFINE_string(nav_fname, "", "");
 bool if_exit = false;
 void SigHandle(int sig) {
     if_exit = true;
@@ -37,6 +39,9 @@ int main(int argc, char **argv) {
     const std::string output_dir = FLAGS_output_dir;
     const std::string prior_map_file = FLAGS_prior_map_file;
     const std::string camera_fname = FLAGS_camera_fname;
+    const std::string gnss_obs_fname = FLAGS_gnss_obs_fname;
+    const std::string nav_fname = FLAGS_nav_fname;
+    fs::create_directories(output_dir);
     // glog
     FLAGS_stderrthreshold = google::INFO;
     FLAGS_colorlogtostderr = true;
@@ -65,7 +70,7 @@ int main(int argc, char **argv) {
         LOG(INFO) << "prior init rotation: " << prior_init_rotation.coeffs().transpose();
     }
 
-    /// handle ctrl-c
+    // handle ctrl-c
     signal(SIGINT, SigHandle);
 
     // read the bag
@@ -92,11 +97,25 @@ int main(int argc, char **argv) {
     LOG(INFO) << "Go!";
     rosbag::View view(bag, start_time, end_time);
     for (const rosbag::MessageInstance &m : view) {
+        auto imu_msg = m.instantiate<sensor_msgs::Imu>();
+        if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
+            double start_offset_time = imu_msg->header.stamp.toSec();
+            CHECK(std::isnan(laser_mapping->global_offset_time));
+            laser_mapping->global_offset_time = start_offset_time;
+            LOG(INFO) << "Offset time: " << std::fixed << start_offset_time;
+            break;
+        }
+    }
+
+    if (!nav_fname.empty() && !gnss_obs_fname.empty()) {
+        fs::path sol_fname = fs::path(output_dir) / "rtkpos.txt";
+        laser_mapping->ReadObsNav(gnss_obs_fname, nav_fname, sol_fname.string());
+    }
+    for (const rosbag::MessageInstance &m : view) {
         auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>();
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && livox_msg) {
             laser_mapping->LivoxPCLCallBack(livox_msg);
             laser_mapping->Run();
-
             continue;
         }
 
@@ -104,7 +123,6 @@ int main(int argc, char **argv) {
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && point_cloud_msg) {
             laser_mapping->StandardPCLCallBack(point_cloud_msg);
             laser_mapping->Run();
-
             continue;
         }
 
@@ -112,19 +130,10 @@ int main(int argc, char **argv) {
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && vel_msg) {
             laser_mapping->VelodyneScanCallBack(vel_msg);
             laser_mapping->Run();
-
             continue;
         }
         auto imu_msg = m.instantiate<sensor_msgs::Imu>();
         if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
-            static int once = [&]() {
-                double start_offset_time = imu_msg->header.stamp.toSec();
-                if (std::isnan(laser_mapping->global_offset_time)) {
-                    laser_mapping->global_offset_time = start_offset_time;
-                    LOG(INFO) << "Offset time: " << std::fixed << start_offset_time;
-                }
-                return 0;
-            }();
             laser_mapping->IMUCallBack(imu_msg);
             continue;
         }

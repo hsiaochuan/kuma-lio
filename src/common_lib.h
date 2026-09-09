@@ -188,9 +188,10 @@ struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
-    std::vector<int64_t> gnss_local_time;
-    std::vector<sol_t> gnss_sol;
     std::vector<RgbImage> images;
+
+    std::vector<int> obss_ids;
+    std::vector<int64_t> obss_time;
 };
 
 }  // namespace faster_lio

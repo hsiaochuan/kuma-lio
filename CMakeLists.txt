@@ -88,7 +88,7 @@ add_library(${PROJECT_NAME}
         src/resple_lio.cpp
         src/ikd-Tree/ikd_Tree.cpp
         src/timer.cpp
-        src/gnss_processor.cpp
+        src/rtk_processor.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}
@@ -108,8 +108,6 @@ add_executable(run_mapping_offline app/run_mapping_offline.cc)
 target_link_libraries(run_mapping_offline
         ${PROJECT_NAME}
         )
-add_executable(global_mapping_offline app/global_mapping_offline.cpp)
-target_link_libraries(global_mapping_offline ${PROJECT_NAME})
 
 add_executable(points_jet ./src/points_jet.cpp)
 target_link_libraries(points_jet ${PROJECT_NAME})

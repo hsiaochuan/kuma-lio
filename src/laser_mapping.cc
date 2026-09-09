@@ -149,16 +149,9 @@ void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::C
 }
 void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
-    // it is gpst time, and start in 1970
     gtime_t gpst{};
     gpst.time = msg->header.stamp.sec;
     gpst.sec = NS_TO_S(msg->header.stamp.nsec);
-    gtime_t utc_stamp = gpst2utc(gpst); // handle the leap
-    double utc_stamp_d = double(utc_stamp.time) + utc_stamp.sec;
-
-    if (std::isnan(global_offset_time) || utc_stamp_d < global_offset_time) return;
-    double local_time = utc_stamp_d - global_offset_time;
-    gnss_local_time_buffer_.emplace_back(S_TO_NS(local_time));
 
     sol_t sol{};
     sol.time = gpst;
@@ -180,7 +173,60 @@ void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &
         sol.stat = SOLQ_SINGLE;
     }
     sol.type = 0;
-    gnss_sol_buffer_.emplace_back(sol);
+}
+bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const string &sol_fname) {
+    gtime_t ts{}, te{};  // zero epochs disable the time window filter
+
+    // rcv index 1 for the observation file; the navigation file carries no receiver data.
+    if (readrnxt(obs_fname.c_str(), 1, ts, te, 0.0, "", &obss, &nav, nullptr) <= 0) {
+        LOG(ERROR) << "failed to read observation file: " << obs_fname;
+        return false;
+    }
+    if (readrnxt(nav_fname.c_str(), 0, ts, te, 0.0, "", nullptr, &nav, nullptr) <= 0) {
+        LOG(ERROR) << "failed to read navigation file: " << nav_fname;
+        return false;
+    }
+
+    // RTKLIB expects observations sorted by time/sat and ephemerides uniquified before use.
+    sortobs(&obss);
+    uniqnav(&nav);
+    rtk_pro->obss = obss;
+    rtk_pro->nav = nav;
+
+    LOG(INFO) << "read "
+    << rtk_pro->obss.n << " observations, "
+    << rtk_pro->nav.n << " eph, "
+    << rtk_pro->nav.ng << " geph, "
+    << rtk_pro->nav.ns << " seph";
+    if (rtk_pro->obss.n <= 0 || rtk_pro->nav.n + rtk_pro->nav.ng <= 0) {
+        LOG(ERROR) << "no usable GNSS data; check that RTKLIB is built with -DENAGLO/-DENAGAL/-DENACMP";
+        return false;
+    }
+    CHECK(!std::isnan(global_offset_time));
+    for (int i = 0; i < obss.n;) {
+        obss_id_buffer_.push_back(i);
+        gtime_t utc = gpst2utc(obss.data[i].time);
+        double utc_d = double(utc.time) + utc.sec;
+        obss_time_buffer_.push_back(S_TO_NS(utc_d - global_offset_time));
+        int j = i;
+        while (std::abs(timediff(obss.data[j].time, obss.data[i].time)) < DTTOL && j < obss.n)
+            ++j;
+        i = j;
+    }
+    std::vector<std::string> files{obs_fname, nav_fname};
+    std::vector<const char*> infile;
+    for (const auto& f : files)
+        infile.push_back(f.c_str());
+
+    // position
+    filopt_t filopt{};
+    const int ret = postpos(ts, te, 0.0, 0.0, &rtk_pro->prcopt, &rtk_pro->solopt, &filopt, infile.data(), static_cast<int>(infile.size()),
+                            sol_fname.c_str(), "", "");
+    if (ret != 0) {
+        LOG(ERROR) << "postpos failed with status " << ret;
+        return false;
+    }
+    return true;
 }
 
 bool LaserMapping::Init(const std::string &config_fname, const std::string &camera_fname) {
@@ -200,6 +246,8 @@ bool LaserMapping::Init(const std::string &config_fname, const std::string &came
     resple_lio_->param = param;
     resple_lio_->Init();
 
+    rtk_pro = std::make_shared<RTKProcessor>();
+    rtk_pro->param = param;
     if (param->bag_save_en_) {
         bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
         if (!bag_.isOpen()) {
@@ -294,9 +342,9 @@ void LaserMapping::Run() {
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < end_time_ns) {
             imu_buffer_.pop_front();
         }
-        while (!gnss_local_time_buffer_.empty() && gnss_local_time_buffer_.front() < end_time_ns) {
-            gnss_local_time_buffer_.pop_front();
-            gnss_sol_buffer_.pop_front();
+        while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < end_time_ns) {
+            obss_time_buffer_.pop_front();
+            obss_id_buffer_.pop_front();
         }
         while (resple_lio_->spl.maxTimeNs() < end_time_ns) {
             resple_lio_->spl.addOneStateKnot(Vec3::Zero(), Vec3::Zero());
@@ -318,6 +366,18 @@ void LaserMapping::Run() {
     while (CollectMeasures(resple_lio_->spl.maxTimeNs() + param->dt_ns)) {
         resple_lio_->propRCP();
         resple_lio_->ProcessMeasurement(measures_);
+        if (!measures_.obss_ids.empty()) {
+            for (int i = 0; i < measures_.obss_ids.size(); ++i) {
+                int obs_i = measures_.obss_ids[i];
+                Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(measures_.obss_time[i]);
+                RtkState state;
+                state.pos = body_pose.translation();
+                state.quat = Eigen::Quaterniond(body_pose.linear());
+                state.local_time = measures_.obss_time[i];
+                state.time = obss.data[obs_i].time;
+                rtk_pro->ProcessMeasurements(obs_i, state);
+            }
+        }
         PublishROSMsg();
         PostUpdate();
     }
@@ -327,14 +387,6 @@ void LaserMapping::PostUpdate() {
     int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
     Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
     trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
-
-    if (!measures_.gnss_local_time.empty()) {
-        for (int i = 0; i < measures_.gnss_local_time.size(); ++i) {
-            Eigen::Isometry3d gnss_state = resple_lio_->spl.Interpolate(measures_.gnss_local_time[i]);
-            gtime_t gnss_time = measures_.gnss_sol[i].time;
-            gnss_states.emplace_back(gnss_time, Pose3(gnss_state));
-        }
-    }
 
     if (!measures_.images.empty()) {
         for (int i = 0; i < measures_.images.size(); ++i) {
@@ -399,7 +451,6 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
     // buffer is not beyond the measures end
     if (imu_buffer_.back().time_ns < meas_end) return false;
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
-    if (!gnss_local_time_buffer_.empty() && gnss_local_time_buffer_.back() < meas_end) return false;
 
     // push the imu data
     measures_.imu_.clear();
@@ -413,14 +464,14 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
     }
-    // push the gnss
-    measures_.gnss_local_time.clear();
-    measures_.gnss_sol.clear();
-    while (!gnss_local_time_buffer_.empty() && gnss_local_time_buffer_.front() < meas_end) {
-        measures_.gnss_local_time.emplace_back(gnss_local_time_buffer_.front());
-        measures_.gnss_sol.emplace_back(gnss_sol_buffer_.front());
-        gnss_local_time_buffer_.pop_front();
-        gnss_sol_buffer_.pop_front();
+    // process the raw measurement
+    measures_.obss_ids.clear();
+    measures_.obss_time.clear();
+    while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < meas_end) {
+        measures_.obss_ids.emplace_back(obss_id_buffer_.front());
+        measures_.obss_time.emplace_back(obss_time_buffer_.front());
+        obss_id_buffer_.pop_front();
+        obss_time_buffer_.pop_front();
     }
     if (measures_.lidar_->empty()) {
         LOG(INFO) << "Empty lidar points in measures";
@@ -591,18 +642,6 @@ void LaserMapping::Savetrajectory() {
         cam_ofs << cam_pose.Quat().x() << " " << cam_pose.Quat().y() << " " << cam_pose.Quat().z() << " " << cam_pose.Quat().w() << std::endl;
     }
     cam_ofs.close();
-
-    LOG(INFO) << "Save states for GNSS process";
-    std::ofstream gnss_ofs((fs::path(output_dir) / "gnss_log.txt").string());
-    gnss_ofs << std::fixed;
-    for (auto & gnss_state : gnss_states) {
-        gtime_t& gnss_time = gnss_state.first;
-        Pose3& gnss_pose = gnss_state.second;
-        gnss_ofs << gnss_time.time << " " << gnss_time.sec << " ";
-        gnss_ofs << gnss_pose.Trans().x() << " " << gnss_pose.Trans().y() << " " << gnss_pose.Trans().z() << " ";
-        gnss_ofs << gnss_pose.Quat().x() << " " << gnss_pose.Quat().y() << " " << gnss_pose.Quat().z() << " " << gnss_pose.Quat().w() << std::endl;
-    }
-    gnss_ofs.close();
 }
 
 void LaserMapping::Finish() {
