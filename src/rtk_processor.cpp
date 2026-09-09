@@ -75,13 +75,13 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
     // SPP
     int n = 0;
     while (std::abs(timediff(obss.data[obs_i].time, obss.data[obs_i + n].time)) < DTTOL) ++n;
-    sol_t sol;
+    sol_t sol{};
     char err_msg[128];
     if (!pntpos(obss.data + obs_i, n, &nav, &prcopt, &sol, nullptr, nullptr, err_msg)) {
         printf("%s\n", err_msg);
         return;
     } else {
-        outsolex(stdout,&sol, nullptr, &solopt);
+        outsol(stdout, &sol, nullptr, &solopt);
     }
 
     // alignment

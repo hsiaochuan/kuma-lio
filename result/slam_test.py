@@ -50,7 +50,8 @@ class RunTask:
     name: str = ""  # automatically extracted from bag_file
     ground_truth_fname: str = ""
     is_localization: bool = False
-
+    gnss_obs_fname: str = ""
+    gnss_nav_fname: str = ""
     @property
     def localization_args(self) -> List[str]:
         if not self.is_localization:
@@ -72,6 +73,7 @@ class DatasetConfig:
     prior_init_pose: Dict[str, str] = field(default_factory=dict)
     prior_map: Dict[str, str] = field(default_factory=dict)
     ground_truth_dir: str = ""
+    gnss_dir: str = ""
     is_localization: bool = False
 
 @dataclass
@@ -207,6 +209,8 @@ class SLAMTestRunner:
                  "--output_dir", task.output_dir,
                  "--start", str(task.start),
                  '--duration', str(task.duration),
+                 "--gnss_obs_fname", task.gnss_obs_fname,
+                 "--nav_fname", task.gnss_nav_fname,
                  ],
                 check=True,
             )
@@ -280,10 +284,7 @@ class SLAMTestRunner:
         # pipeline
         start_time = time.time()
         if self.if_slam:
-            if task.run_mode == RunMode.OFFLINE:
-                self.run_offline(task)
-            else:
-                self.run_online(task)
+            self.run_offline(task)
 
         if self.if_postprocess:
             self.run_post_process(output_dir)
@@ -394,6 +395,8 @@ class SLAMTestRunner:
                 prior_init_pose=prior_init_pose,
                 ground_truth_fname= os.path.join(dataset.ground_truth_dir, name + ".txt"),
                 is_localization=dataset.is_localization,
+                gnss_obs_fname=os.path.join(dataset.gnss_dir, name + ".o"),
+                gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
             )
             test_result = self.run_single(task)
             suite.test_results.append(test_result)
@@ -552,9 +555,9 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         name="mars_lvig",
         config={".":"../config/mars_lvig.yaml"},
         bag_files=[
-            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS03.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS03.bag",
         ],
+        gnss_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/GNSS",
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
     )
