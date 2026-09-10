@@ -63,6 +63,7 @@ class LaserMappingParam {
     double max_gap = 1.0;
     int slw_size = 200;
     double ali_min_travel = 5.0;
+    double lio_pos_std = 0.1;
 
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;

@@ -32,6 +32,7 @@ struct RtkState {
 struct SatTrack {
     std::vector<int> obs_ids;
     std::vector<Eigen::Vector3d> sv_poss;
+    std::vector<double> sv_dts;
     std::vector<int64_t> local_times;
     double hatch = 0.0;
 };

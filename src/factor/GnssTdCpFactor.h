@@ -19,11 +19,13 @@ class GnssTdCpFactor : public gtsam::NoiseModelFactor6<gtsam::Vector3, gtsam::Ve
                                                        gtsam::Vector3, gtsam::Rot3> {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Eigen::Vector3d le_arm_local{Eigen::Vector3d::Zero()};  ///< IMU->antenna lever arm, local frame
-    Eigen::Vector3d sv_pos_i{Eigen::Vector3d::Zero()};      ///< satellite position at epoch i, ECEF (m)
-    Eigen::Vector3d sv_pos_j{Eigen::Vector3d::Zero()};      ///< satellite position at epoch j, ECEF (m)
-    double cp_measured{0.0};                                ///< time-differenced carrier phase (m)
-    int sys_idx{0};                                         ///< index into `dt` for this constellation
+    Eigen::Vector3d le_arm_local{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d sv_pos_i{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d sv_pos_j{Eigen::Vector3d::Zero()};
+    double svdt_i{0.0};
+    double svdt_j{0.0};
+    double cp_measured{0.0};
+    int sys_idx{0};
 
     GnssTdCpFactor(gtsam::Key j1, gtsam::Key j2, gtsam::Key j3, gtsam::Key j4, gtsam::Key j5, gtsam::Key j6,
                    const gtsam::SharedNoiseModel& model)
@@ -64,7 +66,8 @@ class GnssTdCpFactor : public gtsam::NoiseModelFactor6<gtsam::Vector3, gtsam::Ve
         const Eigen::Vector3d rcv2sat_unit_j(e_j[0], e_j[1], e_j[2]);
 
         gtsam::Vector1 residual;
-        residual[0] = (range_j - range_i + dt_j[sys_idx] - dt_i[sys_idx] - cp_measured);
+        residual[0] = (range_j - range_i) + (dt_j[sys_idx] - dt_i[sys_idx])
+        - (cp_measured + CLIGHT * svdt_j - CLIGHT * svdt_i);
 
         if (!H1 && !H2 && !H3 && !H4 && !H5 && !H6) return residual;
 

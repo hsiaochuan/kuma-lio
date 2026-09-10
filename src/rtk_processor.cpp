@@ -217,17 +217,20 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
             sat_tracks_[obs.sat].hatch =
                 psr / N + (N - 1.0) / N * (sat_tracks_[obs.sat].hatch + obs.L[0] * lambda - last_obs.L[0] * lambda);
             sat_tracks_[obs.sat].local_times.push_back(local_time);
+            sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
         } else {
             // clear the track
             sat_tracks_[obs.sat].obs_ids.clear();
             sat_tracks_[obs.sat].sv_poss.clear();
             sat_tracks_[obs.sat].hatch = 0.0;
             sat_tracks_[obs.sat].local_times.clear();
+            sat_tracks_[obs.sat].sv_dts.clear();
             // insert the one observation
             sat_tracks_[obs.sat].obs_ids.push_back(oi);
             sat_tracks_[obs.sat].sv_poss.push_back(sv);
             sat_tracks_[obs.sat].hatch = psr;
             sat_tracks_[obs.sat].local_times.push_back(local_time);
+            sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
         }
 
         // psr factor
@@ -254,6 +257,8 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
                 obsd_t& prev_obs = obss.data[sat_track.obs_ids[i]];
                 tdcp_factor.sv_pos_i = sat_track.sv_poss[i];
                 tdcp_factor.sv_pos_j = Vec3(rs[si * 6], rs[si * 6 + 1], rs[si * 6 + 2]);
+                tdcp_factor.svdt_i = sat_track.sv_dts[i];
+                tdcp_factor.svdt_j = dts[si * 2 + 0];
                 tdcp_factor.le_arm_local = param->level_arm;
                 tdcp_factor.sys_idx = sys_idx;
                 tdcp_factor.cp_measured = obs.L[0] - prev_obs.L[0];

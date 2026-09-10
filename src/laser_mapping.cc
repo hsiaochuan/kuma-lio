@@ -486,13 +486,23 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
     return true;
 }
 void LaserMapping::PublishOdometry() {
-    auto interp_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
+    Eigen::Isometry3d pub_pose;
+    if (!measures_.obss_ids.empty() || !rtk_pro->if_alignment) {
+        pub_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
+    } else {
+        std::int64_t local_time_ns = measures_.obss_time.back();
+        const gtsam::Value& rot = rtk_pro->isam->calculateEstimate(R(local_time_ns));
+        const gtsam::Value& pos = rtk_pro->isam->calculateEstimate(P(local_time_ns));
+        pub_pose.translation() = pos.cast<gtsam::Vector3>();
+        pub_pose.linear() = rot.cast<gtsam::Rot3>().matrix();
+
+    }
     nav_msgs::Odometry body_odometry;
     geometry_msgs::PoseStamped pose_stamped;
-    pose_stamped.pose.position.x = interp_pose.translation().x();
-    pose_stamped.pose.position.y = interp_pose.translation().y();
-    pose_stamped.pose.position.z = interp_pose.translation().z();
-    Eigen::Quaterniond q(interp_pose.linear());
+    pose_stamped.pose.position.x = pub_pose.translation().x();
+    pose_stamped.pose.position.y = pub_pose.translation().y();
+    pose_stamped.pose.position.z = pub_pose.translation().z();
+    Eigen::Quaterniond q(pub_pose.linear());
     pose_stamped.pose.orientation.x = q.x();
     pose_stamped.pose.orientation.y = q.y();
     pose_stamped.pose.orientation.z = q.z();
@@ -524,9 +534,9 @@ void LaserMapping::PublishOdometry() {
     tf::Transform transform;
     tf::Quaternion tf_q;
     tf::Vector3 t;
-    t.setX(interp_pose.translation().x());
-    t.setY(interp_pose.translation().y());
-    t.setZ(interp_pose.translation().z());
+    t.setX(pub_pose.translation().x());
+    t.setY(pub_pose.translation().y());
+    t.setZ(pub_pose.translation().z());
     tf_q.setX(q.x());
     tf_q.setY(q.y());
     tf_q.setZ(q.z());
