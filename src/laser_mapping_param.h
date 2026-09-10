@@ -56,6 +56,8 @@ class LaserMappingParam {
     int num_threads = 4;
 
     Vec3 level_arm = Vec3(0.0, 0.0, 0.0);
+    double dt_weight = 1.0;
+    double ddt_weight = 1.0;
     double psr_weight = 1.0;
     double tdcp_weight = 1.0;
     double max_gap = 1.0;

@@ -32,6 +32,10 @@ RTKProcessor::RTKProcessor() {
     solopt.solstatic = 0;  // one line per epoch, even in a static mode
     solopt.sstat = 0;
     solopt.maxsolstd = 0.0;
+
+    gtsam::ISAM2Params isam_params;
+    isam_params.evaluateNonlinearError = true;
+    isam = std::make_shared<gtsam::ISAM2>(isam_params);
 }
 static int SysIdx(int sys) {
     if (sys == SYS_GPS) return 0;
@@ -114,22 +118,27 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
     static int call_once = [&]() {
         values.insert(E(0), gtsam::Rot3(R_ecef_enu));
         values.insert(T(0), t_ecef_enu);
+        gtsam::SharedNoiseModel anchor_rot_weight = gtsam::noiseModel::Isotropic::Sigma(3, 0.1);
+        factors.addPrior(E(0), gtsam::Rot3(R_ecef_enu), anchor_rot_weight);
         return 0;
     }();
 
     int64_t local_time = lio_state.local_time;
     values.insert(R(local_time), gtsam::Rot3(lio_state.quat));
     values.insert(P(local_time), lio_state.pos);
-    values.insert(D(local_time), gtsam::Vector4(sol.dtr[0], sol.dtr[1], sol.dtr[2], sol.dtr[3]));
+    gtsam::SharedNoiseModel lio_pos_weight = gtsam::noiseModel::Isotropic::Sigma(3, param->lio_pos_std);
+    factors.addPrior(P(local_time), lio_state.pos, lio_pos_weight);
+    values.insert(D(local_time),
+                  gtsam::Vector4(CLIGHT * sol.dtr[0], CLIGHT * sol.dtr[1], CLIGHT * sol.dtr[2], CLIGHT * sol.dtr[3]));
     values.insert(O(local_time), gtsam::Vector1(0.0));
-    gtsam::Vector6 bgba;
-    bgba(0) = lio_state.bg.x();
-    bgba(1) = lio_state.bg.y();
-    bgba(2) = lio_state.bg.z();
-    bgba(3) = lio_state.ba.x();
-    bgba(4) = lio_state.ba.y();
-    bgba(5) = lio_state.ba.z();
-    values.insert(B(local_time), bgba);
+    // gtsam::Vector6 bgba;
+    // bgba(0) = lio_state.bg.x();
+    // bgba(1) = lio_state.bg.y();
+    // bgba(2) = lio_state.bg.z();
+    // bgba(3) = lio_state.ba.x();
+    // bgba(4) = lio_state.ba.y();
+    // bgba(5) = lio_state.ba.z();
+    // values.insert(B(local_time), bgba);
 
     // satellite pos
     std::vector<double> rs(6 * n, 0.0), dts(2 * n, 0.0), svar(n, 0.0);
@@ -257,22 +266,34 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
     if (slw_times.size() > 0) {
         // dt factor
         std::int64_t prev_time = slw_times.back();
-        gtsam::SharedNoiseModel dt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
+        gtsam::SharedNoiseModel dt_weight = gtsam::noiseModel::Isotropic::Sigma(4, param->dt_weight);
         double dt = NS_TO_S(local_time - prev_time);
         GnssDtDdtFactor dt_factor(D(local_time), D(prev_time), O(local_time), O(prev_time), dt, dt_weight);
         factors.add(dt_factor);
         factor_times.push_back(prev_time);
 
         // ddt factor
-        gtsam::SharedNoiseModel ddt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
+        gtsam::SharedNoiseModel ddt_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->ddt_weight);
         GnssDdtSmoothFactor ddt_factor(O(local_time), O(prev_time), ddt_weight);
         factors.add(ddt_factor);
         factor_times.push_back(prev_time);
+    } else {
+        gtsam::SharedNoiseModel dt_prior_weight = gtsam::noiseModel::Isotropic::Sigma(4, 1e3);
+        factors.addPrior(
+            D(local_time),
+            gtsam::Vector4(CLIGHT * sol.dtr[0], CLIGHT * sol.dtr[1], CLIGHT * sol.dtr[2], CLIGHT * sol.dtr[3]),
+            dt_prior_weight);
+        gtsam::SharedNoiseModel ddt_prior_weight = gtsam::noiseModel::Isotropic::Sigma(1, param->psr_weight);
+        factors.addPrior(O(local_time), gtsam::Vector1(0.0), ddt_prior_weight);
     }
 
     // update values
     slw_times.push_back(local_time);
-    gtsam::ISAM2Result isam_result = isam.update(factors, values);
+    gtsam::ISAM2Result isam_result = isam->update(factors, values);
+
+    if (isam_result.errorBefore && isam_result.errorAfter) {
+        LOG(INFO) << "Error Before: " << *isam_result.errorBefore << ", Error After: " << *isam_result.errorAfter;
+    }
     for (int i = 0; i < factors.size(); ++i) {
         std::int64_t factor_time = factor_times[i];
         auto factor_index = isam_result.newFactorsIndices.at(i);
@@ -283,6 +304,6 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
         // find the factor that connect the oldest time
         std::int64_t oldest_time = slw_times[0];
         gtsam::FactorIndices delete_factors = slw_factors[oldest_time];
-        isam.update(gtsam::NonlinearFactorGraph{}, gtsam::Values{}, delete_factors);
+        isam->update(gtsam::NonlinearFactorGraph{}, gtsam::Values{}, delete_factors);
     }
 }

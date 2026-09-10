@@ -45,7 +45,7 @@ class RTKProcessor {
     solopt_t solopt{};
     std::unordered_map<int, SatTrack> sat_tracks_;
 
-    gtsam::ISAM2 isam;
+    std::shared_ptr<gtsam::ISAM2> isam;
     std::vector<std::int64_t> slw_times;
     std::unordered_map<std::int64_t, gtsam::FactorIndices> slw_factors;
 
