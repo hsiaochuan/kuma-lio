@@ -198,13 +198,15 @@ bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &n
     uniqnav(&nav);
     rtk_pro->obss = obss;
     rtk_pro->nav = nav;
+    resple_lio_->obss = obss;
+    resple_lio_->nav = nav;
 
     LOG(INFO) << "read "
-    << rtk_pro->obss.n << " observations, "
-    << rtk_pro->nav.n << " eph, "
-    << rtk_pro->nav.ng << " geph, "
-    << rtk_pro->nav.ns << " seph";
-    if (rtk_pro->obss.n <= 0 || rtk_pro->nav.n + rtk_pro->nav.ng <= 0) {
+    << obss.n << " observations, "
+    << nav.n << " eph, "
+    << nav.ng << " geph, "
+    << nav.ns << " seph";
+    if (obss.n <= 0 || nav.n + nav.ng <= 0) {
         LOG(ERROR) << "no usable GNSS data; check that RTKLIB is built with -DENAGLO/-DENAGAL/-DENACMP";
         return false;
     }
@@ -226,7 +228,7 @@ bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &n
 
     // position
     filopt_t filopt{};
-    const int ret = postpos(ts, te, 0.0, 0.0, &rtk_pro->prcopt, &rtk_pro->solopt, &filopt, infile.data(), static_cast<int>(infile.size()),
+    const int ret = postpos(ts, te, 0.0, 0.0, &param->prcopt, &param->solopt, &filopt, infile.data(), static_cast<int>(infile.size()),
                             sol_fname.c_str(), "", "");
     if (ret != 0) {
         LOG(ERROR) << "postpos failed with status " << ret;
@@ -373,17 +375,14 @@ void LaserMapping::Run() {
     while (CollectMeasures(resple_lio_->spl.maxTimeNs() + param->dt_ns)) {
         resple_lio_->propRCP();
         resple_lio_->ProcessMeasurement(measures_);
-        if (!measures_.obss_ids.empty()) {
-            for (int i = 0; i < measures_.obss_ids.size(); ++i) {
-                int obs_i = measures_.obss_ids[i];
-                Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(measures_.obss_time[i]);
-                RtkState state;
-                state.pos = body_pose.translation();
-                state.quat = Eigen::Quaterniond(body_pose.linear());
-                state.local_time = measures_.obss_time[i];
-                state.time = obss.data[obs_i].time;
-                rtk_pro->ProcessMeasurements(obs_i, state);
-            }
+        if (measures_.obs_id > 0) {
+            Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(measures_.obs_time_ns);
+            RtkState state;
+            state.pos = body_pose.translation();
+            state.quat = Eigen::Quaterniond(body_pose.linear());
+            state.local_time = measures_.obs_time_ns;
+            state.time = obss.data[measures_.obs_id].time;
+            rtk_pro->ProcessMeasurements(measures_.obs_id, state);
         }
         PublishROSMsg();
         PostUpdate();
@@ -472,11 +471,10 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
         points_buffer_.pop_front();
     }
     // process the raw measurement
-    measures_.obss_ids.clear();
-    measures_.obss_time.clear();
+    measures_.obs_id = -1;;
     while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < meas_end) {
-        measures_.obss_ids.emplace_back(obss_id_buffer_.front());
-        measures_.obss_time.emplace_back(obss_time_buffer_.front());
+        measures_.obs_id = obss_id_buffer_.front();
+        measures_.obs_time_ns = obss_time_buffer_.front();
         obss_id_buffer_.pop_front();
         obss_time_buffer_.pop_front();
     }
@@ -487,16 +485,8 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
 }
 void LaserMapping::PublishOdometry() {
     Eigen::Isometry3d pub_pose;
-    if (!measures_.obss_ids.empty() || !rtk_pro->if_alignment) {
-        pub_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
-    } else {
-        std::int64_t local_time_ns = measures_.obss_time.back();
-        const gtsam::Value& rot = rtk_pro->isam->calculateEstimate(R(local_time_ns));
-        const gtsam::Value& pos = rtk_pro->isam->calculateEstimate(P(local_time_ns));
-        pub_pose.translation() = pos.cast<gtsam::Vector3>();
-        pub_pose.linear() = rot.cast<gtsam::Rot3>().matrix();
+    pub_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
 
-    }
     nav_msgs::Odometry body_odometry;
     geometry_msgs::PoseStamped pose_stamped;
     pose_stamped.pose.position.x = pub_pose.translation().x();

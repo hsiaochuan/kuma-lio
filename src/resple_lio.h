@@ -42,6 +42,21 @@ struct ImuData {
           z(other.z), if_acc_valid(other.if_acc_valid), if_gyro_valid(other.if_gyro_valid) {}
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
+struct TimeDiffCarrierPhaseData {
+    int64_t time_ns;
+    Vec3 sv_pos;
+    double sv_dt;
+    Vec3 pos;
+};
+struct PsrData {
+    int64_t time_ns;
+    Vec3 sv_pos;
+    double sv_dt;
+    double ion_delay;
+    double tro_delay;
+    double noise_var;
+    double psr_measure;
+};
 class RESPLE_LIO {
    public:
     static constexpr int XSIZE = 30;
@@ -61,6 +76,8 @@ class RESPLE_LIO {
     static bool esti_plane(Vec4& pca_result, const Eigen::aligned_vector<faster_lio::Point>& point, const double& threshold);
     int Match();
     void IterativeUpdate();
+    void prepTdCp(TimeDiffCarrierPhaseData & tdcp_data);
+    void prepPsr(PsrData& psr_data);
     void prepIMU(ImuData& imu_data);
     void prepLiDAR(PointData& pt_data) const;
     void propRCP();
@@ -114,6 +131,9 @@ class RESPLE_LIO {
     bool if_inertial_initialized = false;
     bool if_localmap_initialized = false;
     bool localmap_box_initialized = false;
+
+    bool if_GNSS_aligned = false;
+
     BoxPointType localmap_box;
     SplineState spl;
     Eigen::Matrix<double, XSIZE, XSIZE> cov_rcp;
@@ -129,5 +149,12 @@ class RESPLE_LIO {
     std::vector<Eigen::aligned_vector<faster_lio::Point>> accum_nearest_points;
     Eigen::aligned_deque<ImuData> imu_meas;
     Eigen::aligned_deque<PointData> pt_meas;
+    Eigen::aligned_deque<TimeDiffCarrierPhaseData> tdcp_meas;
+    Eigen::aligned_deque<PsrData> psr_meas;
+    obs_t obss{};
+    nav_t nav{};
+    std::unordered_map<int, SatTrack> sat_tracks_;
+    Mat3 R_ecef_enu;
+    Vec3 t_ecef_enu;
 };
 }  // namespace faster_lio

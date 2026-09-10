@@ -3,13 +3,17 @@
 //
 #include "resple_lio.h"
 
+#include <ros/param.h>
+
+#include "rtklib_func.h"
 namespace faster_lio {
 
 void RESPLE_LIO::Init() {
     const double dt_s = param->dt_ns * 1e-9;
     // set P0
     cov_rcp.setZero();
-    cov_rcp.topLeftCorner<CP_SIZE, CP_SIZE>() = param->cov_P0 * dt_s * dt_s * Eigen::Matrix<double, CP_SIZE, CP_SIZE>::Identity();
+    cov_rcp.topLeftCorner<CP_SIZE, CP_SIZE>() =
+        param->cov_P0 * dt_s * dt_s * Eigen::Matrix<double, CP_SIZE, CP_SIZE>::Identity();
     cov_rcp.block<3, 3>(BA_OFFSET, BA_OFFSET) = param->cov_ba.asDiagonal();
     cov_rcp.block<3, 3>(BG_OFFSET, BG_OFFSET) = param->cov_bg.asDiagonal();
 
@@ -18,21 +22,16 @@ void RESPLE_LIO::Init() {
     double cov_sys_ort = param->std_sys_ort * param->std_sys_ort * dt_s * dt_s;
     Eigen::Matrix<double, XSIZE, XSIZE> Q = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
     Eigen::Matrix<double, 6, 6> Q_block_old = Eigen::Matrix<double, 6, 6>::Zero();
-    Q_block_old.topLeftCorner<3, 3>() =
-        param->cov_RCP_pos_old * cov_sys_pos * Eigen::Matrix3d::Identity();
-    Q_block_old.bottomRightCorner<3, 3>() =
-        param->cov_RCP_ort_old * cov_sys_ort * Eigen::Matrix3d::Identity();
+    Q_block_old.topLeftCorner<3, 3>() = param->cov_RCP_pos_old * cov_sys_pos * Eigen::Matrix3d::Identity();
+    Q_block_old.bottomRightCorner<3, 3>() = param->cov_RCP_ort_old * cov_sys_ort * Eigen::Matrix3d::Identity();
     Eigen::Matrix<double, 6, 6> Q_block_new = Eigen::Matrix<double, 6, 6>::Zero();
-    Q_block_new.topLeftCorner<3, 3>() =
-        param->cov_RCP_pos_new * cov_sys_pos * Eigen::Matrix3d::Identity();
-    Q_block_new.bottomRightCorner<3, 3>() =
-        param->cov_RCP_ort_new * cov_sys_ort * Eigen::Matrix3d::Identity();
+    Q_block_new.topLeftCorner<3, 3>() = param->cov_RCP_pos_new * cov_sys_pos * Eigen::Matrix3d::Identity();
+    Q_block_new.bottomRightCorner<3, 3>() = param->cov_RCP_ort_new * cov_sys_ort * Eigen::Matrix3d::Identity();
     Q.topLeftCorner<6, 6>() = Q_block_old;
     Q.block<6, 6>(6, 6) = Q_block_old;
     Q.block<6, 6>(12, 12) = Q_block_old;
     Q.block<6, 6>(18, 18) = Q_block_new;
     cov_sys = Q;
-
 
     // A
     a_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
@@ -52,15 +51,59 @@ void RESPLE_LIO::Init() {
     kd_tree = std::make_shared<KD_TREE<faster_lio::Point>>();
     kd_tree->set_downsample_param(param->ds_lm_voxel);
 }
+static int SysIdx(int sys) {
+    if (sys == SYS_GPS) return 0;
+    if (sys == SYS_GLO) return 1;
+    if (sys == SYS_GAL) return 2;
+    if (sys == SYS_CMP) return 3;
+    if (sys == SYS_QZS) return 4;
+    throw std::runtime_error("unknown system");
+}
 
-void RESPLE_LIO::ProcessMeasurement(MeasureGroup & measures) {
+static bool Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu,
+    const std::vector<Vec3> & locals, const std::vector<Vec3> & ecefs) {
+    CHECK(locals.size() == ecefs.size());
+    int N = locals.size();
+    if (N < 3) return false;
+    double travel_len = 0.0;
+    for (int i = 0; i < locals.size() - 1; ++i) {
+        travel_len += (locals[i + 1] - locals[i]).norm();
+    }
+    if (travel_len < 5.0)
+        return false;
+    Vec3 mean_l(Vec3::Zero());
+    Vec3 mean_e(Vec3::Zero());
+    for (int i = 0; i < N; ++i) {
+        mean_l += locals[i];
+        mean_e += ecefs[i];
+    }
+    mean_l /= N;
+    mean_e /= N;
+    double anc_llh[3];
+    ecef2pos(mean_e.data(), anc_llh);
+    Eigen::Matrix3d R_enu_ecef;
+    xyz2enu(anc_llh, R_enu_ecef.data());
+    double num = 0.0, den = 0.0;
+    for (int i = 0; i < N; ++i) {
+        const Vec3 s = locals[i] - mean_l;
+        const Vec3 d = R_enu_ecef * (ecefs[i] - mean_e);
+        num += s.x() * d.y() - s.y() * d.x();
+        den += s.x() * d.x() + s.y() * d.y();
+    }
+    const double yaw = std::atan2(num, den);
+    const Mat3 Rz = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    R_ecef_enu = R_enu_ecef.transpose() * Rz;
+    t_ecef_enu = mean_e - R_ecef_enu * mean_l;
+    return true;
+}
+void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
     if (measures.lidar_->empty()) {
         LOG(INFO) << "No LiDAR data, skip process measurement";
         return;
     }
     // transform point
     PointCloud::Ptr points_body(new PointCloud);
-    pcl::transformPointCloud(*measures.lidar_, *points_body, param->extrin_il_.Mat4d(),true);
+    pcl::transformPointCloud(*measures.lidar_, *points_body, param->extrin_il_.Mat4d(), true);
 
     // downsample point
     if (param->ds_scan_voxel > 0) {
@@ -69,15 +112,148 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup & measures) {
         scan_sampler.setInputCloud(points_body);
         scan_sampler.filter(*points_body);
         std::sort(points_body->points.begin(), points_body->points.end(),
-          [](const Point &p1, const Point &p2) { return p1.GetTimeNs() < p2.GetTimeNs(); });
+                  [](const Point& p1, const Point& p2) { return p1.GetTimeNs() < p2.GetTimeNs(); });
     }
+
+    sol_t sol{};
+    if (measures.obs_id > 0) {
+        // SPP
+        tdcp_meas.clear();
+        psr_meas.clear();
+        int ei = measures.obs_id;
+        int64_t local_time = measures.obs_time_ns;
+        int n = 0;
+        while (std::abs(timediff(obss.data[ei].time, obss.data[ei + n].time)) < DTTOL) ++n;
+
+        char err_msg[128];
+        if (!pntpos(obss.data + ei, n, &nav, &param->prcopt, &sol, nullptr, nullptr, err_msg)) {
+            printf("%s\n", err_msg);
+        } else {
+            outsol(stdout, &sol, nullptr, &param->solopt);
+        }
+
+        // satellite pos
+        std::vector<double> rs(6 * n, 0.0), dts(2 * n, 0.0), svar(n, 0.0);
+        std::vector<int> svh(n, 0);
+        satposs(sol.time, obss.data + ei, n, &nav, param->prcopt.sateph, rs.data(), dts.data(), svar.data(),
+                svh.data());
+        double rcv_llh[3];
+        ecef2pos(sol.rr, rcv_llh);
+
+        for (int si = 0; si < n; ++si) {
+            int oi = ei + si;
+            const obsd_t& obs = obss.data[oi];
+            // filter
+            if (satexclude(obs.sat, svar[si], svh[si], &param->prcopt)) continue;
+            double azel[2] = {0.0, PI / 2.0};
+            double e[3];
+            if (geodist(&rs[si * 6], sol.rr, e) < 0.0) continue;
+            if (satazel(rcv_llh, e, azel) < param->prcopt.elmin) continue;
+            if (testsnr(0, 0, azel[1], obs.SNR[0], &param->prcopt.snrmask)) continue;
+
+            // iono and tro
+            double iono_delay = 0.0, vion = 0.0, tro_delay = 0.0, vtrp = 0.0;
+            ionocorr(sol.time, &nav, obs.sat, rcv_llh, azel, param->prcopt.ionoopt, &iono_delay, &vion);
+            const double freq = sat2freq(obs.sat, obs.code[0], &nav);
+            const double lambda = CLIGHT / freq;
+            iono_delay *= (FREQL1 / freq) * (FREQL1 / freq);
+            vion *= (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq);
+            tropcorr(sol.time, &nav, rcv_llh, azel, param->prcopt.tropopt, &tro_delay, &vtrp);
+
+            // measure var
+            double varerr = rtklib::varerr(&param->prcopt, &obs, azel[1], satsys(obs.sat, nullptr));
+
+            // corrected range
+            double vmeas = 0.0;
+            double psr = rtklib::prange(&obs, &nav, &param->prcopt, &vmeas);
+
+            // manage the sat track
+            bool psr_valid = obs.P[0] > 0.0;
+            bool cp_valid = obs.L[0] > 0.0;
+            bool dopp_valid = obs.D[0] > 0.0;
+            bool obs_valid = psr_valid && cp_valid && dopp_valid;
+
+            bool arc_continu = true;
+            do {
+                if (obs_valid) {
+                    arc_continu = false;
+                    break;
+                }
+                if (sat_tracks_[obs.sat].obs_ids.empty()) {
+                    arc_continu = false;
+                    break;
+                }
+                if ((obs.LLI[0] & 0x3) != 0) {
+                    arc_continu = false;
+                    break;
+                }
+
+                int last_oi = sat_tracks_[obs.sat].obs_ids.back();
+                obsd_t& last_obs = obss.data[last_oi];
+                double dt = timediff(obs.time, last_obs.time);
+                const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
+                const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
+                if (std::abs(dcp - dpt) > 3 * param->prcopt.thresdop) {
+                    arc_continu = false;
+                    break;
+                }
+            } while (false);
+
+            Eigen::Vector3d sv(rs[si * 6], rs[si * 6 + 1], rs[si * 6 + 2]);
+            if (arc_continu) {
+                int last_oi = sat_tracks_[obs.sat].obs_ids.back();
+                obsd_t& last_obs = obss.data[last_oi];
+                sat_tracks_[obs.sat].obs_ids.push_back(oi);
+                sat_tracks_[obs.sat].sv_poss.push_back(sv);
+                int N = sat_tracks_[obs.sat].obs_ids.size();
+                sat_tracks_[obs.sat].hatch =
+                    psr / N + (N - 1.0) / N * (sat_tracks_[obs.sat].hatch + obs.L[0] * lambda - last_obs.L[0] * lambda);
+                sat_tracks_[obs.sat].local_times.push_back(local_time);
+                sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
+            } else {
+                // clear the track
+                sat_tracks_[obs.sat].obs_ids.clear();
+                sat_tracks_[obs.sat].sv_poss.clear();
+                sat_tracks_[obs.sat].hatch = 0.0;
+                sat_tracks_[obs.sat].local_times.clear();
+                sat_tracks_[obs.sat].sv_dts.clear();
+                // insert the one observation
+                sat_tracks_[obs.sat].obs_ids.push_back(oi);
+                sat_tracks_[obs.sat].sv_poss.push_back(sv);
+                sat_tracks_[obs.sat].hatch = psr;
+                sat_tracks_[obs.sat].local_times.push_back(local_time);
+                sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
+            }
+            // tdcp factor
+            SatTrack& sat_track = sat_tracks_[obs.sat];
+            for (int i = 0; i < sat_track.obs_ids.size() - 1; ++i) {
+                TimeDiffCarrierPhaseData tdcp_data;
+                tdcp_data.sv_pos = sv;
+                tdcp_data.sv_dt = dts[si * 2 + 0];
+                tdcp_data.time_ns = local_time;
+            }
+
+            // psr factor
+            PsrData psr_data;
+            psr_data.sv_pos = sv;
+            psr_data.sv_dt = dts[si * 2 + 0];
+            psr_data.ion_delay = iono_delay;
+            psr_data.tro_delay = tro_delay;
+            psr_data.noise_var = svar[si] + vmeas + vion + vtrp + varerr;
+            psr_data.psr_measure = sat_tracks_[obs.sat].hatch;
+            psr_meas.push_back(psr_data);
+        }  // for satellite
+    }
+
+    // add to imu
     imu_meas.clear();
     imu_meas.resize(measures.imu_.size());
     for (size_t i = 0; i < measures.imu_.size(); ++i) {
-        imu_meas[i] = ImuData(measures.imu_[i].time_ns,
-            measures.imu_[i].angular_velocity,
-            measures.imu_[i].linear_acceleration);
+        imu_meas[i] =
+            ImuData(measures.imu_[i].time_ns, measures.imu_[i].angular_velocity, measures.imu_[i].linear_acceleration);
     }
+
+    // add to lidar points
     pt_meas.clear();
     pt_meas.resize(points_body->size());
     for (int i = 0; i < points_body->size(); ++i) {
@@ -115,6 +291,18 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup & measures) {
         accum_points.clear();
         accum_nearest_points.clear();
     }
+
+    if (measures.obs_id > 0 && sol.stat != SOLQ_NONE && !if_GNSS_aligned) {
+        static std::vector<Vec3> locals;
+        static std::vector<Vec3> ecefs;
+        Vec3 ecef(sol.rr[0], sol.rr[1], sol.rr[2]);
+        Vec3 local = spl.itpPosition(measures.obs_time_ns, nullptr);
+        if (locals.empty() || (locals.back() - local).norm() > 0.3) {
+            locals.push_back(local);
+            ecefs.push_back(ecef);
+            if_GNSS_aligned = Alignment(R_ecef_enu, t_ecef_enu, locals, ecefs);
+        }
+    }
 }
 
 Eigen::Matrix<double, RESPLE_LIO::XSIZE, 1> RESPLE_LIO::getState() {
@@ -124,7 +312,8 @@ Eigen::Matrix<double, RESPLE_LIO::XSIZE, 1> RESPLE_LIO::getState() {
     return state;
 }
 
-bool RESPLE_LIO::esti_plane(Vec4& pca_result, const Eigen::aligned_vector<faster_lio::Point>& point, const double& threshold) {
+bool RESPLE_LIO::esti_plane(Vec4& pca_result, const Eigen::aligned_vector<faster_lio::Point>& point,
+                            const double& threshold) {
     Eigen::Matrix<double, MATCH_POINT, 3> A;
     Eigen::Matrix<double, MATCH_POINT, 1> b;
     A.setZero();
@@ -142,8 +331,8 @@ bool RESPLE_LIO::esti_plane(Vec4& pca_result, const Eigen::aligned_vector<faster
     pca_result(2) = normvec(2) / n;
     pca_result(3) = 1.0 / n;
     for (int j = 0; j < MATCH_POINT; j++) {
-        if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z +
-                 pca_result(3)) > threshold) {
+        if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z + pca_result(3)) >
+            threshold) {
             return false;
         }
     }
@@ -229,8 +418,11 @@ void RESPLE_LIO::IterativeUpdate() {
         }
     }  // iter
     double update_time = timer.ElapsedMiniSeconds();
-    LOG(INFO) << "Points: " << pt_meas.size() << " Imu: " << imu_meas.size() << " Effect Points: " << num_eff << " Time: " << update_time;
+    LOG(INFO) << "Points: " << pt_meas.size() << " Imu: " << imu_meas.size() << " Effect Points: " << num_eff
+              << " Time: " << update_time;
 }
+void RESPLE_LIO::prepTdCp(TimeDiffCarrierPhaseData& tdcp_data) {}
+void RESPLE_LIO::prepPsr(PsrData& psr_data) {}
 
 void RESPLE_LIO::prepIMU(ImuData& imu_data) {
     Eigen::Quaterniond q_itp;
@@ -274,8 +466,7 @@ void RESPLE_LIO::prepIMU(ImuData& imu_data) {
             imu_data.H.row(i).setZero();
             imu_data.z(i) = 0;
         }
-        imu_data.if_gyro_valid[i] =
-            std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= param->imu_gyro_outlier;
+        imu_data.if_gyro_valid[i] = std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= param->imu_gyro_outlier;
         if (!imu_data.if_gyro_valid[i]) {
             imu_data.H.row(i + 3).setZero();
             imu_data.z(i + 3) = 0;
@@ -307,15 +498,14 @@ void RESPLE_LIO::prepLiDAR(PointData& pt_data) const {
 
 void RESPLE_LIO::propRCP() {
     Eigen::Matrix<double, 24, 1> cps_win = spl.getRCPs();
-    Eigen::Matrix<double, 6, 1> cp_prop_pos =
-        2 * cps_win.block<6, 1>(12, 0) - cps_win.block<6, 1>(0, 0);
+    Eigen::Matrix<double, 6, 1> cp_prop_pos = 2 * cps_win.block<6, 1>(12, 0) - cps_win.block<6, 1>(0, 0);
     Eigen::Vector3d delta = cps_win.segment<3>(9);
     spl.addOneStateKnot(cp_prop_pos.head<3>(), delta);
     cov_rcp = a_mat * cov_rcp * a_mat.transpose() + cov_sys;
 }
 
 void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<double, XSIZE, 1>& x_prop,
-                         const Eigen::Matrix<double, XSIZE, XSIZE>& P_prop) {
+                                     const Eigen::Matrix<double, XSIZE, XSIZE>& P_prop) {
     Eigen::Matrix<double, 6, 1> cov_imu_inv;
     cov_imu_inv(0) = 1. / param->cov_acc(0);
     cov_imu_inv(1) = 1. / param->cov_acc(1);
@@ -333,6 +523,12 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     for (size_t i = 0; i < imu_meas.size(); i++) {
         prepIMU(imu_meas[i]);
     }
+    for (int i = 0; i < tdcp_meas.size(); i++) {
+        prepTdCp(tdcp_meas[i]);
+    }
+    for (int i = 0; i < psr_meas.size(); ++i) {
+        prepPsr(psr_meas[i]);
+    }
     int dim_meas = 6 * imu_meas.size() + eff_lidar_num;
     Eigen::Matrix<double, Eigen::Dynamic, XSIZE> H(dim_meas, XSIZE);
     Eigen::Matrix<double, Eigen::Dynamic, 1> z(dim_meas, 1);
@@ -341,34 +537,21 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     z.setZero();
     mat_cov_inv.setZero();
     int idx_offset = 0;
-    size_t id_imu = 0;
-    size_t id_pt = 0;
-
-    for (size_t j = 0; j < imu_meas.size() + pt_meas.size(); j++) {
-        if ((id_pt < pt_meas.size() && id_imu < imu_meas.size() &&
-             pt_meas[id_pt].time_ns < imu_meas[id_imu].time_ns) ||
-            (id_pt < pt_meas.size() && id_imu >= imu_meas.size())) {
-            PointData& pt_data = pt_meas[id_pt];
-            if (pt_data.if_valid) {
-                double lid_cov = pt_data.H * cov_rcp.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
-                if (std::abs(pt_data.z) < param->ppl_thr || lid_cov < pt_data.pt_wt * param->coeff_cov) {
-                    z(idx_offset) = -pt_data.z;
-                    H.block(idx_offset, 0, 1, 24) = pt_data.H;
-                }
-                mat_cov_inv(idx_offset) = 1 / pt_data.pt_wt;
-                idx_offset++;
-            }
-            id_pt++;
-        } else if ((id_pt < pt_meas.size() && id_imu < imu_meas.size() &&
-                    pt_meas[id_pt].time_ns >= imu_meas[id_imu].time_ns) ||
-                   (id_pt >= pt_meas.size() && id_imu < imu_meas.size())) {
-            const ImuData& imu_data = imu_meas[id_imu];
-            z.segment<6>(idx_offset) = imu_data.z;
-            H.block(idx_offset, 0, 6, XSIZE) = imu_data.H;
-            mat_cov_inv.segment<6>(idx_offset) = cov_imu_inv;
-            idx_offset += 6;
-            id_imu++;
+    for (const PointData& pt_data : pt_meas) {
+        if (!pt_data.if_valid) continue;
+        double lid_cov = pt_data.H * cov_rcp.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
+        if (std::abs(pt_data.z) < param->ppl_thr || lid_cov < pt_data.pt_wt * param->coeff_cov) {
+            z(idx_offset) = -pt_data.z;
+            H.block(idx_offset, 0, 1, 24) = pt_data.H;
         }
+        mat_cov_inv(idx_offset) = 1 / pt_data.pt_wt;
+        idx_offset++;
+    }
+    for (const ImuData& imu_data : imu_meas) {
+        z.segment<6>(idx_offset) = imu_data.z;
+        H.block(idx_offset, 0, 6, XSIZE) = imu_data.H;
+        mat_cov_inv.segment<6>(idx_offset) = cov_imu_inv;
+        idx_offset += 6;
     }
     Update(z, mat_cov_inv, H, x_prop, P_prop);
 }
@@ -408,8 +591,7 @@ void RESPLE_LIO::LaserMapFovSegment() {
     for (int i = 0; i < 3; i++) {
         dist_to_map_edge[i][0] = fabs(pos_lidar(i) - localmap_box.vertex_min[i]);
         dist_to_map_edge[i][1] = fabs(pos_lidar(i) - localmap_box.vertex_max[i]);
-        if (dist_to_map_edge[i][0] <= mov_threshold * det_range ||
-            dist_to_map_edge[i][1] <= mov_threshold * det_range)
+        if (dist_to_map_edge[i][0] <= mov_threshold * det_range || dist_to_map_edge[i][1] <= mov_threshold * det_range)
             need_move = true;
     }
     if (!need_move) return;

@@ -10,6 +10,31 @@
 using namespace faster_lio;
 class LaserMappingParam {
    public:
+    LaserMappingParam() {
+        prcopt = prcopt_default;
+        prcopt.mode = PMODE_SINGLE;
+        prcopt.soltype = 0;
+        prcopt.nf = 1;
+        prcopt.navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_CMP;
+        prcopt.glomodear = GLO_ARMODE_ON;
+        prcopt.refpos = POSOPT_SINGLE;
+        prcopt.thresdop = 1.0;
+        for (int f = 0; f < NFREQ; ++f) {
+            for (int i = 0; i < 9; ++i) prcopt.snrmask.mask[f][i] = 0;
+        }
+        prcopt.snrmask.ena[0] = prcopt.snrmask.ena[1] = 0;
+
+        solopt = solopt_default;
+        solopt.posf = SOLF_XYZ;     // ECEF, so readsolt() hands back sol.rr directly
+        solopt.times = TIMES_GPST;  // same time base as the observations
+        solopt.timef = 0;           // week + tow
+        solopt.timeu = 6;
+        solopt.outhead = 1;    // readsolt() needs the header to pick the decoder
+        solopt.outvel = 1;     // velocity round-trips through the file as well
+        solopt.solstatic = 0;  // one line per epoch, even in a static mode
+        solopt.sstat = 0;
+        solopt.maxsolstd = 0.0;
+    }
     std::string lidar_topic_;
     std::string imu_topic_;
     std::string camera_topic_;
@@ -64,6 +89,8 @@ class LaserMappingParam {
     int slw_size = 200;
     double ali_min_travel = 5.0;
     double lio_pos_std = 0.1;
+    prcopt_t prcopt;
+    solopt_t solopt;
 
     bool image_save_en_ = false;
     bool pcd_save_en_ = false;

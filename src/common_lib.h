@@ -190,8 +190,17 @@ struct MeasureGroup {
     std::deque<Imu> imu_;
     std::vector<RgbImage> images;
 
-    std::vector<int> obss_ids;
-    std::vector<int64_t> obss_time;
+    int obs_id = -1;
+    int64_t obs_time_ns;
+};
+
+struct SatTrack {
+    std::vector<int> obs_ids;
+    std::vector<Eigen::Vector3d> sv_poss;
+    std::vector<double> sv_dts;
+    std::vector<int64_t> local_times;
+    double hatch = 0.0;
+
 };
 
 }  // namespace faster_lio

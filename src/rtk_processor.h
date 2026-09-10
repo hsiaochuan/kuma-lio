@@ -29,21 +29,13 @@ struct RtkState {
     Vec3 ba;
     Vec3 bg;
 };
-struct SatTrack {
-    std::vector<int> obs_ids;
-    std::vector<Eigen::Vector3d> sv_poss;
-    std::vector<double> sv_dts;
-    std::vector<int64_t> local_times;
-    double hatch = 0.0;
-};
+
 class RTKProcessor {
    public:
     RTKProcessor();
     std::shared_ptr<LaserMappingParam> param;
     nav_t nav{};
     obs_t obss{};
-    prcopt_t prcopt{};
-    solopt_t solopt{};
     std::unordered_map<int, SatTrack> sat_tracks_;
 
     std::shared_ptr<gtsam::ISAM2> isam;

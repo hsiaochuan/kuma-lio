@@ -9,30 +9,6 @@
 #include "factor/GnssTdCpFactor.h"
 #include "rtklib_func.h"
 RTKProcessor::RTKProcessor() {
-    prcopt = prcopt_default;
-    prcopt.mode = PMODE_SINGLE;
-    prcopt.soltype = 0;
-    prcopt.nf = 1;
-    prcopt.navsys = SYS_GPS | SYS_GLO | SYS_GAL | SYS_CMP;
-    prcopt.glomodear = GLO_ARMODE_ON;
-    prcopt.refpos = POSOPT_SINGLE;
-    prcopt.thresdop = 1.0;
-    for (int f = 0; f < NFREQ; ++f) {
-        for (int i = 0; i < 9; ++i) prcopt.snrmask.mask[f][i] = 0;
-    }
-    prcopt.snrmask.ena[0] = prcopt.snrmask.ena[1] = 0;
-
-    solopt = solopt_default;
-    solopt.posf = SOLF_XYZ;     // ECEF, so readsolt() hands back sol.rr directly
-    solopt.times = TIMES_GPST;  // same time base as the observations
-    solopt.timef = 0;           // week + tow
-    solopt.timeu = 6;
-    solopt.outhead = 1;    // readsolt() needs the header to pick the decoder
-    solopt.outvel = 1;     // velocity round-trips through the file as well
-    solopt.solstatic = 0;  // one line per epoch, even in a static mode
-    solopt.sstat = 0;
-    solopt.maxsolstd = 0.0;
-
     gtsam::ISAM2Params isam_params;
     isam_params.evaluateNonlinearError = true;
     isam = std::make_shared<gtsam::ISAM2>(isam_params);
@@ -81,11 +57,11 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
     while (std::abs(timediff(obss.data[obs_i].time, obss.data[obs_i + n].time)) < DTTOL) ++n;
     sol_t sol{};
     char err_msg[128];
-    if (!pntpos(obss.data + obs_i, n, &nav, &prcopt, &sol, nullptr, nullptr, err_msg)) {
+    if (!pntpos(obss.data + obs_i, n, &nav, &param->prcopt, &sol, nullptr, nullptr, err_msg)) {
         printf("%s\n", err_msg);
         return;
     } else {
-        outsol(stdout, &sol, nullptr, &solopt);
+        outsol(stdout, &sol, nullptr, &param->solopt);
     }
 
     // alignment
@@ -143,7 +119,7 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
     // satellite pos
     std::vector<double> rs(6 * n, 0.0), dts(2 * n, 0.0), svar(n, 0.0);
     std::vector<int> svh(n, 0);
-    satposs(sol.time, obss.data + obs_i, n, &nav, prcopt.sateph, rs.data(), dts.data(), svar.data(), svh.data());
+    satposs(sol.time, obss.data + obs_i, n, &nav, param->prcopt.sateph, rs.data(), dts.data(), svar.data(), svh.data());
     double rcv_llh[3];
     ecef2pos(sol.rr, rcv_llh);
 
@@ -152,28 +128,28 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
         const obsd_t& obs = obss.data[oi];
         int sys_idx = SysIdx(satsys(obs.sat, nullptr));
         // filter
-        if (satexclude(obs.sat, svar[si], svh[si], &prcopt)) continue;
+        if (satexclude(obs.sat, svar[si], svh[si], &param->prcopt)) continue;
         double azel[2] = {0.0, PI / 2.0};
         double e[3];
         if (geodist(&rs[si * 6], sol.rr, e) < 0.0) continue;
-        if (satazel(rcv_llh, e, azel) < prcopt.elmin) continue;
-        if (testsnr(0, 0, azel[1], obs.SNR[0], &prcopt.snrmask)) continue;
+        if (satazel(rcv_llh, e, azel) < param->prcopt.elmin) continue;
+        if (testsnr(0, 0, azel[1], obs.SNR[0], &param->prcopt.snrmask)) continue;
 
         // iono and tro
         double iono_delay = 0.0, vion = 0.0, tro_delay = 0.0, vtrp = 0.0;
-        ionocorr(sol.time, &nav, obs.sat, rcv_llh, azel, prcopt.ionoopt, &iono_delay, &vion);
+        ionocorr(sol.time, &nav, obs.sat, rcv_llh, azel, param->prcopt.ionoopt, &iono_delay, &vion);
         const double freq = sat2freq(obs.sat, obs.code[0], &nav);
         const double lambda = CLIGHT / freq;
         iono_delay *= (FREQL1 / freq) * (FREQL1 / freq);
         vion *= (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq);
-        tropcorr(sol.time, &nav, rcv_llh, azel, prcopt.tropopt, &tro_delay, &vtrp);
+        tropcorr(sol.time, &nav, rcv_llh, azel, param->prcopt.tropopt, &tro_delay, &vtrp);
 
         // measure var
-        double varerr = rtklib::varerr(&prcopt, &obs, azel[1], satsys(obs.sat, nullptr));
+        double varerr = rtklib::varerr(&param->prcopt, &obs, azel[1], satsys(obs.sat, nullptr));
 
         // corrected range
         double vmeas = 0.0;
-        double psr = rtklib::prange(&obs, &nav, &prcopt, &vmeas);
+        double psr = rtklib::prange(&obs, &nav, &param->prcopt, &vmeas);
 
         // manage the sat track
         bool psr_valid = obs.P[0] > 0.0;
@@ -201,7 +177,7 @@ void RTKProcessor::ProcessMeasurements(const int& obs_i, const RtkState& lio_sta
             double dt = timediff(obs.time, last_obs.time);
             const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
             const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
-            if (std::abs(dcp - dpt) > 3 * prcopt.thresdop) {
+            if (std::abs(dcp - dpt) > 3 * param->prcopt.thresdop) {
                 arc_continu = false;
                 break;
             }
