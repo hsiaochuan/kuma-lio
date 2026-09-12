@@ -146,6 +146,33 @@ inline double varerr(const prcopt_t *opt, const obsd_t *obs, double el, int sys)
     return SQR(fact)*varr;
 }
 
+/* undifferenced carrier-phase measurement variance ---------------------------*/
+/* rtkpos.c's varerr() phase branch, stripped of the double-difference-only 2x factor,
+ * baseline term, clock term, and dual-receiver SNR handling -- this is a single phase
+ * observation from one receiver, not a DD residual */
+inline double varerr_phase(const prcopt_t *opt, const obsd_t *obs, double el, int sys)
+{
+    double fact=1.0,varr;
+
+    switch (sys) {
+        case SYS_GPS: fact *= EFACT_GPS; break;
+        case SYS_GLO: fact *= EFACT_GLO; break;
+        case SYS_GAL: fact *= EFACT_GAL; break;
+        case SYS_SBS: fact *= EFACT_SBS; break;
+        case SYS_CMP: fact *= EFACT_CMP; break;
+        case SYS_QZS: fact *= EFACT_QZS; break;
+        case SYS_IRN: fact *= EFACT_IRN; break;
+        default:      fact *= EFACT_GPS; break;
+    }
+    if (el<MIN_EL) el=MIN_EL;
+    /* var = fact^2*(a^2 + b^2/sin^2(el) [+ c^2*10^(0.1*max(snr_max-snr,0))]) */
+    varr=SQR(opt->err[1])+SQR(opt->err[2])/SQR(sin(el));
+    if (opt->err[6]>0.0) {  /* if snr term not zero, RTKLIB's own guard */
+        varr+=SQR(opt->err[6])*pow(10,0.1*MAX(opt->err[5]-obs->SNR[0],0));
+    }
+    return SQR(fact)*varr;
+}
+
 #undef SQR
 #undef ERR_CBIAS
 #undef MAX

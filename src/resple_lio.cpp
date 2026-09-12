@@ -216,7 +216,8 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
         const obsd_t& obs = obss.data[oi];
         // filter
         if (satexclude(obs.sat, svar[si], svh[si], &param->prcopt)) continue;
-        const int sys_idx = SysIdx(satsys(obs.sat, nullptr));
+        const int sys = satsys(obs.sat, nullptr);
+        const int sys_idx = SysIdx(sys);
         if (sys_idx < 0) continue;
         double azel[2] = {0.0, PI / 2.0};
         double e[3];
@@ -227,6 +228,7 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
         const double freq = sat2freq(obs.sat, obs.code[0], &nav);
         if (freq <= 0.0) continue;
         const double lambda = CLIGHT / freq;
+        const double phase_var_cur = rtklib::varerr_phase(&param->prcopt, &obs, azel[1], sys);
 
         // manage the sat track; phase and Doppler are signed, so only zero means missing
         bool psr_valid = obs.P[0] > 0.0;
@@ -296,38 +298,39 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
             sat_tracks_[obs.sat].sv_poss.push_back(sv);
             sat_tracks_[obs.sat].local_times.push_back(local_time);
             sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
+            sat_tracks_[obs.sat].phase_vars.push_back(phase_var_cur);
         } else {
             // clear the track
             sat_tracks_[obs.sat].obs_ids.clear();
             sat_tracks_[obs.sat].sv_poss.clear();
             sat_tracks_[obs.sat].local_times.clear();
             sat_tracks_[obs.sat].sv_dts.clear();
+            sat_tracks_[obs.sat].phase_vars.clear();
             // insert the one observation
             sat_tracks_[obs.sat].obs_ids.push_back(oi);
             sat_tracks_[obs.sat].sv_poss.push_back(sv);
             sat_tracks_[obs.sat].local_times.push_back(local_time);
             sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
+            sat_tracks_[obs.sat].phase_vars.push_back(phase_var_cur);
         }
-        // TDCP against the previous epoch, only once the local frame is tied to ECEF
+
         SatTrack& track = sat_tracks_[obs.sat];
         const int N = static_cast<int>(track.obs_ids.size());
         if (if_GNSS_aligned && param->tdcp_enable && arc_continu && N >= 2) {
-            for (int i = 0; i < N -1; ++i) {
-                const obsd_t& anchor_obs = obss.data[track.obs_ids[N - 2]];
-                const double sin_el = std::max(std::sin(azel[1]), 0.1);
-                TimeDiffCarrierPhaseData tdcp_data;
-                tdcp_data.time_ns = local_time;
-                tdcp_data.anchor_time_ns = track.local_times[i];
-                tdcp_data.sv_pos = sv;
-                tdcp_data.sv_pos_anchor = track.sv_poss[i];
-                tdcp_data.sv_dt = dts[si * 2 + 0];
-                tdcp_data.sv_dt_anchor = track.sv_dts[i];
-                tdcp_data.cp_diff = lambda * (obs.L[0] - anchor_obs.L[0]);
-                tdcp_data.sys_idx = sys_idx;
-                tdcp_data.var = param->tdcp_std * param->tdcp_std / (sin_el * sin_el);
-                tdcp_data.if_valid = true;
-                tdcp_meas.push_back(tdcp_data);
-            }
+            const int i = N - 2;
+            const obsd_t& anchor_obs = obss.data[track.obs_ids[i]];
+            TimeDiffCarrierPhaseData tdcp_data;
+            tdcp_data.time_ns = local_time;
+            tdcp_data.anchor_time_ns = track.local_times[i];
+            tdcp_data.sv_pos = sv;
+            tdcp_data.sv_pos_anchor = track.sv_poss[i];
+            tdcp_data.sv_dt = dts[si * 2 + 0];
+            tdcp_data.sv_dt_anchor = track.sv_dts[i];
+            tdcp_data.cp_diff = lambda * (obs.L[0] - anchor_obs.L[0]);
+            tdcp_data.sys_idx = sys_idx;
+            tdcp_data.var = track.phase_vars[i] + phase_var_cur;
+            tdcp_data.if_valid = true;
+            tdcp_meas.push_back(tdcp_data);
         }
     }  // for satellite
 
