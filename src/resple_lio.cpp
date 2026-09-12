@@ -248,15 +248,28 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
             }
             int last_oi = sat_tracks_[obs.sat].obs_ids.back();
             obsd_t& last_obs = obss.data[last_oi];
-            // bit 0 is a loss of lock; bit 1 (half cycle unresolved) is harmless unless it flips
-            if ((obs.LLI[0] & 0x1) != 0 || (obs.LLI[0] & 0x2) != (last_obs.LLI[0] & 0x2)) {
+            if ((obs.LLI[0] & LLI_SLIP) || (obs.LLI[0] & LLI_HALFC)) {
                 arc_continu = false;
                 break;
             }
+            // code change
+            if (last_obs.code[0] != obs.code[0]) {
+                arc_continu = false;
+                break;
+            }
+
+            // time diff
             double dt = timediff(obs.time, last_obs.time);
             if (dt <= 0.0 || dt > param->max_gap) {
                 arc_continu = false;
                 break;
+            }
+            if (last_obs.L[1] > 0.0 && obs.L[1] > 0.0) {
+                double last_gf = last_obs.L[0] - last_obs.L[1];
+                double cur_gf = obs.L[0] - obs.L[1];
+                if (std::abs(last_gf - cur_gf) > 3 * param->prcopt.thresdop) {
+                    arc_continu = false;
+                }
             }
             const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
             const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
