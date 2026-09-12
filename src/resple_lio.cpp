@@ -248,7 +248,9 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
             }
             int last_oi = sat_tracks_[obs.sat].obs_ids.back();
             obsd_t& last_obs = obss.data[last_oi];
-            if ((obs.LLI[0] & LLI_SLIP) || (obs.LLI[0] & LLI_HALFC)) {
+            // bit 0 (slip) matters on its own; bit 1 (half-cycle unresolved) only matters if it
+            // flipped since the last epoch -- staying set is harmless (RTKLIB detslp_ll)
+            if ((obs.LLI[0] & LLI_SLIP) || ((obs.LLI[0] & LLI_HALFC) != (last_obs.LLI[0] & LLI_HALFC))) {
                 arc_continu = false;
                 break;
             }
@@ -265,10 +267,17 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
                 break;
             }
             if (last_obs.L[1] > 0.0 && obs.L[1] > 0.0) {
-                double last_gf = last_obs.L[0] - last_obs.L[1];
-                double cur_gf = obs.L[0] - obs.L[1];
-                if (std::abs(last_gf - cur_gf) > 3 * param->prcopt.thresdop) {
-                    arc_continu = false;
+                // geometry-free = L1*lambda1 - L2*lambda2 (RTKLIB gfobs); each frequency needs its
+                // own wavelength, or this never cancels the geometric range and fires every epoch
+                const double freq2 = sat2freq(obs.sat, obs.code[1], &nav);
+                if (freq2 > 0.0) {
+                    const double lambda2 = CLIGHT / freq2;
+                    double last_gf = last_obs.L[0] * lambda - last_obs.L[1] * lambda2;
+                    double cur_gf = obs.L[0] * lambda - obs.L[1] * lambda2;
+                    if (std::abs(last_gf - cur_gf) > 3 * param->prcopt.thresdop) {
+                        arc_continu = false;
+                        break;
+                    }
                 }
             }
             const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
