@@ -175,7 +175,7 @@ class RESPLE_LIO {
     obs_t obss{};
     nav_t nav{};
     std::unordered_map<int, SatTrack> sat_tracks_;
-    int64_t last_epoch_time_ns = -1;  // anchor epoch of the next TDCP batch
+
 
     Vec4 clk = Vec4::Zero();
     Vec4 clk_anchor = Vec4::Zero();  // receiver clocks at the anchor epoch, held fixed

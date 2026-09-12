@@ -209,9 +209,7 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
     double rcv_llh[3];
     ecef2pos(sol.rr, rcv_llh);
 
-    // every TDCP of this epoch shares one anchor epoch, so they share one clock anchor
-    const int64_t anchor_time_ns = last_epoch_time_ns;
-    last_epoch_time_ns = local_time;
+
 
     for (int si = 0; si < n; ++si) {
         int oi = ei + si;
@@ -246,10 +244,12 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
                 arc_continu = false;
                 break;
             }
+            if (sat_tracks_[obs.sat].obs_ids.size() >= 20) {
+                arc_continu = false;
+                break;
+            }
             int last_oi = sat_tracks_[obs.sat].obs_ids.back();
             obsd_t& last_obs = obss.data[last_oi];
-            // bit 0 (slip) matters on its own; bit 1 (half-cycle unresolved) only matters if it
-            // flipped since the last epoch -- staying set is harmless (RTKLIB detslp_ll)
             if ((obs.LLI[0] & LLI_SLIP) || ((obs.LLI[0] & LLI_HALFC) != (last_obs.LLI[0] & LLI_HALFC))) {
                 arc_continu = false;
                 break;
@@ -267,6 +267,7 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
                 break;
             }
 
+            // geometry-free
             if (param->prcopt.thresslip > 0.0 && last_obs.L[1] > 0.0 && obs.L[1] > 0.0) {
                 const double freq2 = sat2freq(obs.sat, obs.code[1], &nav);
                 if (freq2 > 0.0) {
@@ -279,6 +280,8 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
                     }
                 }
             }
+
+            // doppler-phase
             const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
             const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
             if (std::abs(dcp - dpt) > param->prcopt.thresdop) {
@@ -308,22 +311,23 @@ bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
         // TDCP against the previous epoch, only once the local frame is tied to ECEF
         SatTrack& track = sat_tracks_[obs.sat];
         const int N = static_cast<int>(track.obs_ids.size());
-        if (if_GNSS_aligned && param->tdcp_enable && arc_continu && N >= 2 &&
-            track.local_times[N - 2] == anchor_time_ns) {
-            const obsd_t& anchor_obs = obss.data[track.obs_ids[N - 2]];
-            const double sin_el = std::max(std::sin(azel[1]), 0.1);
-            TimeDiffCarrierPhaseData tdcp_data;
-            tdcp_data.time_ns = local_time;
-            tdcp_data.anchor_time_ns = anchor_time_ns;
-            tdcp_data.sv_pos = sv;
-            tdcp_data.sv_pos_anchor = track.sv_poss[N - 2];
-            tdcp_data.sv_dt = dts[si * 2 + 0];
-            tdcp_data.sv_dt_anchor = track.sv_dts[N - 2];
-            tdcp_data.cp_diff = lambda * (obs.L[0] - anchor_obs.L[0]);
-            tdcp_data.sys_idx = sys_idx;
-            tdcp_data.var = param->tdcp_std * param->tdcp_std / (sin_el * sin_el);
-            tdcp_data.if_valid = true;
-            tdcp_meas.push_back(tdcp_data);
+        if (if_GNSS_aligned && param->tdcp_enable && arc_continu && N >= 2) {
+            for (int i = 0; i < N -1; ++i) {
+                const obsd_t& anchor_obs = obss.data[track.obs_ids[N - 2]];
+                const double sin_el = std::max(std::sin(azel[1]), 0.1);
+                TimeDiffCarrierPhaseData tdcp_data;
+                tdcp_data.time_ns = local_time;
+                tdcp_data.anchor_time_ns = track.local_times[i];
+                tdcp_data.sv_pos = sv;
+                tdcp_data.sv_pos_anchor = track.sv_poss[i];
+                tdcp_data.sv_dt = dts[si * 2 + 0];
+                tdcp_data.sv_dt_anchor = track.sv_dts[i];
+                tdcp_data.cp_diff = lambda * (obs.L[0] - anchor_obs.L[0]);
+                tdcp_data.sys_idx = sys_idx;
+                tdcp_data.var = param->tdcp_std * param->tdcp_std / (sin_el * sin_el);
+                tdcp_data.if_valid = true;
+                tdcp_meas.push_back(tdcp_data);
+            }
         }
     }  // for satellite
 
