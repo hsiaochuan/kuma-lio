@@ -47,30 +47,34 @@ void RESPLE_LIO::Init() {
     a_mat.block(BA_OFFSET, BA_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
     a_mat.block(BG_OFFSET, BG_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
 
+    // GNSS states are frozen at a placeholder covariance until InitGnssState()
+    cov_rcp.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
+    a_mat.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
+
     // ikd tree
     kd_tree = std::make_shared<KD_TREE<faster_lio::Point>>();
     kd_tree->set_downsample_param(param->ds_lm_voxel);
 }
+// receiver clock index; QZSS keeps GPS time
 static int SysIdx(int sys) {
-    if (sys == SYS_GPS) return 0;
+    if (sys == SYS_GPS || sys == SYS_QZS) return 0;
     if (sys == SYS_GLO) return 1;
     if (sys == SYS_GAL) return 2;
     if (sys == SYS_CMP) return 3;
-    if (sys == SYS_QZS) return 4;
-    throw std::runtime_error("unknown system");
+    return -1;
 }
 
-static bool Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu,
-    const std::vector<Vec3> & locals, const std::vector<Vec3> & ecefs) {
+static bool Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu, const std::vector<Vec3>& locals,
+                      const std::vector<Vec3>& ecefs, double min_travel) {
     CHECK(locals.size() == ecefs.size());
     int N = locals.size();
     if (N < 3) return false;
-    double travel_len = 0.0;
-    for (int i = 0; i < locals.size() - 1; ++i) {
-        travel_len += (locals[i + 1] - locals[i]).norm();
+    // the yaw needs real horizontal spread; summed path length is fooled by jitter on a vertical climb
+    double spread = 0.0;
+    for (int i = 1; i < N; ++i) {
+        spread = std::max(spread, (locals[i] - locals[0]).head<2>().norm());
     }
-    if (travel_len < 5.0)
-        return false;
+    if (spread < min_travel) return false;
     Vec3 mean_l(Vec3::Zero());
     Vec3 mean_e(Vec3::Zero());
     for (int i = 0; i < N; ++i) {
@@ -116,133 +120,13 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
     }
 
     sol_t sol{};
+    bool gnss_epoch_ok = false;
+    tdcp_meas.clear();
+    psr_meas.clear();
     if (measures.obs_id > 0) {
-        // SPP
-        tdcp_meas.clear();
-        psr_meas.clear();
-        int ei = measures.obs_id;
-        int64_t local_time = measures.obs_time_ns;
-        int n = 0;
-        while (std::abs(timediff(obss.data[ei].time, obss.data[ei + n].time)) < DTTOL) ++n;
-
-        char err_msg[128];
-        if (!pntpos(obss.data + ei, n, &nav, &param->prcopt, &sol, nullptr, nullptr, err_msg)) {
-            printf("%s\n", err_msg);
-        } else {
-            outsol(stdout, &sol, nullptr, &param->solopt);
-        }
-
-        // satellite pos
-        std::vector<double> rs(6 * n, 0.0), dts(2 * n, 0.0), svar(n, 0.0);
-        std::vector<int> svh(n, 0);
-        satposs(sol.time, obss.data + ei, n, &nav, param->prcopt.sateph, rs.data(), dts.data(), svar.data(),
-                svh.data());
-        double rcv_llh[3];
-        ecef2pos(sol.rr, rcv_llh);
-
-        for (int si = 0; si < n; ++si) {
-            int oi = ei + si;
-            const obsd_t& obs = obss.data[oi];
-            // filter
-            if (satexclude(obs.sat, svar[si], svh[si], &param->prcopt)) continue;
-            double azel[2] = {0.0, PI / 2.0};
-            double e[3];
-            if (geodist(&rs[si * 6], sol.rr, e) < 0.0) continue;
-            if (satazel(rcv_llh, e, azel) < param->prcopt.elmin) continue;
-            if (testsnr(0, 0, azel[1], obs.SNR[0], &param->prcopt.snrmask)) continue;
-
-            // iono and tro
-            double iono_delay = 0.0, vion = 0.0, tro_delay = 0.0, vtrp = 0.0;
-            ionocorr(sol.time, &nav, obs.sat, rcv_llh, azel, param->prcopt.ionoopt, &iono_delay, &vion);
-            const double freq = sat2freq(obs.sat, obs.code[0], &nav);
-            const double lambda = CLIGHT / freq;
-            iono_delay *= (FREQL1 / freq) * (FREQL1 / freq);
-            vion *= (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq) * (FREQL1 / freq);
-            tropcorr(sol.time, &nav, rcv_llh, azel, param->prcopt.tropopt, &tro_delay, &vtrp);
-
-            // measure var
-            double varerr = rtklib::varerr(&param->prcopt, &obs, azel[1], satsys(obs.sat, nullptr));
-
-            // corrected range
-            double vmeas = 0.0;
-            double psr = rtklib::prange(&obs, &nav, &param->prcopt, &vmeas);
-
-            // manage the sat track
-            bool psr_valid = obs.P[0] > 0.0;
-            bool cp_valid = obs.L[0] > 0.0;
-            bool dopp_valid = obs.D[0] > 0.0;
-            bool obs_valid = psr_valid && cp_valid && dopp_valid;
-
-            bool arc_continu = true;
-            do {
-                if (obs_valid) {
-                    arc_continu = false;
-                    break;
-                }
-                if (sat_tracks_[obs.sat].obs_ids.empty()) {
-                    arc_continu = false;
-                    break;
-                }
-                if ((obs.LLI[0] & 0x3) != 0) {
-                    arc_continu = false;
-                    break;
-                }
-
-                int last_oi = sat_tracks_[obs.sat].obs_ids.back();
-                obsd_t& last_obs = obss.data[last_oi];
-                double dt = timediff(obs.time, last_obs.time);
-                const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
-                const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
-                if (std::abs(dcp - dpt) > 3 * param->prcopt.thresdop) {
-                    arc_continu = false;
-                    break;
-                }
-            } while (false);
-
-            Eigen::Vector3d sv(rs[si * 6], rs[si * 6 + 1], rs[si * 6 + 2]);
-            if (arc_continu) {
-                int last_oi = sat_tracks_[obs.sat].obs_ids.back();
-                obsd_t& last_obs = obss.data[last_oi];
-                sat_tracks_[obs.sat].obs_ids.push_back(oi);
-                sat_tracks_[obs.sat].sv_poss.push_back(sv);
-                int N = sat_tracks_[obs.sat].obs_ids.size();
-                sat_tracks_[obs.sat].hatch =
-                    psr / N + (N - 1.0) / N * (sat_tracks_[obs.sat].hatch + obs.L[0] * lambda - last_obs.L[0] * lambda);
-                sat_tracks_[obs.sat].local_times.push_back(local_time);
-                sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
-            } else {
-                // clear the track
-                sat_tracks_[obs.sat].obs_ids.clear();
-                sat_tracks_[obs.sat].sv_poss.clear();
-                sat_tracks_[obs.sat].hatch = 0.0;
-                sat_tracks_[obs.sat].local_times.clear();
-                sat_tracks_[obs.sat].sv_dts.clear();
-                // insert the one observation
-                sat_tracks_[obs.sat].obs_ids.push_back(oi);
-                sat_tracks_[obs.sat].sv_poss.push_back(sv);
-                sat_tracks_[obs.sat].hatch = psr;
-                sat_tracks_[obs.sat].local_times.push_back(local_time);
-                sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
-            }
-            // tdcp factor
-            SatTrack& sat_track = sat_tracks_[obs.sat];
-            for (int i = 0; i < sat_track.obs_ids.size() - 1; ++i) {
-                TimeDiffCarrierPhaseData tdcp_data;
-                tdcp_data.sv_pos = sv;
-                tdcp_data.sv_dt = dts[si * 2 + 0];
-                tdcp_data.time_ns = local_time;
-            }
-
-            // psr factor
-            PsrData psr_data;
-            psr_data.sv_pos = sv;
-            psr_data.sv_dt = dts[si * 2 + 0];
-            psr_data.ion_delay = iono_delay;
-            psr_data.tro_delay = tro_delay;
-            psr_data.noise_var = svar[si] + vmeas + vion + vtrp + varerr;
-            psr_data.psr_measure = sat_tracks_[obs.sat].hatch;
-            psr_meas.push_back(psr_data);
-        }  // for satellite
+        gnss_epoch_ok = ProcessGnssEpoch(measures.obs_id, measures.obs_time_ns, sol);
+        if (!tdcp_meas.empty())
+            PrepareTdCpEpoch();
     }
 
     // add to imu
@@ -282,33 +166,222 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
         accum_points.push_back(point);
         accum_nearest_points.push_back(pt_meas[i].near_points);
     }
-    if (accum_points.size() < 2) return;
-    int64_t accum_points_interval = accum_points.back().GetTimeNs() - accum_points.front().GetTimeNs();
-    if (accum_points_interval > S_TO_NS(0.1)) {
-        mapIncremental();
-        LaserMapFovSegment();
-        LOG(INFO) << "Add Points: " << accum_points.size();
-        accum_points.clear();
-        accum_nearest_points.clear();
-    }
-
-    if (measures.obs_id > 0 && sol.stat != SOLQ_NONE && !if_GNSS_aligned) {
-        static std::vector<Vec3> locals;
-        static std::vector<Vec3> ecefs;
-        Vec3 ecef(sol.rr[0], sol.rr[1], sol.rr[2]);
-        Vec3 local = spl.itpPosition(measures.obs_time_ns, nullptr);
-        if (locals.empty() || (locals.back() - local).norm() > 0.3) {
-            locals.push_back(local);
-            ecefs.push_back(ecef);
-            if_GNSS_aligned = Alignment(R_ecef_enu, t_ecef_enu, locals, ecefs);
+    if (accum_points.size() >= 2) {
+        int64_t accum_points_interval = accum_points.back().GetTimeNs() - accum_points.front().GetTimeNs();
+        if (accum_points_interval > S_TO_NS(0.1)) {
+            mapIncremental();
+            LaserMapFovSegment();
+            LOG(INFO) << "Add Points: " << accum_points.size();
+            accum_points.clear();
+            accum_nearest_points.clear();
         }
     }
+
+    if (gnss_epoch_ok && !if_GNSS_aligned) {
+        // align the antenna, not the IMU, with the SPP fix
+        Eigen::Isometry3d pose = spl.Interpolate(measures.obs_time_ns);
+        Vec3 local = pose * param->level_arm;
+        Vec3 ecef(sol.rr[0], sol.rr[1], sol.rr[2]);
+        if (align_locals.empty() || (align_locals.back() - local).norm() > 0.3) {
+            align_locals.push_back(local);
+            align_ecefs.push_back(ecef);
+            if (Alignment(R_ecef_enu_init, t_ecef_enu, align_locals, align_ecefs, param->ali_min_travel)) {
+                InitGnssState(sol);
+            }
+        }
+    }
+}
+
+bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
+    int n = 0;
+    while (ei + n < obss.n && std::abs(timediff(obss.data[ei].time, obss.data[ei + n].time)) < DTTOL) ++n;
+
+    char err_msg[128];
+    if (!pntpos(obss.data + ei, n, &nav, &param->prcopt, &sol, nullptr, nullptr, err_msg)) {
+        LOG(INFO) << "SPP failed: " << err_msg;
+        return false;
+    }
+
+    // satellite pos
+    std::vector<double> rs(6 * n, 0.0), dts(2 * n, 0.0), svar(n, 0.0);
+    std::vector<int> svh(n, 0);
+    satposs(sol.time, obss.data + ei, n, &nav, param->prcopt.sateph, rs.data(), dts.data(), svar.data(), svh.data());
+    double rcv_llh[3];
+    ecef2pos(sol.rr, rcv_llh);
+
+    // every TDCP of this epoch shares one anchor epoch, so they share one clock anchor
+    const int64_t anchor_time_ns = last_epoch_time_ns;
+    last_epoch_time_ns = local_time;
+
+    for (int si = 0; si < n; ++si) {
+        int oi = ei + si;
+        const obsd_t& obs = obss.data[oi];
+        // filter
+        if (satexclude(obs.sat, svar[si], svh[si], &param->prcopt)) continue;
+        const int sys_idx = SysIdx(satsys(obs.sat, nullptr));
+        if (sys_idx < 0) continue;
+        double azel[2] = {0.0, PI / 2.0};
+        double e[3];
+        if (geodist(&rs[si * 6], sol.rr, e) < 0.0) continue;
+        if (satazel(rcv_llh, e, azel) < param->prcopt.elmin) continue;
+        if (testsnr(0, 0, azel[1], obs.SNR[0], &param->prcopt.snrmask)) continue;
+
+        const double freq = sat2freq(obs.sat, obs.code[0], &nav);
+        if (freq <= 0.0) continue;
+        const double lambda = CLIGHT / freq;
+
+        // manage the sat track; phase and Doppler are signed, so only zero means missing
+        bool psr_valid = obs.P[0] > 0.0;
+        bool cp_valid = obs.L[0] != 0.0;
+        bool dopp_valid = obs.D[0] != 0.0;
+        bool obs_valid = psr_valid && cp_valid && dopp_valid;
+
+        bool arc_continu = true;
+        do {
+            if (!obs_valid) {
+                arc_continu = false;
+                break;
+            }
+            if (sat_tracks_[obs.sat].obs_ids.empty()) {
+                arc_continu = false;
+                break;
+            }
+            int last_oi = sat_tracks_[obs.sat].obs_ids.back();
+            obsd_t& last_obs = obss.data[last_oi];
+            // bit 0 is a loss of lock; bit 1 (half cycle unresolved) is harmless unless it flips
+            if ((obs.LLI[0] & 0x1) != 0 || (obs.LLI[0] & 0x2) != (last_obs.LLI[0] & 0x2)) {
+                arc_continu = false;
+                break;
+            }
+            double dt = timediff(obs.time, last_obs.time);
+            if (dt <= 0.0 || dt > param->max_gap) {
+                arc_continu = false;
+                break;
+            }
+            const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
+            const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
+            if (std::abs(dcp - dpt) > 3 * param->prcopt.thresdop) {
+                arc_continu = false;
+                break;
+            }
+        } while (false);
+
+        Eigen::Vector3d sv(rs[si * 6], rs[si * 6 + 1], rs[si * 6 + 2]);
+        if (arc_continu) {
+            sat_tracks_[obs.sat].obs_ids.push_back(oi);
+            sat_tracks_[obs.sat].sv_poss.push_back(sv);
+            sat_tracks_[obs.sat].local_times.push_back(local_time);
+            sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
+        } else {
+            // clear the track
+            sat_tracks_[obs.sat].obs_ids.clear();
+            sat_tracks_[obs.sat].sv_poss.clear();
+            sat_tracks_[obs.sat].local_times.clear();
+            sat_tracks_[obs.sat].sv_dts.clear();
+            // insert the one observation
+            sat_tracks_[obs.sat].obs_ids.push_back(oi);
+            sat_tracks_[obs.sat].sv_poss.push_back(sv);
+            sat_tracks_[obs.sat].local_times.push_back(local_time);
+            sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
+        }
+        // TDCP against the previous epoch, only once the local frame is tied to ECEF
+        SatTrack& track = sat_tracks_[obs.sat];
+        const int N = static_cast<int>(track.obs_ids.size());
+        if (if_GNSS_aligned && param->tdcp_enable && arc_continu && N >= 2 &&
+            track.local_times[N - 2] == anchor_time_ns) {
+            const obsd_t& anchor_obs = obss.data[track.obs_ids[N - 2]];
+            const double sin_el = std::max(std::sin(azel[1]), 0.1);
+            TimeDiffCarrierPhaseData tdcp_data;
+            tdcp_data.time_ns = local_time;
+            tdcp_data.anchor_time_ns = anchor_time_ns;
+            tdcp_data.sv_pos = sv;
+            tdcp_data.sv_pos_anchor = track.sv_poss[N - 2];
+            tdcp_data.sv_dt = dts[si * 2 + 0];
+            tdcp_data.sv_dt_anchor = track.sv_dts[N - 2];
+            tdcp_data.cp_diff = lambda * (obs.L[0] - anchor_obs.L[0]);
+            tdcp_data.sys_idx = sys_idx;
+            tdcp_data.var = param->tdcp_std * param->tdcp_std / (sin_el * sin_el);
+            tdcp_data.if_valid = true;
+            tdcp_meas.push_back(tdcp_data);
+        }
+    }  // for satellite
+
+    return true;
+}
+
+void RESPLE_LIO::PrepareTdCpEpoch() {
+    // Residual without the receiver clock step. The step is common to every system (the
+    // inter-system biases cancel between epochs), so the median across satellites estimates it.
+    const int num = static_cast<int>(tdcp_meas.size());
+    std::vector<double> res(num), var_innov(num);
+    Eigen::Matrix<double, 1, XSIZE> H_cur, H_anchor;
+    for (int i = 0; i < num; ++i) {
+        const TimeDiffCarrierPhaseData& data = tdcp_meas[i];
+        const double range = AntennaRange(data.time_ns, data.sv_pos, &H_cur);
+        const double range_anchor = AntennaRange(data.anchor_time_ns, data.sv_pos_anchor, &H_anchor);
+        res[i] = data.cp_diff + CLIGHT * (data.sv_dt - data.sv_dt_anchor) - (range - range_anchor);
+        // innovation variance without the clock column: the median below takes the clock step out
+        const Eigen::Matrix<double, 1, XSIZE> h = H_cur - H_anchor;
+        var_innov[i] = (h * cov_rcp * h.transpose())(0) + data.var;
+    }
+    std::vector<double> sorted = res;
+    std::nth_element(sorted.begin(), sorted.begin() + num / 2, sorted.end());
+    const double clk_step = sorted[num / 2];
+
+    // hold the clocks of epoch k as the anchor and predict epoch k+1 from the median step
+    clk_anchor = clk;
+    clk.array() += clk_step;
+
+    // LIVO-prior chi-square test (FAST-LIVGO eq. 14) on each clock-free innovation
+    int num_valid = 0;
+    double sq_sum = 0.0;
+    for (int i = 0; i < num; ++i) {
+        const double r = res[i] - clk_step;
+        tdcp_meas[i].if_valid = r * r / var_innov[i] < param->tdcp_chi2 && std::abs(r) < param->tdcp_outlier;
+        if (tdcp_meas[i].if_valid) {
+            ++num_valid;
+            sq_sum += r * r;
+        }
+    }
+    if (num_valid < param->tdcp_min_sat) {
+        for (auto& d : tdcp_meas) d.if_valid = false;
+    }
+    LOG(INFO) << "TDCP: " << num_valid << "/" << num << " valid, rms " << std::sqrt(sq_sum / std::max(num_valid, 1))
+              << " m, clock step " << clk_step << " m, theta_ecef_enu " << theta_ecef_enu;
+}
+
+void RESPLE_LIO::InitGnssState(const sol_t& sol) {
+    // pntpos reports the GPS clock and the GLO/GAL/BDS offsets from it
+    clk(0) = CLIGHT * sol.dtr[0];
+    clk(1) = CLIGHT * (sol.dtr[0] + sol.dtr[1]);
+    clk(2) = CLIGHT * (sol.dtr[0] + sol.dtr[2]);
+    clk(3) = CLIGHT * (sol.dtr[0] + sol.dtr[3]);
+    clk_anchor = clk;
+    theta_ecef_enu = 0.0;
+
+    cov_rcp.middleRows<GNSS_SIZE>(CLK_OFFSET).setZero();
+    cov_rcp.middleCols<GNSS_SIZE>(CLK_OFFSET).setZero();
+    cov_rcp.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
+        param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
+    cov_rcp(ROT_OFFSET, ROT_OFFSET) = param->std_ext_yaw_init * param->std_ext_yaw_init;
+    cov_rcp.block<3, 3>(TRANS_OFFSET, TRANS_OFFSET) =
+        param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
+
+    // one receiver oscillator drives all four clocks, plus a slow per-system bias
+    const double dt_s = param->dt_ns * 1e-9;
+    cov_sys.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
+        (param->std_clk * param->std_clk * Eigen::Matrix4d::Ones() +
+         param->std_isb * param->std_isb * Eigen::Matrix4d::Identity()) * dt_s;
+
+    if_GNSS_aligned = true;
+    LOG(INFO) << "GNSS aligned with " << align_locals.size() << " SPP fixes, t_ecef_enu " << t_ecef_enu.transpose()
+              << ", clk " << clk.transpose();
 }
 
 Eigen::Matrix<double, RESPLE_LIO::XSIZE, 1> RESPLE_LIO::getState() {
     Eigen::Matrix<double, CP_SIZE, 1> cps_win = spl.getRCPs();
     Eigen::Matrix<double, XSIZE, 1> state;
-    state << cps_win, ba, bg;
+    state << cps_win, ba, bg, clk, theta_ecef_enu, t_ecef_enu;
     return state;
 }
 
@@ -418,10 +491,58 @@ void RESPLE_LIO::IterativeUpdate() {
         }
     }  // iter
     double update_time = timer.ElapsedMiniSeconds();
-    LOG(INFO) << "Points: " << pt_meas.size() << " Imu: " << imu_meas.size() << " Effect Points: " << num_eff
+    LOG(INFO) << "Points: " << pt_meas.size()
+              << " Imu: " << imu_meas.size()
+              << " Effect Points: " << num_eff
+              << " GNSS " << tdcp_meas.size()
               << " Time: " << update_time;
 }
-void RESPLE_LIO::prepTdCp(TimeDiffCarrierPhaseData& tdcp_data) {}
+double RESPLE_LIO::AntennaRange(int64_t t_ns, const Vec3& sv_pos, Eigen::Matrix<double, 1, XSIZE>* H) const {
+    Eigen::Quaterniond q_itp;
+    Jacobian43 J_ortdel;
+    Jacobian J_pos;
+    spl.itpQuaternion(t_ns, &q_itp, nullptr, H ? &J_ortdel : nullptr);
+    const Vec3 p_itp = spl.itpPosition(t_ns, H ? &J_pos : nullptr);
+    const Vec3 p_ant = q_itp * param->level_arm + p_itp;
+    const Mat3 R = RotEcefEnu();
+    const Vec3 p_ecef = R * p_ant + t_ecef_enu;
+    double e[3];
+    const double range = geodist(sv_pos.data(), p_ecef.data(), e);
+    if (!H) return range;
+
+    // d(range)/d(receiver ECEF), Sagnac term included
+    const Eigen::RowVector3d d_range =
+        -Eigen::Map<const Vec3>(e).transpose() + Eigen::RowVector3d(-OMGE / CLIGHT * sv_pos.y(), OMGE / CLIGHT * sv_pos.x(), 0.0);
+    const Eigen::RowVector3d d_range_local = d_range * R;
+    Eigen::Matrix<double, 3, 4> drot;
+    dRot(param->level_arm, q_itp, drot);
+    const Eigen::Matrix<double, 1, 4> tmp = d_range_local * drot;
+
+    H->setZero();
+
+    for (int i = 0; i < 4; i++) {
+        H->block<1, 3>(0, i * 6) = d_range_local * J_pos.d_val_d_knot[i];
+        H->block<1, 3>(0, i * 6 + 3) = tmp * J_ortdel.d_val_d_knot[i];
+    }
+    // R_init * Rz(yaw) * v, d/d(yaw) = R * (ez x v) since Rz(yaw) commutes with its own generator
+    H->block<1, 1>(0, ROT_OFFSET) = d_range_local * Vec3::UnitZ().cross(p_ant);
+    H->block<1, 3>(0, TRANS_OFFSET) = d_range;
+    return range;
+}
+
+void RESPLE_LIO::prepTdCp(TimeDiffCarrierPhaseData& tdcp_data) const {
+    if (!tdcp_data.if_valid) return;
+    // lambda*dPhi + c*d(dts) = (range_{k+1} - range_k) + (clk_{k+1} - clk_k), clk_k held at the anchor
+    Eigen::Matrix<double, 1, XSIZE> H_cur, H_anchor;
+    const double range = AntennaRange(tdcp_data.time_ns, tdcp_data.sv_pos, &H_cur);
+    const double range_anchor = AntennaRange(tdcp_data.anchor_time_ns, tdcp_data.sv_pos_anchor, &H_anchor);
+    H_anchor.leftCols<24>().setZero();
+    const int s = tdcp_data.sys_idx;
+    const double pred = range - range_anchor + clk(s) - clk_anchor(s);
+    tdcp_data.z = tdcp_data.cp_diff + CLIGHT * (tdcp_data.sv_dt - tdcp_data.sv_dt_anchor) - pred;
+    tdcp_data.H = H_cur - H_anchor;
+    tdcp_data.H(0, CLK_OFFSET + s) = 1.0;
+}
 void RESPLE_LIO::prepPsr(PsrData& psr_data) {}
 
 void RESPLE_LIO::prepIMU(ImuData& imu_data) {
@@ -435,7 +556,7 @@ void RESPLE_LIO::prepIMU(ImuData& imu_data) {
     Eigen::Vector3d a_w = a_w_no_g + gravity;
     Eigen::Matrix3d RT = q_itp.inverse().toRotationMatrix();
     Eigen::Matrix<double, 3, 4> drot;
-    faster_lio::drot(a_w, q_itp, drot);
+    faster_lio::dRotInv(a_w, q_itp, drot);
     Eigen::Matrix<double, 6, XSIZE> Hi = Eigen::Matrix<double, 6, XSIZE>::Zero();
     // map knot Jacobians into the recursive-window columns; measurements in an
     // older segment touch a knot outside the window, whose column is dropped
@@ -486,7 +607,7 @@ void RESPLE_LIO::prepLiDAR(PointData& pt_data) const {
         pt_data.z = pt_data.ppl_normal.dot(pt_w) + pt_data.ppl_d;
 
         Eigen::Matrix<double, 3, 4> drot;
-        drotInv(pt_data.point_body, q_itp, drot);
+        dRot(pt_data.point_body, q_itp, drot);
         Eigen::Matrix<double, 1, 4> tmp = pt_data.ppl_normal.transpose() * drot;
         for (int i = 0; i < 4; i++) {
             Hi.block(0, i * 6, 1, 3) = pt_data.ppl_normal.transpose() * J_pos.d_val_d_knot[i];
@@ -523,13 +644,15 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     for (size_t i = 0; i < imu_meas.size(); i++) {
         prepIMU(imu_meas[i]);
     }
+    int num_tdcp = 0;
     for (int i = 0; i < tdcp_meas.size(); i++) {
         prepTdCp(tdcp_meas[i]);
+        if (tdcp_meas[i].if_valid) ++num_tdcp;
     }
     for (int i = 0; i < psr_meas.size(); ++i) {
         prepPsr(psr_meas[i]);
     }
-    int dim_meas = 6 * imu_meas.size() + eff_lidar_num;
+    int dim_meas = 6 * imu_meas.size() + eff_lidar_num + num_tdcp;
     Eigen::Matrix<double, Eigen::Dynamic, XSIZE> H(dim_meas, XSIZE);
     Eigen::Matrix<double, Eigen::Dynamic, 1> z(dim_meas, 1);
     Eigen::Matrix<double, Eigen::Dynamic, 1> mat_cov_inv(dim_meas, 1);
@@ -553,6 +676,13 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
         mat_cov_inv.segment<6>(idx_offset) = cov_imu_inv;
         idx_offset += 6;
     }
+    for (const TimeDiffCarrierPhaseData& tdcp_data : tdcp_meas) {
+        if (!tdcp_data.if_valid) continue;
+        z(idx_offset) = tdcp_data.z;
+        H.row(idx_offset) = tdcp_data.H;
+        mat_cov_inv(idx_offset) = 1.0 / tdcp_data.var;
+        idx_offset++;
+    }
     Update(z, mat_cov_inv, H, x_prop, P_prop);
 }
 
@@ -572,6 +702,9 @@ void RESPLE_LIO::UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd) {
     }
     ba = xupd.segment(BA_OFFSET, 3);
     bg = xupd.segment(BG_OFFSET, 3);
+    clk = xupd.segment<4>(CLK_OFFSET);
+    theta_ecef_enu = xupd(ROT_OFFSET);
+    t_ecef_enu = xupd.segment<3>(TRANS_OFFSET);
 }
 
 void RESPLE_LIO::LaserMapFovSegment() {

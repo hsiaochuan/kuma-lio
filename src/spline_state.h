@@ -17,7 +17,7 @@ typedef JacobianStruct<Eigen::Matrix<double, 4, 3>> Jacobian43;
 typedef JacobianStruct<Eigen::Matrix3d> Jacobian33;
 
 template <typename Derived>
-inline void drot(const Eigen::MatrixBase<Derived>& v,
+inline void dRotInv(const Eigen::MatrixBase<Derived>& v,
                   const Eigen::Quaternion<typename Derived::Scalar>& q,
                   Eigen::Matrix<typename Derived::Scalar, 3, 4>& J) {
     using Scalar = typename Derived::Scalar;
@@ -35,7 +35,7 @@ inline void drot(const Eigen::MatrixBase<Derived>& v,
 
 
 template <typename Derived>
-inline void drotInv(const Eigen::MatrixBase<Derived>& v,
+inline void dRot(const Eigen::MatrixBase<Derived>& v,
                      const Eigen::Quaternion<typename Derived::Scalar>& q,
                      Eigen::Matrix<typename Derived::Scalar, 3, 4>& J) {
     using Scalar = typename Derived::Scalar;

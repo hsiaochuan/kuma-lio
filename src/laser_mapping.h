@@ -60,7 +60,7 @@ class LaserMapping {
     /// modules
     std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
-    std::shared_ptr<RTKProcessor> rtk_pro = nullptr;
+
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
     ros::Subscriber sub_img_;

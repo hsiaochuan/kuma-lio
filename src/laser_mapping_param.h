@@ -89,6 +89,18 @@ class LaserMappingParam {
     int slw_size = 200;
     double ali_min_travel = 5.0;
     double lio_pos_std = 0.1;
+
+    // TDCP update inside RESPLE_LIO
+    bool tdcp_enable = true;
+    double tdcp_std = 0.02;           // TDCP noise at zenith, scaled by 1/sin(el) [m]
+    double tdcp_outlier = 0.5;        // |residual - epoch median| hard cap [m]
+    double tdcp_chi2 = 10.83;         // chi-square(1) gate on the normalized innovation, 99.9%
+    int tdcp_min_sat = 5;             // skip the epoch below this many TDCP rows
+    double std_clk = 10.0;            // common receiver clock random walk [m/sqrt(s)]
+    double std_isb = 0.01;            // per-system inter-system bias random walk [m/sqrt(s)]
+    double std_clk_init = 10.0;       // receiver clock std at alignment [m]
+    double std_ext_yaw_init = 0.2;    // yaw std of theta at alignment [rad]
+    double std_ext_pos_init = 5.0;    // t_ecef_enu std at alignment [m]
     prcopt_t prcopt;
     solopt_t solopt;
 
@@ -134,6 +146,23 @@ class LaserMappingParam {
             pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
             bag_save_en_ = yaml["bag_save_en"].as<bool>();
             image_save_en_ = yaml["image_save_en"].as<bool>();
+
+            if (yaml["gnss"]) {
+                const YAML::Node gnss = yaml["gnss"];
+                if (gnss["lever_arm"]) level_arm = VecFromArray(gnss["lever_arm"].as<std::vector<double>>());
+                ali_min_travel = gnss["ali_min_travel"].as<double>(ali_min_travel);
+                max_gap = gnss["max_gap"].as<double>(max_gap);
+                tdcp_enable = gnss["tdcp_enable"].as<bool>(tdcp_enable);
+                tdcp_std = gnss["tdcp_std"].as<double>(tdcp_std);
+                tdcp_outlier = gnss["tdcp_outlier"].as<double>(tdcp_outlier);
+                tdcp_chi2 = gnss["tdcp_chi2"].as<double>(tdcp_chi2);
+                tdcp_min_sat = gnss["tdcp_min_sat"].as<int>(tdcp_min_sat);
+                std_clk = gnss["std_clk"].as<double>(std_clk);
+                std_isb = gnss["std_isb"].as<double>(std_isb);
+                std_clk_init = gnss["std_clk_init"].as<double>(std_clk_init);
+                std_ext_yaw_init = gnss["std_ext_yaw_init"].as<double>(std_ext_yaw_init);
+                std_ext_pos_init = gnss["std_ext_pos_init"].as<double>(std_ext_pos_init);
+            }
 
             if (camera_enable_) {
                 if (yaml["cam"]["extrin_R_cl"].IsDefined()) {

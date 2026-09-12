@@ -196,8 +196,6 @@ bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &n
     // RTKLIB expects observations sorted by time/sat and ephemerides uniquified before use.
     sortobs(&obss);
     uniqnav(&nav);
-    rtk_pro->obss = obss;
-    rtk_pro->nav = nav;
     resple_lio_->obss = obss;
     resple_lio_->nav = nav;
 
@@ -254,8 +252,6 @@ bool LaserMapping::Init(const std::string &config_fname, const std::string &came
     resple_lio_->param = param;
     resple_lio_->Init();
 
-    rtk_pro = std::make_shared<RTKProcessor>();
-    rtk_pro->param = param;
     if (param->bag_save_en_) {
         bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
         if (!bag_.isOpen()) {
@@ -375,15 +371,6 @@ void LaserMapping::Run() {
     while (CollectMeasures(resple_lio_->spl.maxTimeNs() + param->dt_ns)) {
         resple_lio_->propRCP();
         resple_lio_->ProcessMeasurement(measures_);
-        if (measures_.obs_id > 0) {
-            Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(measures_.obs_time_ns);
-            RtkState state;
-            state.pos = body_pose.translation();
-            state.quat = Eigen::Quaterniond(body_pose.linear());
-            state.local_time = measures_.obs_time_ns;
-            state.time = obss.data[measures_.obs_id].time;
-            rtk_pro->ProcessMeasurements(measures_.obs_id, state);
-        }
         PublishROSMsg();
         PostUpdate();
     }

@@ -91,13 +91,13 @@ void SplineState::itpQuaternion(int64_t t_ns, Eigen::Quaterniond* q_out, Eigen::
         dExpQuatHalf(t_delta_scale[1], q_delta_scale[1], dexp_dt[1]);
         dExpQuatHalf(t_delta_scale[2], q_delta_scale[2], dexp_dt[2]);
         dExpQuatHalf(t_delta_scale[3], q_delta_scale[3], dexp_dt[3]);
-        int size_J = 4;
         Eigen::Quaterniond q_r_all[4];
         q_r_all[3] = Eigen::Quaterniond::Identity();
         for (int i = 2; i >= 0; i--) {
             q_r_all[i] = q_delta_scale[i + 1] * q_r_all[i + 1];
         }
         if (J_q) {
+            CHECK(q_out);
             q_itps[0] = cp0 * q_delta_scale[0];
             q_itps[1] = q_itps[0] * q_delta_scale[1];
             q_itps[2] = q_itps[1] * q_delta_scale[2];
@@ -109,15 +109,16 @@ void SplineState::itpQuaternion(int64_t t_ns, Eigen::Quaterniond* q_out, Eigen::
             Q_l_all[1] = Qleft(q_itps[0]);
             Q_l_all[2] = Qleft(q_itps[1]);
             Q_l_all[3] = Qleft(q_itps[2]);
-            J_q->d_val_d_knot.resize(size_J);
+            J_q->d_val_d_knot.resize(4);
             J_q->start_idx = idx0;
-            for (int i = size_J - 1; i >= 0; i--) {
+            for (int i = 3; i >= 0; i--) {
                 Eigen::Matrix4d Q_r_all;
                 Q_r_all = Qright(q_r_all[i]);
                 J_q->d_val_d_knot[i].noalias() = coeff[i] * Q_r_all * Q_l_all[i] * dexp_dt[i];
             }
         }
         if (J_w) {
+            CHECK(w_out);
             baseCoeffsWithTime<1>(p, u);
             dcoeff = inv_dt * cumulative_blending_matrix * p;
             w_itps[0].setZero();
@@ -126,9 +127,9 @@ void SplineState::itpQuaternion(int64_t t_ns, Eigen::Quaterniond* q_out, Eigen::
             w_itps[3] = q_delta_scale[3].inverse() * w_itps[2] + 2 * dcoeff[3] * t_delta[3];
             *w_out = w_itps[3];
             Eigen::Matrix<double, 3, 4> drot_dq[2];
-            drot(w_itps[1], q_delta_scale[2], drot_dq[0]);
-            drot(w_itps[2], q_delta_scale[3], drot_dq[1]);
-            J_w->d_val_d_knot.resize(size_J);
+            dRotInv(w_itps[1], q_delta_scale[2], drot_dq[0]);
+            dRotInv(w_itps[2], q_delta_scale[3], drot_dq[1]);
+            J_w->d_val_d_knot.resize(4);
             J_w->start_idx = idx0;
             J_w->d_val_d_knot[0].setZero();
             J_w->d_val_d_knot[1] = 2 * dcoeff[1] * q_delta_scale[3].inverse().toRotationMatrix() *
