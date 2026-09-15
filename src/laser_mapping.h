@@ -93,6 +93,8 @@ class LaserMapping {
     // prior pose for localization, forwarded to the odometry in Init()
     Eigen::Vector3d prior_init_position_ = Eigen::Vector3d::Zero();
     Eigen::Quaterniond prior_init_rotation_ = Eigen::Quaterniond::Identity();
+    bool if_inertial_initialized = false;
+    bool if_localmap_initialized = false;
    public:
     std::string output_dir;
 };

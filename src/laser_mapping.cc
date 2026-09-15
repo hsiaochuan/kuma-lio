@@ -18,14 +18,13 @@ void settime(gtime_t time) {}
 
 namespace faster_lio {
 LaserMapping::LaserMapping() = default;
-void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
+void LaserMapping::AddScanToBuffer(const PointCloud::Ptr& scan) {
     if (scan->empty()) {
         LOG(INFO) << "empty in scan, no points pushed into buffer";
         return;
     }
-    std::sort(scan->points.begin(), scan->points.end(), [](const Point &a, const Point &b) {
-        return a.GetTimeNs() < b.GetTimeNs();
-    });
+    std::sort(scan->points.begin(), scan->points.end(),
+              [](const Point& a, const Point& b) { return a.GetTimeNs() < b.GetTimeNs(); });
     int skip_scan_points = 0;
     for (int i = 0; i < scan->size(); ++i) {
         if (points_buffer_.empty()) {
@@ -40,9 +39,10 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
     }
 
     if (skip_scan_points != 0)
-        LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error, " << scan->size() << " points total";
+        LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error, " << scan->size()
+                  << " points total";
 }
-void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg) {
+void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
 
     double timestamp = msg->header.stamp.toSec();
@@ -69,7 +69,7 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
     AddScanToBuffer(scan);
 }
 
-void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
+void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
 
     double timestamp = msg->header.stamp.toSec();
@@ -85,7 +85,7 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr 
     scan = preprocess_->LivoxHandler(msg, S_TO_NS(timestamp));
     AddScanToBuffer(scan);
 }
-void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg) {
+void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
 
     CHECK(!msg->packets.empty()) << "VelodyneScan message is empty!";
@@ -102,7 +102,7 @@ void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::Const
     AddScanToBuffer(scan);
 }
 
-void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
+void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr& msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     double timestamp = msg_in->header.stamp.toSec();
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
@@ -120,7 +120,7 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     imu_buffer_.emplace_back(imu);
 }
 
-void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
+void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr& msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     static int img_count = 0;
     if (img_count % param->image_skip_ == 0) {
@@ -137,7 +137,7 @@ void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) 
     img_count++;
 }
 
-void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in) {
+void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr& msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     static int img_count = 0;
     if (img_count % param->image_skip_ == 0) {
@@ -153,7 +153,7 @@ void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::C
     }
     img_count++;
 }
-void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg) {
+void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     gtime_t gpst{};
     gpst.time = msg->header.stamp.sec;
@@ -161,13 +161,9 @@ void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &
 
     sol_t sol{};
     sol.time = gpst;
-    const double pos[3] = {
-        msg->latitude  * D2R,
-        msg->longitude * D2R,
-        msg->altitude
-    };
+    const double pos[3] = {msg->latitude * D2R, msg->longitude * D2R, msg->altitude};
     pos2ecef(pos, sol.rr);
-    const uint8_t fix_type  = static_cast<uint8_t>(msg->status.status);
+    const uint8_t fix_type = static_cast<uint8_t>(msg->status.status);
     const uint8_t carr_soln = static_cast<uint8_t>(msg->status.service);
     if (fix_type == 0 || fix_type == 5) {
         sol.stat = SOLQ_NONE;
@@ -180,7 +176,7 @@ void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &
     }
     sol.type = 0;
 }
-bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const string &sol_fname) {
+bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& nav_fname, const string& sol_fname) {
     gtime_t ts{}, te{};  // zero epochs disable the time window filter
 
     // rcv index 1 for the observation file; the navigation file carries no receiver data.
@@ -199,11 +195,8 @@ bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &n
     resple_lio_->obss = obss;
     resple_lio_->nav = nav;
 
-    LOG(INFO) << "read "
-    << obss.n << " observations, "
-    << nav.n << " eph, "
-    << nav.ng << " geph, "
-    << nav.ns << " seph";
+    LOG(INFO) << "read " << obss.n << " observations, " << nav.n << " eph, " << nav.ng << " geph, " << nav.ns
+              << " seph";
     if (obss.n <= 0 || nav.n + nav.ng <= 0) {
         LOG(ERROR) << "no usable GNSS data; check that RTKLIB is built with -DENAGLO/-DENAGAL/-DENACMP";
         return false;
@@ -215,19 +208,17 @@ bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &n
         double utc_d = double(utc.time) + utc.sec;
         obss_time_buffer_.push_back(S_TO_NS(utc_d - global_offset_time));
         int j = i;
-        while (std::abs(timediff(obss.data[j].time, obss.data[i].time)) < DTTOL && j < obss.n)
-            ++j;
+        while (std::abs(timediff(obss.data[j].time, obss.data[i].time)) < DTTOL && j < obss.n) ++j;
         i = j;
     }
     std::vector<std::string> files{obs_fname, nav_fname};
     std::vector<const char*> infile;
-    for (const auto& f : files)
-        infile.push_back(f.c_str());
+    for (const auto& f : files) infile.push_back(f.c_str());
 
     // position
     filopt_t filopt{};
-    const int ret = postpos(ts, te, 0.0, 0.0, &param->prcopt, &param->solopt, &filopt, infile.data(), static_cast<int>(infile.size()),
-                            sol_fname.c_str(), "", "");
+    const int ret = postpos(ts, te, 0.0, 0.0, &param->prcopt, &param->solopt, &filopt, infile.data(),
+                            static_cast<int>(infile.size()), sol_fname.c_str(), "", "");
     if (ret != 0) {
         LOG(ERROR) << "postpos failed with status " << ret;
         return false;
@@ -235,14 +226,13 @@ bool LaserMapping::ReadObsNav(const std::string &obs_fname, const std::string &n
     return true;
 }
 
-bool LaserMapping::Init(const std::string &config_fname, const std::string &camera_fname) {
+bool LaserMapping::Init(const std::string& config_fname, const std::string& camera_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
     param = std::make_shared<LaserMappingParam>();
     param->LoadFromYaml(config_fname);
     if (param->camera_enable_ && !camera_fname.empty()) {
         param->cam_model_ = ReadCameraFromCamerasText(camera_fname);
-        if (!param->cam_model_)
-            LOG(INFO) << "Null camera model";
+        if (!param->cam_model_) LOG(INFO) << "Null camera model";
     }
     preprocess_ = std::make_shared<PointCloudPreprocess>();
     preprocess_->param = param;
@@ -262,35 +252,35 @@ bool LaserMapping::Init(const std::string &config_fname, const std::string &came
     return true;
 }
 
-void LaserMapping::InitialSubscribers(ros::NodeHandle &nh) {
+void LaserMapping::InitialSubscribers(ros::NodeHandle& nh) {
     LidarType lidar_type = LidarTypeFromString(param->lidar_type);
     if (lidar_type == LidarType::LIVOX) {
         sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
             param->lidar_topic_, 200000,
-            [this](const livox_ros_driver::CustomMsg::ConstPtr &msg) { LivoxPCLCallBack(msg); });
+            [this](const livox_ros_driver::CustomMsg::ConstPtr& msg) { LivoxPCLCallBack(msg); });
     } else if (lidar_type == LidarType::VELODYNE_SCAN) {
         sub_pcl_ = nh.subscribe<velodyne_msgs::VelodyneScan>(
             param->lidar_topic_, 200000,
-            [this](const velodyne_msgs::VelodyneScan::ConstPtr &msg) { VelodyneScanCallBack(msg); });
+            [this](const velodyne_msgs::VelodyneScan::ConstPtr& msg) { VelodyneScanCallBack(msg); });
     } else {
         sub_pcl_ = nh.subscribe<sensor_msgs::PointCloud2>(
             param->lidar_topic_, 200000,
-            [this](const sensor_msgs::PointCloud2::ConstPtr &msg) { StandardPCLCallBack(msg); });
+            [this](const sensor_msgs::PointCloud2::ConstPtr& msg) { StandardPCLCallBack(msg); });
     }
 
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(param->imu_topic_, 200000,
-                                              [this](const sensor_msgs::Imu::ConstPtr &msg) { IMUCallBack(msg); });
+                                              [this](const sensor_msgs::Imu::ConstPtr& msg) { IMUCallBack(msg); });
     bool compressed_image = false;
     if (!compressed_image) {
         sub_img_ = nh.subscribe<sensor_msgs::Image>(
-            param->camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr &msg) { ImageMsgCallBack(msg); });
+            param->camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr& msg) { ImageMsgCallBack(msg); });
     } else {
         sub_img_ = nh.subscribe<sensor_msgs::CompressedImage>(
             param->camera_topic_, 200000,
-            [this](const sensor_msgs::CompressedImage::ConstPtr &msg) { CompressedImageCallBack(msg); });
+            [this](const sensor_msgs::CompressedImage::ConstPtr& msg) { CompressedImageCallBack(msg); });
     }
 }
-void LaserMapping::InitialPublishers(ros::NodeHandle &nh) {
+void LaserMapping::InitialPublishers(ros::NodeHandle& nh) {
     pub_laser_cloud_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_effect_world", 100000);
     pub_odom_aft_mapped_ = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
@@ -300,40 +290,59 @@ void LaserMapping::InitialPublishers(ros::NodeHandle &nh) {
 }
 
 void LaserMapping::Run() {
-    static constexpr int kInitImuNum = 20;
-    static constexpr int64_t kInitMapSpanNs = S_TO_NS(0.3);
-    if (!resple_lio_->if_localmap_initialized) {
+    static constexpr int INIT_IMU_COUNT = 20;
+    static constexpr int64_t INIT_POINTS_SPAN = S_TO_NS(0.3);
+    static constexpr int64_t DYNAMIC_INIT_SPAN = S_TO_NS(1.0);
+    if (!if_localmap_initialized) {
+        if (points_buffer_.empty() || imu_buffer_.empty() || obss_id_buffer_.empty()) return;
+        std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
+        std::int64_t first_gnss_time_ns = obss_time_buffer_.front();
+        std::int64_t first_imu_time_ns = imu_buffer_.front().time_ns;
+        std::int64_t first_time_ns = std::max(first_point_time_ns, std::max(first_gnss_time_ns, first_imu_time_ns));
+        std::int64_t end_time_ns = first_time_ns + DYNAMIC_INIT_SPAN;
+        // clear the data before the first time
+        while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < first_time_ns) {
+            points_buffer_.pop_front();
+        }
+        while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < first_time_ns) {
+            imu_buffer_.pop_front();
+        }
+        while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < first_time_ns) {
+            obss_time_buffer_.pop_front();
+            obss_id_buffer_.pop_front();
+        }
+
+    }  // if not init
+    if (!if_localmap_initialized) {
         if (points_buffer_.empty() || imu_buffer_.empty()) return;
 
-
-        if (!resple_lio_->if_inertial_initialized) {
-            if (static_cast<int>(imu_buffer_.size()) < kInitImuNum) {
+        if (!if_inertial_initialized) {
+            if (static_cast<int>(imu_buffer_.size()) < INIT_IMU_COUNT) {
                 LOG(INFO) << "Imu buffer is not enough, wait";
                 return;
             }
             Vec3 acc_sum = Vec3::Zero();
             Vec3 acc_gyro = Vec3::Zero();
-            for (int i = 0; i < kInitImuNum; ++i) {
+            for (int i = 0; i < INIT_IMU_COUNT; ++i) {
                 acc_sum += imu_buffer_[i].linear_acceleration;
                 acc_gyro += imu_buffer_[i].angular_velocity;
             }
 
-            Vec3 mean_acc = acc_sum / kInitImuNum;
+            Vec3 mean_acc = acc_sum / INIT_IMU_COUNT;
             Vec3 gravity_body = mean_acc.normalized() * RESPLE_LIO::GRAVITY_NORM;
-            Eigen::Matrix3d R0 =
-                Eigen::Quaterniond::FromTwoVectors(gravity_body.normalized(), Vec3(0, 0, 1)).toRotationMatrix();
+            Mat3 R0 = Eigen::Quaterniond::FromTwoVectors(gravity_body.normalized(), Vec3(0, 0, 1)).toRotationMatrix();
             double yaw = std::atan2(R0(1, 0), R0(0, 0));
             R0 = Eigen::AngleAxisd(-yaw, Vec3::UnitZ()).toRotationMatrix() * R0;
             Eigen::Quaterniond q0(R0);
-            resple_lio_->bg = acc_gyro / kInitImuNum;
+            resple_lio_->bg = acc_gyro / INIT_IMU_COUNT;
             resple_lio_->gravity = q0 * gravity_body;
             resple_lio_->spl.init(param->dt_ns, 0, q0);
-            resple_lio_->if_inertial_initialized = true;
+            if_inertial_initialized = true;
             LOG(INFO) << "Inertial initialized, gravity: " << resple_lio_->gravity.transpose();
         }
 
         std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
-        std::int64_t end_time_ns = first_point_time_ns + kInitMapSpanNs;
+        std::int64_t end_time_ns = first_point_time_ns + INIT_POINTS_SPAN;
         if (points_buffer_.back().GetTimeNs() < end_time_ns || imu_buffer_.back().time_ns < end_time_ns) {
             LOG(INFO) << "buffer is not enough, wait";
             return;
@@ -363,7 +372,7 @@ void LaserMapping::Run() {
         world_from_lidar = world_from_lidar * param->extrin_il_;
         pcl::transformPointCloud(*init_points, *init_points_world, world_from_lidar.Mat4d(), true);
         resple_lio_->kd_tree->Build(init_points_world->points);
-        resple_lio_->if_localmap_initialized = true;
+        if_localmap_initialized = true;
         LOG(INFO) << "localmap initialized with " << init_points_world->size() << " points";
         return;
     }
@@ -395,7 +404,7 @@ void LaserMapping::PostUpdate() {
         }();
         for (int i = 0; i < measures_.images.size(); ++i) {
             fs::path im_save_fname = fs::path(output_dir) / "images" / measures_.images[i].filename;
-            cv::imwrite(im_save_fname.string(),measures_.images[i].image_data_);
+            cv::imwrite(im_save_fname.string(), measures_.images[i].image_data_);
         }
     }
     if (param->pcd_save_en_) {
@@ -437,7 +446,7 @@ void LaserMapping::PublishROSMsg() {
     PublishImage();
     PublishFrustrum();
 }
-bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
+bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
     if (points_buffer_.empty()) return false;
     if (imu_buffer_.empty()) return false;
 
@@ -458,7 +467,7 @@ bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
         points_buffer_.pop_front();
     }
     // process the raw measurement
-    measures_.obs_id = -1;;
+    measures_.obs_id = -1;
     while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < meas_end) {
         measures_.obs_id = obss_id_buffer_.front();
         measures_.obs_time_ns = obss_time_buffer_.front();
@@ -571,17 +580,17 @@ void LaserMapping::PublishFrustrum() {
     const double half_w = kDepth * std::tan(kHalfFovH);
     const double half_h = kDepth * std::tan(kHalfFovV);
 
-    const Pose3 &body_from_cam = param->extrin_ic_;
-    const Eigen::Vector3d apex_cam(0, 0, 0);
-    const std::array<Eigen::Vector3d, 4> corners_cam = {
-        Eigen::Vector3d(-half_w, -half_h, kDepth),
-        Eigen::Vector3d(half_w, -half_h, kDepth),
-        Eigen::Vector3d(half_w, half_h, kDepth),
-        Eigen::Vector3d(-half_w, half_h, kDepth),
+    const Pose3& body_from_cam = param->extrin_ic_;
+    const Vec3 apex_cam(0, 0, 0);
+    const std::array<Vec3, 4> corners_cam = {
+        Vec3(-half_w, -half_h, kDepth),
+        Vec3(half_w, -half_h, kDepth),
+        Vec3(half_w, half_h, kDepth),
+        Vec3(-half_w, half_h, kDepth),
     };
 
-    const Eigen::Vector3d apex = body_from_cam * apex_cam;
-    std::array<Eigen::Vector3d, 4> corners;
+    const Vec3 apex = body_from_cam * apex_cam;
+    std::array<Vec3, 4> corners;
     for (int i = 0; i < 4; ++i) corners[i] = body_from_cam * corners_cam[i];
 
     visualization_msgs::Marker marker;
@@ -599,7 +608,7 @@ void LaserMapping::PublishFrustrum() {
     marker.color.b = 0.0;
     marker.color.a = 1.0;
 
-    auto add_point = [&marker](const Eigen::Vector3d &p) {
+    auto add_point = [&marker](const Vec3& p) {
         geometry_msgs::Point pt;
         pt.x = p.x();
         pt.y = p.y();
@@ -628,12 +637,13 @@ void LaserMapping::Savetrajectory() {
     LOG(INFO) << "Save states in camera frame";
     std::ofstream cam_ofs((fs::path(output_dir) / "cam_log.txt").string());
     cam_ofs << std::fixed;
-    for (auto & cam_state : cam_states) {
+    for (auto& cam_state : cam_states) {
         int64_t& time_ns = cam_state.first;
         Pose3& cam_pose = cam_state.second;
         cam_ofs << std::to_string(time_ns) + ".jpg" << " ";
         cam_ofs << cam_pose.Trans().x() << " " << cam_pose.Trans().y() << " " << cam_pose.Trans().z() << " ";
-        cam_ofs << cam_pose.Quat().x() << " " << cam_pose.Quat().y() << " " << cam_pose.Quat().z() << " " << cam_pose.Quat().w() << std::endl;
+        cam_ofs << cam_pose.Quat().x() << " " << cam_pose.Quat().y() << " " << cam_pose.Quat().z() << " "
+                << cam_pose.Quat().w() << std::endl;
     }
     cam_ofs.close();
 }

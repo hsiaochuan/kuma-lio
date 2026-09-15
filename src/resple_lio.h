@@ -12,7 +12,7 @@
 #include "timer.h"
 namespace faster_lio {
 // window control points (4 x 6) | ba | bg | receiver clocks (4) | yaw_ecef_enu (1) | t_ecef_enu
-constexpr int kStateDim = 38;
+constexpr int XSIZE = 38;
 struct PointData {
     Vec3 point_body;
     Vec3 point_world;
@@ -30,7 +30,7 @@ struct ImuData {
     int64_t time_ns;
     Eigen::Vector3d gyro;
     Eigen::Vector3d accel;
-    Eigen::Matrix<double, 6, kStateDim> H;
+    Eigen::Matrix<double, 6, XSIZE> H;
     Eigen::Matrix<double, 6, 1> imu_itp;
     Eigen::Matrix<double, 6, 1> z;
     // per-axis outlier gating, decided in prepIMU
@@ -55,7 +55,7 @@ struct TimeDiffCarrierPhaseData {
     double cp_diff;          // lambda * (L_{k+1} - L_k) [m]
     int sys_idx;             // which receiver clock the satellite reads
     double var;              // measurement variance [m^2]
-    Eigen::Matrix<double, 1, kStateDim> H;
+    Eigen::Matrix<double, 1, XSIZE> H;
     double z;
     bool if_valid = false;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -71,7 +71,6 @@ struct PsrData {
 };
 class RESPLE_LIO {
    public:
-    static constexpr int XSIZE = kStateDim;
     static constexpr int CP_SIZE = 24;
     static constexpr int S1 = 0, S2 = 6, S3 = 12, S4 = 18;
     static constexpr int Q1 = 3, Q2 = 9, Q3 = 15, Q4 = 21;
@@ -149,8 +148,6 @@ class RESPLE_LIO {
     void LaserMapFovSegment();
 
     void mapIncremental();
-    bool if_inertial_initialized = false;
-    bool if_localmap_initialized = false;
     bool localmap_box_initialized = false;
 
     bool if_GNSS_aligned = false;

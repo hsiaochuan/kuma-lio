@@ -406,7 +406,7 @@ void RESPLE_LIO::InitGnssState(const sol_t& sol) {
               << ", clk " << clk.transpose();
 }
 
-Eigen::Matrix<double, RESPLE_LIO::XSIZE, 1> RESPLE_LIO::getState() {
+Eigen::Matrix<double, XSIZE, 1> RESPLE_LIO::getState() {
     Eigen::Matrix<double, CP_SIZE, 1> cps_win = spl.getRCPs();
     Eigen::Matrix<double, XSIZE, 1> state;
     state << cps_win, ba, bg, clk, theta_ecef_enu, t_ecef_enu;
