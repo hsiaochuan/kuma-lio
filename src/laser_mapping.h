@@ -15,7 +15,6 @@
 #include "stamp_pose.h"
 #include <cv_bridge/cv_bridge.h>
 
-#include "rtk_processor.h"
 namespace faster_lio {
 
 
@@ -32,6 +31,8 @@ class LaserMapping {
     /// init without ros
     bool Init(const std::string &config_fname, const std::string& camera_fname);
     void Run();
+    enum class DynamicInitResult { SUCCESS, STATIONARY, FAIL };
+    DynamicInitResult TryDynamicInit(std::int64_t window_begin_ns, std::int64_t window_end_ns);
     void PostUpdate();
     void PublishROSMsg();
     // callbacks of lidar and imu
@@ -97,6 +98,8 @@ class LaserMapping {
     bool if_localmap_initialized = false;
    public:
     std::string output_dir;
+    // false forces the stationary (IMU-average) initialization
+    bool dynamic_init_ = true;
 };
 
 }  // namespace faster_lio
