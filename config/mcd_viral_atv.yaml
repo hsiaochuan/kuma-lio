@@ -37,3 +37,49 @@ pcd_save_en: true
 pcd_save_interval: 30
 bag_save_en: false
 image_save_en: false
+
+pgo:
+  enable: true
+  # keyframe sealing (accumulates points across many 10 ms knot intervals)
+  kf_dis_th:        2.0     # [m] vehicle speed: fewer, larger keyframes
+  kf_angle_th:      10.0    # [deg]
+  kf_max_dt:        0.0     # [s] 0 = no time-based seal (avoids KFs while stationary)
+  kf_voxel_leaf:    0.4     # [m]
+  kf_max_range:     60.0    # [m] 0 = no crop
+  kf_min_points:    300
+  kf_max_staging_points: 500000   # safety valve while stationary
+  # loop candidate gating (searched on OPTIMIZED positions, 2-D radius)
+  loop_enable:          true
+  loop_search_radius:   30.0
+  loop_search_max_dz:   4.0
+  loop_min_kf_id:       50
+  loop_closest_id_th:   50
+  loop_kf_gap:          20
+  loop_max_candidates:  3
+  # submap + coarse-to-fine GICP verification
+  submap_half_size:     40
+  submap_stride:        4
+  loop_coarse_leaf:     0.8
+  loop_fine_leaf:       0.3
+  loop_coarse_max_corr: 5.0
+  loop_fine_max_corr:   1.0
+  loop_max_iterations:  40
+  loop_fitness_th:      0.3   # GICP mean squared distance [m^2], LOWER is better
+  loop_min_overlap:     0.5   # inlier ratio; fitness alone is not enough
+  loop_max_corr_trans:  10.0  # [m]  gross-error gate on how far GICP moved the cloud
+  loop_max_corr_rot:    30.0  # [deg]
+  # information gate: odom_sigma_trans*sqrt(span) must exceed this x loop_sigma_trans,
+  # else the odometry is already more certain than the loop and the backend can only hurt
+  loop_min_odom_sigma_ratio: 0.6
+  # graph
+  odom_sigma_trans: 0.01   # the spline front end is far better than 0.1 m over one
+  odom_sigma_rot:   0.5    # keyframe; loops must be ~30x weaker or they bend the graph
+  loop_sigma_trans: 0.30
+  loop_sigma_rot:   3.0
+  loop_robust_delta: 1.0
+  final_lm_iterations: 50      # cap per LM solve
+  final_outlier_reject: true   # drop loops with chi2 > gate and re-solve
+  final_outlier_chi2:   22.46  # 6 dof, 99.9%
+  final_reject_rounds:  3
+  final_sweep_max_loops: 200
+  save_debug: true

@@ -4,7 +4,7 @@ common:
   camera_topic: ""
   gnss_topic: "/ublox_driver/receiver_lla"
   camera_enable: false
-  gnss_enable: false
+  gnss_enable: true
   acc_ratio: true
   lidar_time_offset: 0
   camera_time_offset: 0
@@ -30,6 +30,21 @@ std_sys_pos:  0.1               # spline process noise, position
 std_sys_ort:  0.1               # spline process noise, orientation
 cov_acc:      [1.0, 1.0, 1.0]   # accelerometer measurement variance
 cov_gyro:     [0.1, 0.1, 0.1]   # gyroscope measurement variance
+
+gnss:
+  tdcp_enable:    true
+  lever_arm:      [0.0, 0.0, 0.0]
+  ali_min_travel: 50.0          # horizontal spread of the SPP track before the local->ECEF yaw is fixed [m]
+  max_gap:        1.0           # longest gap a carrier-phase arc survives [s]
+  tdcp_std:       0.1           # TDCP noise at zenith [m]; covers multipath and LiDAR-GNSS mismatch, not just carrier noise
+  tdcp_outlier:   0.5           # |residual - epoch median| hard cap [m]
+  tdcp_chi2:      10.83         # chi-square(1) gate on the normalized innovation
+  tdcp_min_sat:   5
+  tdcp_init_weight:     1.0     # 0 disables the factor
+  tdcp_init_min_horiz:  0.05    # below this GNSS horizontal step only the up residual is kept [m]
+  tdcp_init_max_std:    0.5     # reject an epoch pair whose WLS position std exceeds this [m]
+  std_clk:        10.0          # common receiver clock random walk [m/sqrt(s)]
+  std_isb:        0.01          # inter-system bias random walk [m/sqrt(s)]
 
 pcd_save_en: false
 pcd_save_interval: 30

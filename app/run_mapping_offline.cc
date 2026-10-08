@@ -24,6 +24,7 @@ DEFINE_string(prior_init_pose, "", "");
 DEFINE_string(camera_fname, "", "");
 DEFINE_string(gnss_obs_fname, "", "");
 DEFINE_string(nav_fname, "", "");
+DEFINE_bool(dynamic_init, true, "false forces the stationary initialization");
 bool if_exit = false;
 void SigHandle(int sig) {
     if_exit = true;
@@ -58,6 +59,7 @@ int main(int argc, char **argv) {
         return -1;
     }
     laser_mapping->output_dir = output_dir;
+    laser_mapping->dynamic_init_ = FLAGS_dynamic_init;
     laser_mapping->InitialPublishers(nh);
 
     Eigen::Vector3d prior_init_position(0, 0, 0);

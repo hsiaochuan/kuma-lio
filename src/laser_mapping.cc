@@ -1532,6 +1532,12 @@ bool LaserMapping::Init(const std::string& config_fname, const std::string& came
         }
     }
 
+    if (param->pgo_.enable) {
+        // output_dir is only assigned after Init() returns, so nothing here may
+        // touch it; the backend writes its files from Savetrajectory().
+        pgo_.reset(new pgo::PgoBackend(param->pgo_));
+    }
+
     return true;
 }
 
@@ -1811,10 +1817,23 @@ void LaserMapping::PostUpdate() {
     Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
     trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
 
+    if (pgo_) {
+        pgo_cloud_->clear();
+        pgo_cloud_->reserve(resple_lio_->pt_meas.size());
+        for (const auto &pt_data : resple_lio_->pt_meas) {
+            pcl::PointXYZI p;
+            p.getVector3fMap() = pt_data.point_world.cast<float>();
+            p.intensity = pt_data.point.intensity;
+            pgo_cloud_->push_back(p);
+        }
+        pgo_->AddKnot(trajectory_.back().time, body_pose, *pgo_cloud_);
+    }
+
     if (!measures_.images.empty()) {
         for (int i = 0; i < measures_.images.size(); ++i) {
             Eigen::Isometry3d cam_state = resple_lio_->spl.Interpolate(measures_.images[i].time_ns_);
-            cam_states.emplace_back(measures_.images[i].time_ns_, Pose3(cam_state) * param->extrin_ic_);
+            const Pose3 cam_pose = Pose3(cam_state) * param->extrin_ic_;
+            cam_states.emplace_back(measures_.images[i].time_ns_, cam_pose);
         }
     }
 
@@ -2053,7 +2072,15 @@ void LaserMapping::PublishFrustrum() {
 
 void LaserMapping::Savetrajectory() {
     LOG(INFO) << "Save states in imu frame";
-    TrajectoryGenerator::save_to_tumtxt(trajectory_, (fs::path(output_dir) / "traj_log.txt").string());
+    TrajectoryGenerator::save_to_tumtxt(trajectory_,
+                                        (fs::path(output_dir) / "traj_log.txt").string());
+    if (pgo_) {
+        Trajectory traj_pgo = pgo_->CorrectTrajectory(trajectory_);
+        TrajectoryGenerator::save_to_tumtxt(traj_pgo,
+                                            (fs::path(output_dir) / "traj_log_pgo.txt").string());
+        if (param->pgo_.save_debug) pgo_->SaveDebug(output_dir);
+        LOG(INFO) << "Save PGO-corrected states, " << traj_pgo.size() << " poses";
+    }
 
     LOG(INFO) << "Save states in camera frame";
     std::ofstream cam_ofs((fs::path(output_dir) / "cam_log.txt").string());
@@ -2070,6 +2097,9 @@ void LaserMapping::Savetrajectory() {
 }
 
 void LaserMapping::Finish() {
+    if (pgo_) {
+        pgo_->Finalize();
+    }
     bag_.close();
     if (param->pcd_save_en_ && !wait_save_points_->empty()) {
         double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();

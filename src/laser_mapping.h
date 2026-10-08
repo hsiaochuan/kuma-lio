@@ -13,6 +13,7 @@
 #include "pointcloud_preprocess.h"
 #include "resple_lio.h"
 #include "stamp_pose.h"
+#include "pgo/pgo_backend.h"
 #include <cv_bridge/cv_bridge.h>
 
 namespace faster_lio {
@@ -89,6 +90,8 @@ class LaserMapping {
     std::vector<std::pair<int64_t, Pose3>> cam_states;
 
     std::shared_ptr<LaserMappingParam> param;
+    std::unique_ptr<pgo::PgoBackend> pgo_;
+    pgo::PgoCloudPtr pgo_cloud_{new pgo::PgoCloud()};
     rosbag::Bag bag_;
 
     // prior pose for localization, forwarded to the odometry in Init()

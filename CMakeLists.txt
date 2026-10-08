@@ -31,6 +31,7 @@ find_package(PCL 1.8 REQUIRED)
 add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
 find_package(Ceres REQUIRED)
+find_package(GTSAM REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(OpenMP REQUIRED)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
@@ -42,6 +43,7 @@ include_directories(
         ${PYTHON_INCLUDE_DIRS}
         ${yaml-cpp_INCLUDE_DIRS}
         ${CERES_INCLUDE_DIRS}
+        ${GTSAM_INCLUDE_DIR}
         ${OpenCV_INCLUDE_DIRS}
         include
 )
@@ -86,9 +88,11 @@ add_library(${PROJECT_NAME}
         src/voxel_map.cpp
         src/spline_state.cpp
         src/resple_lio.cpp
+        src/pgo/pgo_backend.cc
+        src/pgo/loop_detector.cc
+        src/pgo/pose_graph.cc
         src/ikd-Tree/ikd_Tree.cpp
         src/timer.cpp
-        src/rtk_processor.cpp
         )
 
 target_link_libraries(${PROJECT_NAME}
