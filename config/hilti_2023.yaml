@@ -1,0 +1,129 @@
+common:
+  lid_topic: "/hesai/pandar"
+  imu_topic: "/alphasense/imu"
+  camera_topic: "/alphasense/cam0/image_raw"
+  gnss_topic: ""
+  camera_enable: true
+  gnss_enable: false
+  acc_ratio: false
+  lidar_time_offset: 0
+  camera_time_offset: 0
+  image_skip: 4
+
+lidar_type: HESAI
+blind: 0.5
+point_filter_num: 2
+det_range: 100.0
+
+extrin_t_il: [-0.00695046, -0.00671348, 0.04989346]
+extrin_R_il: [0.00660964, -0.99997622, 0.00196524,
+              -0.99997737, -0.00661209, -0.00124485,
+              0.00125781, -0.00195697, -0.99999729]
+
+ds_scan_voxel: 0.25
+knot_hz: 100
+w_pt: 0.01
+nn_thresh: 0.5
+coeff_cov: 2.0
+std_sys_pos: 0.05
+std_sys_ort: 0.05
+cov_acc: [1.0, 1.0, 1.0]
+cov_gyro: [0.001, 0.001, 0.001]
+cov_bg: [0.000001, 0.000001, 0.000001]
+
+pcd_save_en: true
+pcd_save_interval: 30
+bag_save_en: false
+
+cam:
+  model: OPENCV_FISHEYE
+  width: 720
+  height: 540
+  params: [351.31400364193297, 351.4911744656785, 367.8522793375995, 253.8402144980996,
+           -0.03696737352869157, -0.008917880497032812, 0.008912969593422046, -0.0037685977496087313]
+  extrin_R_cl: [-0.99989892, -0.01144243, 0.00843981,
+                -0.00839931, -0.00358253, -0.99995831,
+                0.01147219, -0.99992812, 0.00348606]
+  extrin_t_cl: [-0.05410116, 0.06382904, -0.05445023]
+
+vio:
+  enable: true
+  max_iterations: 5
+  patch_size: 8
+  patch_pyramid_level: 4
+  grid_size: 32
+  voxel_size: 0.5
+  outlier_threshold: 40
+  img_point_cov: 1000
+  pixel_std: 0
+  huber_px: 0
+  scan_window: 0.3
+  exposure_estimate_en: true
+  inv_expo_cov: 0.01
+  min_points: 10
+
+lba:
+  win_size: 10
+  voxel_size: 0.5
+  min_eigen_value: 0.001
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  sigma_num: 3
+  range_err: 0.02
+  angle_err: 0.05
+  cov_en: true
+  fb_std_pos: 0.001
+  fb_std_ort: 0.0002
+  fb_keep_cov: true
+  photo_enable: true
+  photo_coef: 0.00000001
+  photo_grid: 24
+  photo_grad_min: 15
+  photo_huber: 9
+  photo_outlier: 20
+  photo_grad_c: 50
+  photo_max_depth: 30
+
+pgo:
+  enable: false
+  kf_dis_th: 1.0
+  kf_angle_th: 10.0
+  kf_max_dt: 0.0
+  kf_voxel_leaf: 0.4
+  kf_max_range: 60.0
+  kf_min_points: 300
+  kf_max_staging_points: 500000
+  loop_enable: true
+  loop_search_radius: 25.0
+  loop_search_max_dz: 4.0
+  loop_min_kf_id: 50
+  loop_closest_id_th: 50
+  loop_kf_gap: 20
+  loop_max_candidates: 3
+  submap_half_size: 40
+  submap_stride: 4
+  loop_coarse_leaf: 0.8
+  loop_fine_leaf: 0.3
+  loop_coarse_max_corr: 5.0
+  loop_fine_max_corr: 1.0
+  loop_max_iterations: 40
+  loop_fitness_th: 0.3
+  loop_min_overlap: 0.5
+  loop_max_corr_trans: 10.0
+  loop_max_corr_rot: 30.0
+  loop_min_odom_sigma_ratio: 1.0
+  odom_sigma_trans: 0.10
+  odom_sigma_rot: 3.0
+  loop_sigma_trans: 0.20
+  loop_sigma_rot: 3.0
+  loop_robust_delta: 1.0
+  final_lm_iterations: 50
+  final_outlier_reject: true
+  final_outlier_chi2: 22.46
+  final_reject_rounds: 3
+  final_sweep_max_loops: 200
+  save_debug: true

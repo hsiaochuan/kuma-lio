@@ -19,12 +19,12 @@ DEFINE_string(prior_map_file, "", "path to the prior map file");
 DEFINE_string(output_dir, "", "save the result to the dir");
 DEFINE_double(start, 0.0, "start time in seconds from beginning of bag");
 DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
+DEFINE_bool(dynamic_init, false, "try the dynamic (moving-start) initialization before the stationary one");
 DEFINE_string(prior_map_fname, "", "path to prior map file");
 DEFINE_string(prior_init_pose, "", "");
 DEFINE_string(camera_fname, "", "");
 DEFINE_string(gnss_obs_fname, "", "");
 DEFINE_string(nav_fname, "", "");
-DEFINE_bool(dynamic_init, true, "false forces the stationary initialization");
 bool if_exit = false;
 void SigHandle(int sig) {
     if_exit = true;

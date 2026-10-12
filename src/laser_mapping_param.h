@@ -6,9 +6,13 @@
 #define FASTER_LIO_LASER_MAPPING_PARAM_H
 #include <glog/logging.h>
 #include <yaml-cpp/yaml.h>
+#include "cameras/camera_io.h"
 #include "cameras/cameras.h"
 #include "pose3.h"
 #include "pgo/pgo_types.h"
+#include "local_ba.h"
+#include "static_detector.h"
+#include "visual_manager.h"
 using namespace faster_lio;
 class LaserMappingParam {
    public:
@@ -46,7 +50,6 @@ class LaserMappingParam {
     bool acc_ratio_ = false;
     double lidar_time_offset_ = 0.;
     double camera_time_offset_ = 0.;
-    std::shared_ptr<CamModel> camera_;
     int image_skip_ = 3;
 
     std::string lidar_type;
@@ -71,13 +74,10 @@ class LaserMappingParam {
     Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
     int64_t dt_ns = S_TO_NS(0.01);   // 1 / knot_hz [s]
     double ds_scan_voxel = 0.5;  // per-scan uniform-sampling leaf [m]
-    double ds_lm_voxel = 0.5;    // ikd-tree local-map downsample leaf [m]
-    double cube_len = 2000.0;    // local map cube edge length [m]
-    double nn_search_radius = 2.236; // ikd-tree Nearest_Search max_dist [m]
-    double plane_thresh = 0.1;       // max |point-to-plane| of the 5 neighbours when fitting [m]
     double ppl_thr = 0.5;          // point-to-plane residual gate [m]
     double coeff_cov = 2.0;          // lid_cov < w_pt * coeff_cov gate
-    double w_pt = 0.01;              // per-point measurement variance (RESPLE `w_pt`)
+    double w_pt = 0.01;              // per-point measurement variance when `lba.cov_en` is off
+    double plane_thresh = 0.1;       // dynamic init only: max |point-to-plane| when fitting a plane [m]
     double imu_acc_outlier = 10.0;   // |acc - predicted| gate per axis [m/s^2]
     double imu_gyro_outlier = 5.0;   // |gyro - predicted| gate per axis [rad/s]
     int num_threads = 4;
@@ -101,12 +101,13 @@ class LaserMappingParam {
     prcopt_t prcopt;
     solopt_t solopt;
 
-    bool image_save_en_ = false;
     bool pcd_save_en_ = false;
     double pcd_save_interval_ = 30;
     bool bag_save_en_ = false;
 
-    // backend pose-graph optimization; disabled unless a config has a `pgo:` block
+    faster_lio::VisualParam vio_;
+    faster_lio::LbaParam lba_;
+    faster_lio::ZuptParam zupt_;
     faster_lio::pgo::PgoParam pgo_;
 
     void LoadFromYaml(const std::string& config_fname) {
@@ -131,22 +132,23 @@ class LaserMappingParam {
             extrin_il_.t_ = VecFromArray(yaml["extrin_t_il"].as<std::vector<double>>());
 
             ds_scan_voxel = yaml["ds_scan_voxel"].as<double>();
-            ds_lm_voxel = yaml["ds_lm_voxel"].as<double>();
 
             dt_ns = S_TO_NS(1.0 / yaml["knot_hz"].as<double>());
             w_pt = yaml["w_pt"].as<double>();
-            plane_thresh = yaml["plane_thresh"].as<double>();
+            if (yaml["plane_thresh"]) plane_thresh = yaml["plane_thresh"].as<double>();
             ppl_thr = yaml["nn_thresh"].as<double>();
             coeff_cov = yaml["coeff_cov"].as<double>();
             std_sys_pos = yaml["std_sys_pos"].as<double>();
             std_sys_ort = yaml["std_sys_ort"].as<double>();
             cov_acc = VecFromArray(yaml["cov_acc"].as<std::vector<double>>());
             cov_gyro = VecFromArray(yaml["cov_gyro"].as<std::vector<double>>());
+            // initial variance of the biases; small after a stationary start, which measures the gyro bias
+            if (yaml["cov_bg"]) cov_bg = VecFromArray(yaml["cov_bg"].as<std::vector<double>>());
+            if (yaml["cov_ba"]) cov_ba = VecFromArray(yaml["cov_ba"].as<std::vector<double>>());
 
             pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
             pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
             bag_save_en_ = yaml["bag_save_en"].as<bool>();
-            image_save_en_ = yaml["image_save_en"].as<bool>();
 
             if (yaml["gnss"]) {
                 const YAML::Node gnss = yaml["gnss"];
@@ -214,7 +216,81 @@ class LaserMappingParam {
                 pgo_.save_debug = g["save_debug"].as<bool>(pgo_.save_debug);
             }
 
+            if (yaml["lba"]) {
+                const YAML::Node b = yaml["lba"];
+                lba_.win_size = b["win_size"].as<int>(lba_.win_size);
+                lba_.voxel_size = b["voxel_size"].as<double>(lba_.voxel_size);
+                lba_.min_eigen_value = b["min_eigen_value"].as<double>(lba_.min_eigen_value);
+                lba_.min_points = b["min_points"].as<int>(lba_.min_points);
+                lba_.max_fix_points = b["max_fix_points"].as<int>(lba_.max_fix_points);
+                lba_.max_iter = b["max_iter"].as<int>(lba_.max_iter);
+                lba_.imu_coef = b["imu_coef"].as<double>(lba_.imu_coef);
+                lba_.cov_gyr = b["cov_gyr"].as<double>(lba_.cov_gyr);
+                lba_.cov_acc = b["cov_acc"].as<double>(lba_.cov_acc);
+                lba_.sigma_num = b["sigma_num"].as<double>(lba_.sigma_num);
+                lba_.pose_var = b["pose_var"].as<double>(lba_.pose_var);
+                lba_.range_err = b["range_err"].as<double>(lba_.range_err);
+                lba_.angle_err = b["angle_err"].as<double>(lba_.angle_err);
+                lba_.cov_en = b["cov_en"].as<bool>(lba_.cov_en);
+                lba_.r_base = b["r_base"].as<double>(lba_.r_base);
+                lba_.fb_std_pos = b["fb_std_pos"].as<double>(lba_.fb_std_pos);
+                lba_.fb_std_ort = b["fb_std_ort"].as<double>(lba_.fb_std_ort);
+                lba_.fb_keep_cov = b["fb_keep_cov"].as<bool>(lba_.fb_keep_cov);
+                lba_.photo_enable = b["photo_enable"].as<bool>(lba_.photo_enable);
+                lba_.photo_coef = b["photo_coef"].as<double>(lba_.photo_coef);
+                lba_.photo_grid = b["photo_grid"].as<int>(lba_.photo_grid);
+                lba_.photo_grad_min = b["photo_grad_min"].as<double>(lba_.photo_grad_min);
+                lba_.photo_huber = b["photo_huber"].as<double>(lba_.photo_huber);
+                lba_.photo_outlier = b["photo_outlier"].as<double>(lba_.photo_outlier);
+                lba_.photo_grad_c = b["photo_grad_c"].as<double>(lba_.photo_grad_c);
+                lba_.photo_max_depth = b["photo_max_depth"].as<double>(lba_.photo_max_depth);
+                lba_.frame_dt = b["frame_dt"].as<double>(lba_.frame_dt);
+                lba_.map_range = b["map_range"].as<double>(lba_.map_range);
+            }
+
+            if (yaml["zupt"]) {
+                const YAML::Node z = yaml["zupt"];
+                zupt_.enable = z["enable"].as<bool>(zupt_.enable);
+                zupt_.window = z["window"].as<double>(zupt_.window);
+                zupt_.noise_ratio = z["noise_ratio"].as<double>(zupt_.noise_ratio);
+                zupt_.peak_ratio = z["peak_ratio"].as<double>(zupt_.peak_ratio);
+                zupt_.max_move = z["max_move"].as<double>(zupt_.max_move);
+                zupt_.max_turn = z["max_turn"].as<double>(zupt_.max_turn);
+                zupt_.std_vel = z["std_vel"].as<double>(zupt_.std_vel);
+                zupt_.std_gyr = z["std_gyr"].as<double>(zupt_.std_gyr);
+            }
+
+            if (yaml["vio"]) {
+                const YAML::Node v = yaml["vio"];
+                vio_.enable = v["enable"].as<bool>(vio_.enable);
+                vio_.max_iterations = v["max_iterations"].as<int>(vio_.max_iterations);
+                vio_.patch_size = v["patch_size"].as<int>(vio_.patch_size);
+                vio_.patch_pyramid_level = v["patch_pyramid_level"].as<int>(vio_.patch_pyramid_level);
+                vio_.grid_size = v["grid_size"].as<int>(vio_.grid_size);
+                vio_.voxel_size = v["voxel_size"].as<double>(vio_.voxel_size);
+                vio_.outlier_threshold = v["outlier_threshold"].as<double>(vio_.outlier_threshold);
+                vio_.img_point_cov = v["img_point_cov"].as<double>(vio_.img_point_cov);
+                vio_.pixel_std = v["pixel_std"].as<double>(vio_.pixel_std);
+                vio_.huber_px = v["huber_px"].as<double>(vio_.huber_px);
+                vio_.scan_window = v["scan_window"].as<double>(vio_.scan_window);
+                vio_.exposure_estimate_en = v["exposure_estimate_en"].as<bool>(vio_.exposure_estimate_en);
+                vio_.inv_expo_cov = v["inv_expo_cov"].as<double>(vio_.inv_expo_cov);
+                vio_.min_points = v["min_points"].as<int>(vio_.min_points);
+                vio_.converge_en = v["converge_en"].as<bool>(vio_.converge_en);
+                vio_.max_view_angle = v["max_view_angle"].as<double>(vio_.max_view_angle);
+            }
+
             if (camera_enable_) {
+                // intrinsics as one COLMAP cameras.txt line: MODEL WIDTH HEIGHT PARAMS[]
+                if (yaml["cam"]["model"].IsDefined()) {
+                    std::ostringstream line;
+                    line << std::setprecision(17) << "0 " << yaml["cam"]["model"].as<std::string>() << " "
+                         << yaml["cam"]["width"].as<int>() << " " << yaml["cam"]["height"].as<int>();
+                    for (double p : yaml["cam"]["params"].as<std::vector<double>>()) line << " " << p;
+                    std::istringstream stream(line.str());
+                    cam_model_ = ReadCameraFromCamerasText(stream);
+                    CHECK(cam_model_) << "cannot build a camera from the `cam:` block: " << line.str();
+                }
                 if (yaml["cam"]["extrin_R_cl"].IsDefined()) {
                     Pose3 extrin_cl;
                     extrin_cl.q_ = RotationFromArray(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());

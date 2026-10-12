@@ -16,37 +16,102 @@ point_filter_num: 1
 det_range: 450.0
 
 extrin_t_il: [0.04165, 0.02326, -0.0284]
-extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+extrin_R_il: [1, 0, 0,
+              0, 1, 0,
+              0, 0, 1]
 
 ds_scan_voxel: 0.5
-ds_lm_voxel: 0.5
-
-knot_hz:      100               # control points per second of the B-spline trajectory
-w_pt:         0.01              # per-point measurement variance of the LiDAR residual
-plane_thresh: 0.1               # max |point-to-plane| of the 5 neighbours when fitting [m]
-nn_thresh:    0.5               # point-to-plane residual gate [m]
-coeff_cov:    2.0               # accept a point when lid_cov < w_pt * coeff_cov
-std_sys_pos:  0.1               # spline process noise, position
-std_sys_ort:  0.1               # spline process noise, orientation
-cov_acc:      [1.0, 1.0, 1.0]   # accelerometer measurement variance
-cov_gyro:     [0.1, 0.1, 0.1]   # gyroscope measurement variance
-
-gnss:
-  tdcp_enable:    true
-  lever_arm:      [0.0, 0.0, 0.0]
-  ali_min_travel: 50.0          # horizontal spread of the SPP track before the local->ECEF yaw is fixed [m]
-  max_gap:        1.0           # longest gap a carrier-phase arc survives [s]
-  tdcp_std:       0.1           # TDCP noise at zenith [m]; covers multipath and LiDAR-GNSS mismatch, not just carrier noise
-  tdcp_outlier:   0.5           # |residual - epoch median| hard cap [m]
-  tdcp_chi2:      10.83         # chi-square(1) gate on the normalized innovation
-  tdcp_min_sat:   5
-  tdcp_init_weight:     1.0     # 0 disables the factor
-  tdcp_init_min_horiz:  0.05    # below this GNSS horizontal step only the up residual is kept [m]
-  tdcp_init_max_std:    0.5     # reject an epoch pair whose WLS position std exceeds this [m]
-  std_clk:        10.0          # common receiver clock random walk [m/sqrt(s)]
-  std_isb:        0.01          # inter-system bias random walk [m/sqrt(s)]
+knot_hz: 100
+w_pt: 0.01
+nn_thresh: 0.5
+coeff_cov: 2.0
+std_sys_pos: 0.1
+std_sys_ort: 0.1
+cov_acc: [1.0, 1.0, 1.0]
+cov_gyro: [0.1, 0.1, 0.1]
+cov_bg: [0.2, 0.2, 0.2]
 
 pcd_save_en: false
 pcd_save_interval: 30
 bag_save_en: false
-image_save_en: false
+
+lba:
+  win_size: 10
+  voxel_size: 1.0
+  min_eigen_value: 0.0025
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  sigma_num: 3
+  range_err: 0.02
+  angle_err: 0.15
+  cov_en: true
+  fb_std_pos: 0.01
+  fb_std_ort: 0.002
+  fb_keep_cov: true
+  photo_enable: false
+  photo_coef: 0.000001
+  photo_grid: 24
+  photo_grad_min: 15
+  photo_huber: 9
+  photo_outlier: 20
+  photo_grad_c: 0
+  photo_max_depth: 30
+
+pgo:
+  enable: false
+  kf_dis_th: 1.0
+  kf_angle_th: 10.0
+  kf_max_dt: 0.0
+  kf_voxel_leaf: 0.4
+  kf_max_range: 60.0
+  kf_min_points: 300
+  kf_max_staging_points: 500000
+  loop_enable: true
+  loop_search_radius: 25.0
+  loop_search_max_dz: 4.0
+  loop_min_kf_id: 50
+  loop_closest_id_th: 50
+  loop_kf_gap: 20
+  loop_max_candidates: 3
+  submap_half_size: 40
+  submap_stride: 4
+  loop_coarse_leaf: 0.8
+  loop_fine_leaf: 0.3
+  loop_coarse_max_corr: 5.0
+  loop_fine_max_corr: 1.0
+  loop_max_iterations: 40
+  loop_fitness_th: 0.3
+  loop_min_overlap: 0.5
+  loop_max_corr_trans: 10.0
+  loop_max_corr_rot: 30.0
+  loop_min_odom_sigma_ratio: 1.0
+  odom_sigma_trans: 0.10
+  odom_sigma_rot: 3.0
+  loop_sigma_trans: 0.20
+  loop_sigma_rot: 3.0
+  loop_robust_delta: 1.0
+  final_lm_iterations: 50
+  final_outlier_reject: true
+  final_outlier_chi2: 22.46
+  final_reject_rounds: 3
+  final_sweep_max_loops: 200
+  save_debug: true
+
+gnss:
+  tdcp_enable: true
+  lever_arm: [0.0, 0.0, 0.0]
+  ali_min_travel: 50.0
+  max_gap: 1.0
+  tdcp_std: 0.1
+  tdcp_outlier: 0.5
+  tdcp_chi2: 10.83
+  tdcp_min_sat: 5
+  tdcp_init_weight: 1.0
+  tdcp_init_min_horiz: 0.05
+  tdcp_init_max_std: 0.5
+  std_clk: 10.0
+  std_isb: 0.01

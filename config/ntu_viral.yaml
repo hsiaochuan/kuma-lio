@@ -13,25 +13,117 @@ common:
 lidar_type: OUSTER
 blind: 1.0
 point_filter_num: 1
-det_range:     100.0
+det_range: 20.0
 
 extrin_t_il: [-0.050, 0.000, 0.055]
-extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+extrin_R_il: [1, 0, 0,
+              0, 1, 0,
+              0, 0, 1]
 
 ds_scan_voxel: 0.5
-ds_lm_voxel: 0.5
-
-knot_hz:      100               # control points per second of the B-spline trajectory
-w_pt:         0.01              # per-point measurement variance of the LiDAR residual
-plane_thresh: 0.1               # max |point-to-plane| of the 5 neighbours when fitting [m]
-nn_thresh:    0.5               # point-to-plane residual gate [m]
-coeff_cov:    2.0               # accept a point when lid_cov < w_pt * coeff_cov
-std_sys_pos:  0.1               # spline process noise, position
-std_sys_ort:  0.1               # spline process noise, orientation
-cov_acc:      [1.0, 1.0, 1.0]   # accelerometer measurement variance
-cov_gyro:     [0.1, 0.1, 0.1]   # gyroscope measurement variance
+knot_hz: 100
+w_pt: 0.01
+nn_thresh: 0.5
+coeff_cov: 2.0
+std_sys_pos: 0.1
+std_sys_ort: 0.1
+cov_acc: [1.0, 1.0, 1.0]
+cov_gyro: [0.1, 0.1, 0.1]
+cov_bg: [0.2, 0.2, 0.2]
 
 pcd_save_en: true
 pcd_save_interval: 30
 bag_save_en: false
-image_save_en: false
+
+cam:
+  model: OPENCV
+  width: 752
+  height: 480
+  params: [425.0258563372763, 426.7976260903337, 386.0151866550880, 241.9130336743440,
+           -0.288105327549552, 0.074578284234601, 0.0007784489598138802, -0.0002277853975035461]
+  extrin_R_cl: [0.02183084, 0.99975965, -0.00201407,
+                -0.01312053, 0.00230088, 0.99991128,
+                0.99967558, -0.02180248, 0.01316761]
+  extrin_t_cl: [0.12299263, 0.0398643, -0.05771014]
+
+vio:
+  enable: false
+  max_iterations: 5
+  patch_size: 8
+  patch_pyramid_level: 4
+  grid_size: 32
+  voxel_size: 0.5
+  outlier_threshold: 500
+  img_point_cov: 1000
+  pixel_std: 0
+  huber_px: 0
+  scan_window: 0.3
+  exposure_estimate_en: true
+  inv_expo_cov: 0.01
+  min_points: 10
+
+lba:
+  win_size: 10
+  voxel_size: 1.0
+  min_eigen_value: 0.0025
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  sigma_num: 3
+  range_err: 0.02
+  angle_err: 0.05
+  cov_en: true
+  fb_std_pos: 0.01
+  fb_std_ort: 0.002
+  fb_keep_cov: true
+  photo_enable: false
+  photo_coef: 0.000001
+  photo_grid: 24
+  photo_grad_min: 15
+  photo_huber: 9
+  photo_outlier: 20
+  photo_grad_c: 0
+  photo_max_depth: 30
+
+pgo:
+  enable: false
+  kf_dis_th: 1.0
+  kf_angle_th: 10.0
+  kf_max_dt: 0.0
+  kf_voxel_leaf: 0.4
+  kf_max_range: 60.0
+  kf_min_points: 300
+  kf_max_staging_points: 500000
+  loop_enable: true
+  loop_search_radius: 25.0
+  loop_search_max_dz: 4.0
+  loop_min_kf_id: 50
+  loop_closest_id_th: 50
+  loop_kf_gap: 20
+  loop_max_candidates: 3
+  submap_half_size: 40
+  submap_stride: 4
+  loop_coarse_leaf: 0.8
+  loop_fine_leaf: 0.3
+  loop_coarse_max_corr: 5.0
+  loop_fine_max_corr: 1.0
+  loop_max_iterations: 40
+  loop_fitness_th: 0.3
+  loop_min_overlap: 0.5
+  loop_max_corr_trans: 10.0
+  loop_max_corr_rot: 30.0
+  loop_min_odom_sigma_ratio: 1.0
+  odom_sigma_trans: 0.10
+  odom_sigma_rot: 3.0
+  loop_sigma_trans: 0.20
+  loop_sigma_rot: 3.0
+  loop_robust_delta: 1.0
+  final_lm_iterations: 50
+  final_outlier_reject: true
+  final_outlier_chi2: 22.46
+  final_reject_rounds: 3
+  final_sweep_max_loops: 200
+  save_debug: true

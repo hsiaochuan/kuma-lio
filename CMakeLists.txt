@@ -86,12 +86,13 @@ add_library(${PROJECT_NAME}
         src/pose3.cpp
         src/stamp_pose.cpp
         src/voxel_map.cpp
+        src/local_ba.cpp
         src/spline_state.cpp
         src/resple_lio.cpp
+        src/visual_manager.cpp
         src/pgo/pgo_backend.cc
         src/pgo/loop_detector.cc
         src/pgo/pose_graph.cc
-        src/ikd-Tree/ikd_Tree.cpp
         src/timer.cpp
         )
 
@@ -106,6 +107,7 @@ target_link_libraries(${PROJECT_NAME}
         gtsam
         rtklib
         gflags
+        dw
         )
 
 add_executable(run_mapping_offline app/run_mapping_offline.cc)

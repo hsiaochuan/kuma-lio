@@ -21,14 +21,13 @@ void settime(gtime_t time) {}
 
 namespace faster_lio {
 namespace {
-// Voxel-SLAM LocalBA defaults (voxelslam.hpp): preintegration noise, bias random walk and the
-// weight of the IMU factor relative to the LiDAR λ_min cost
+
 constexpr double kInitCovGyro = 0.1;
 constexpr double kInitCovAcc = 0.1;
 constexpr double kInitRandWalk = 1e-4;
 constexpr double kInitImuCoef = 1e-4;
 
-// receiver clock index; QZSS keeps GPS time (same table as RESPLE_LIO)
+
 int SysIdx(int sys) {
     if (sys == SYS_GPS || sys == SYS_QZS) return 0;
     if (sys == SYS_GLO) return 1;
@@ -37,11 +36,7 @@ int SysIdx(int sys) {
     return -1;
 }
 
-// One time-differenced carrier-phase observation: satellite `sat` was tracked without a cycle slip
-// from epoch `anchor_idx` to epoch `cur_idx`.  Linearised about the epoch's SPP position p0,
-//   z = lambda*dPhi + c*d(sv_dt) - (range_cur - range_anchor) = u^T dp_enu + c*d(clk) + eps,
-// with u the unit line of sight pointing from the satellite to the receiver, expressed in ENU.
-// Both quantities are free of the unknown local-world yaw.
+// One time-differenced carrier-phase observation
 struct TdcpRow {
     int anchor_idx = -1;
     int cur_idx = -1;
@@ -51,9 +46,7 @@ struct TdcpRow {
     double var = 1.0;
 };
 
-// The yaw-free TDCP factor: the two invariants of dp_enu under a rotation about the vertical are the
-// up component and the horizontal norm, so they constrain the local-world states without ever
-// touching the unknown yaw between the local world and ENU.
+// The yaw-free TDCP factor
 struct TdcpFactor {
     int i = -1;  // anchor state
     int j = -1;  // current state
@@ -155,7 +148,7 @@ struct ImuPreintegration {
     }
 
     // IMU_PRE::give_evaluate_g. J columns: [state i (15) | state j (15) | gravity (3)], each state
-    // ordered [R, p, v, bg, ba] with right-perturbed rotation. Returns r^T cov^-1 r.
+    // ordered [R, p, v, bg, ba]
     double Evaluate(const State& si, const State& sj, const Vec3& g, Eigen::Matrix<double, 15, 33>* J,
                     Eigen::Matrix<double, 15, 1>* r_out, Eigen::Matrix<double, 15, 15>* cov_inv_out) const {
         const double T = dt_sum;
@@ -211,37 +204,6 @@ struct ImuPreintegration {
     }
 };
 
-struct PointCluster {
-    Mat3 P = Mat3::Zero();
-    Vec3 v = Vec3::Zero();
-    int N = 0;
-
-    void push(const Vec3& q) {
-        N++;
-        P += q * q.transpose();
-        v += q;
-    }
-
-    Mat3 cov() const {
-        Vec3 center = v / (double)N;
-        return P / (double)N - center * center.transpose();
-    }
-
-    PointCluster& operator+=(const PointCluster& o) {
-        P += o.P;
-        v += o.v;
-        N += o.N;
-        return *this;
-    }
-
-    void transform(const PointCluster& body, const State& st) {
-        N = body.N;
-        v = st.R * body.v + (double)N * st.p;
-        Mat3 rp = st.R * body.v * st.p.transpose();
-        P = st.R * body.P * st.R.transpose() + rp + rp.transpose() + (double)N * st.p * st.p.transpose();
-    }
-};
-
 struct LidarBAFactor {
     int win_size = 0;
     std::vector<std::vector<PointCluster>> pcrs;
@@ -272,10 +234,10 @@ struct LidarBAFactor {
                 auto it = vox_cls_map.find(vox);
                 if (it == vox_cls_map.end()) {
                     std::vector<PointCluster> cls(win_size);
-                    cls[i].push(p);
+                    cls[i].Push(p);
                     vox_cls_map.emplace(vox, std::move(cls));
                 } else {
-                    it->second[i].push(p);
+                    it->second[i].Push(p);
                 }
             }
         }
@@ -288,13 +250,13 @@ struct LidarBAFactor {
             for (int i = 0; i < win_size; i++)
                 if (cls[i].N > 0) {
                     PointCluster cl_tran;
-                    cl_tran.transform(cls[i], states[i]);
+                    cl_tran.Transform(cls[i], states[i].R, states[i].p);
                     agg_cl += cl_tran;
                     total += cls[i].N;
                 }
             if (total < min_pts) continue;
 
-            Eigen::SelfAdjointEigenSolver<Mat3> es(agg_cl.cov());
+            Eigen::SelfAdjointEigenSolver<Mat3> es(agg_cl.Cov());
             Vec3 evals = es.eigenvalues();
             if (evals(0) < abs_thresh && evals(0) < ratio_thresh * std::max(evals(1), 1e-9)) {
                 pcrs.push_back(std::move(cls));
@@ -314,10 +276,10 @@ struct LidarBAFactor {
             for (int i = 0; i < win_size; i++)
                 if (cls[i].N > 0) {
                     PointCluster cl_w;
-                    cl_w.transform(cls[i], states[i]);
+                    cl_w.Transform(cls[i], states[i].R, states[i].p);
                     agg_cl += cl_w;
                 }
-            Eigen::SelfAdjointEigenSolver<Mat3> es(agg_cl.cov());
+            Eigen::SelfAdjointEigenSolver<Mat3> es(agg_cl.Cov());
             eig_values[v] = es.eigenvalues();
             eig_vectors[v] = es.eigenvectors();
             pcr_adds[v] = agg_cl;
@@ -1459,7 +1421,7 @@ void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr& 
     }
     sol.type = 0;
 }
-bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& nav_fname, const string& sol_fname) {
+bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& nav_fname, const std::string& sol_fname) {
     gtime_t ts{}, te{};  // zero epochs disable the time window filter
 
     // rcv index 1 for the observation file; the navigation file carries no receiver data.
@@ -1623,6 +1585,7 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
 
     const LaserMapping::DynamicInitResult result =
         dynamic_initializer.Run(window_points, window_imus, obss_ids, obss_time_ns);
+    if (result != DynamicInitResult::SUCCESS) return result;
 
     const State& s0 = dynamic_initializer.states.front();
     const State& s_last = dynamic_initializer.states.back();
@@ -1647,18 +1610,13 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
     }
 
     // local map from the motion-compensated window scans
-    PointCloud::Ptr init_points_world(new PointCloud);
+    std::vector<Vec3> init_points_world;
     for (int i = 0; i < N; ++i) {
         for (const Vec3& q : dynamic_initializer.DeskewScan(i)) {
-            Vec3 pw = dynamic_initializer.states[i].R * q + dynamic_initializer.states[i].p;
-            faster_lio::Point p{};
-            p.x = static_cast<float>(pw.x());
-            p.y = static_cast<float>(pw.y());
-            p.z = static_cast<float>(pw.z());
-            init_points_world->push_back(p);
+            init_points_world.push_back(dynamic_initializer.states[i].R * q + dynamic_initializer.states[i].p);
         }
     }
-    resple_lio_->kd_tree->Build(init_points_world->points);
+    resple_lio_->lba->InitMap(init_points_world, param->lba_.range_err * param->lba_.range_err + param->lba_.pose_var);
 
     std::int64_t consumed_until = resple_lio_->spl.maxTimeNs();
     while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < consumed_until) {
@@ -1678,7 +1636,7 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
               << global_offset_time + NS_TO_S(s0.time_ns) << std::defaultfloat
               << ": gravity=" << resple_lio_->gravity.transpose() << " bg=" << resple_lio_->bg.transpose()
               << " ba=" << resple_lio_->ba.transpose() << " v_end=" << s_last.v.transpose()
-              << " map points=" << init_points_world->size();
+              << " map points=" << init_points_world.size();
     return DynamicInitResult::SUCCESS;
 }
 
@@ -1782,6 +1740,9 @@ void LaserMapping::Run() {
             init_points->emplace_back(points_buffer_.front());
             points_buffer_.pop_front();
         }
+        resple_lio_->static_detector.SetReference(imu_buffer_, resple_lio_->spl.maxTimeNs());
+        LOG(INFO) << "IMU scatter at rest: acc " << resple_lio_->static_detector.AccReference() << " m/s^2, gyro "
+                  << resple_lio_->static_detector.GyrReference() << " rad/s";
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < resple_lio_->spl.maxTimeNs()) {
             imu_buffer_.pop_front();
         }
@@ -1798,7 +1759,9 @@ void LaserMapping::Run() {
         Pose3 world_from_lidar(resple_lio_->spl.q_idle, Vec3::Zero());
         world_from_lidar = world_from_lidar * param->extrin_il_;
         pcl::transformPointCloud(*init_points, *init_points_world, world_from_lidar.Mat4d(), true);
-        resple_lio_->kd_tree->Build(init_points_world->points);
+        std::vector<Vec3> init_ps;
+        for (const Point& pt : init_points_world->points) init_ps.push_back(pt.getVector3fMap().cast<double>());
+        resple_lio_->lba->InitMap(init_ps, param->lba_.range_err * param->lba_.range_err + param->lba_.pose_var);
         if_localmap_initialized = true;
         LOG(INFO) << "localmap initialized with " << init_points_world->size() << " points";
         return;
@@ -1893,6 +1856,9 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
     // buffer is not beyond the measures end
     if (imu_buffer_.back().time_ns < meas_end) return false;
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
+    if (param->camera_enable_) {
+        if (image_buffer_.back().time_ns_ < meas_end) return false;
+    }
 
     // push the imu data
     measures_.imu_.clear();
@@ -1913,6 +1879,14 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
         measures_.obs_time_ns = obss_time_buffer_.front();
         obss_id_buffer_.pop_front();
         obss_time_buffer_.pop_front();
+    }
+
+    measures_.images.clear();
+    while (!image_buffer_.empty() && image_buffer_.front().time_ns_ < meas_end) {
+        if (image_buffer_.front().time_ns_ >= meas_end - param->dt_ns) {
+            measures_.images.emplace_back(std::move(image_buffer_.front()));
+        }
+        image_buffer_.pop_front();
     }
     if (measures_.lidar_->empty()) {
         LOG(INFO) << "Empty lidar points in measures";
@@ -2081,6 +2055,10 @@ void LaserMapping::Savetrajectory() {
         if (param->pgo_.save_debug) pgo_->SaveDebug(output_dir);
         LOG(INFO) << "Save PGO-corrected states, " << traj_pgo.size() << " poses";
     }
+
+    TrajectoryGenerator::save_to_tumtxt(resple_lio_->lba->CorrectTrajectory(trajectory_, global_offset_time),
+                                        (fs::path(output_dir) / "traj_log_lba.txt").string());
+    LOG(INFO) << "Save local-BA-corrected states, " << resple_lio_->lba->NumFrames() << " frames";
 
     LOG(INFO) << "Save states in camera frame";
     std::ofstream cam_ofs((fs::path(output_dir) / "cam_log.txt").string());

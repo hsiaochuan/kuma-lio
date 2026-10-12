@@ -44,7 +44,7 @@ class LaserMapping {
     void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
     void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
     void GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg);
-    bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const string &sol_fname);
+    bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     bool CollectMeasures(const std::int64_t& meas_end);
     void PublishOdometry();
@@ -101,8 +101,7 @@ class LaserMapping {
     bool if_localmap_initialized = false;
    public:
     std::string output_dir;
-    // false forces the stationary (IMU-average) initialization
-    bool dynamic_init_ = true;
+    bool dynamic_init_ = false;
 };
 
 }  // namespace faster_lio
