@@ -140,8 +140,6 @@ LocalBA::LocalBA(const LbaParam& param) : param_(param), g_(Vec3::Zero()) {
     CHECK_GE(param_.win_size, 2);
     noise_meas_.setZero();
     noise_meas_.diagonal() << Vec3::Constant(param_.cov_gyr), Vec3::Constant(param_.cov_acc);
-    const double huber = param_.photo_huber, out = param_.photo_outlier;
-    photo_cap_ = kPattern * (out <= huber ? 0.5 * out * out : huber * (out - 0.5 * huber));
 }
 
 void LocalBA::AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc) {
@@ -153,7 +151,7 @@ void LocalBA::AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc) {
 }
 
 bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points,
-                       const Vec3& gravity, const cv::Mat& gray) {
+                       const Vec3& gravity) {
     g_ = -gravity;
     Eigen::Isometry3d odom_pose = Eigen::Isometry3d::Identity();
     odom_pose.linear() = odom.R;
@@ -191,10 +189,6 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
     h.time_ns = time_ns;
     h.odom = odom_pose;
     history_.push_back(h);
-    if (param_.photo_enable && cam_ && !gray.empty()) {
-        frame.gray = gray;
-        SelectPhotoPoints(&frame, points);
-    }
     frames_.push_back(frame);
     Timer timer;
     InsertFrame(frame, points);
@@ -582,188 +576,7 @@ double LocalBA::Evaluate(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::Vecto
         *jact *= param_.imu_coef;
     }
     residual += EvaluateLidar(xs, hess, jact);
-    if (param_.photo_enable) residual += EvaluatePhoto(xs, hess, jact);
     return residual;
-}
-
-namespace {
-// DSO's 8-pixel residual pattern
-const int kPatternOffset[8][2] = {{0, -2}, {-1, -1}, {1, -1}, {-2, 0}, {0, 0}, {2, 0}, {-1, 1}, {0, 2}};
-
-/// Bilinear intensity at `px` and, with `grad`, its image gradient; false outside the image.
-bool Sample(const cv::Mat& img, const Vec2& px, double* value, Vec2* grad) {
-    const int x = static_cast<int>(std::floor(px[0])), y = static_cast<int>(std::floor(px[1]));
-    if (x < 1 || y < 1 || x + 2 >= img.cols || y + 2 >= img.rows) return false;
-    const double fx = px[0] - x, fy = px[1] - y;
-    const uchar* r0 = img.ptr<uchar>(y);
-    const uchar* r1 = img.ptr<uchar>(y + 1);
-    const double a = r0[x], b = r0[x + 1], c = r1[x], d = r1[x + 1];
-    *value = (1 - fy) * ((1 - fx) * a + fx * b) + fy * ((1 - fx) * c + fx * d);
-    if (grad) *grad = Vec2((1 - fy) * (b - a) + fy * (d - c), (1 - fx) * (c - a) + fx * (d - b));
-    return true;
-}
-}  // namespace
-
-void LocalBA::SelectPhotoPoints(Frame* frame, const std::vector<LbaPoint>& points) const {
-    const cv::Mat& img = frame->gray;
-    const int grid = param_.photo_grid;
-    const int gw = img.cols / grid + 1, gh = img.rows / grid + 1;
-    // per cell: the LiDAR return under the strongest image gradient
-    std::vector<double> best(gw * gh, param_.photo_grad_min * param_.photo_grad_min);
-    std::vector<int> pick(gw * gh, -1);
-    Eigen::aligned_vector<Vec2> pixels(points.size());
-    Eigen::aligned_vector<Vec3> normals(points.size());  // of the map plane under the point, camera frame
-    for (size_t i = 0; i < points.size(); ++i) {
-        const Vec3 pc = R_ic_.transpose() * (points[i].p - t_ic_);
-        if (pc.z() < 0.3 || pc.norm() > param_.photo_max_depth) continue;
-        const Vec2 px = cam_->project(pc);
-        double value;
-        Vec2 g;
-        // room for the pattern, and for the patch to move a little in the other frames
-        if (px[0] < 4 || px[1] < 4 || px[0] > img.cols - 5 || px[1] > img.rows - 5 || !Sample(img, px, &value, &g)) continue;
-        const int cell = static_cast<int>(px[1] / grid) * gw + static_cast<int>(px[0] / grid);
-        if (g.squaredNorm() <= best[cell]) continue;
-        // depth edges are where gradients are strong and LiDAR depth is wrong for half the patch
-        Vec3 normal;
-        if (!PlaneNormal(frame->x.R * points[i].p + frame->x.p, &normal)) continue;
-        best[cell] = g.squaredNorm();
-        pick[cell] = static_cast<int>(i);
-        pixels[i] = px;
-        normals[i] = R_ic_.transpose() * (frame->x.R.transpose() * normal);
-    }
-    for (int i : pick) {
-        if (i < 0) continue;
-        const Vec3 pc = R_ic_.transpose() * (points[i].p - t_ic_);
-        const double plane_d = normals[i].dot(pc);
-        PhotoPoint pp;
-        bool ok = true;
-        for (int k = 0; k < kPattern && ok; ++k) {
-            const Vec2 px = pixels[i] + Vec2(kPatternOffset[k][0], kPatternOffset[k][1]);
-            // DSO puts the whole pattern at the depth of its centre; the map plane is known here,
-            // so each pattern pixel sits where its ray meets that plane
-            const Vec3 ray = cam_->bearing(px);
-            const double along = normals[i].dot(ray);
-            Vec2 g;
-            ok = std::abs(along) > 0.1 && Sample(img, px, &pp.intensity[k], &g);  // not a grazing view
-            // a pixel on a steep edge turns a small reprojection error into a large intensity error
-            const double c2 = param_.photo_grad_c * param_.photo_grad_c;
-            pp.weight[k] = c2 > 0 ? std::sqrt(c2 / (c2 + g.squaredNorm())) : 1.0;
-            pp.p[k] = R_ic_ * (ray * (plane_d / along)) + t_ic_;
-        }
-        if (!ok) continue;
-        pp.intensity.array() -= pp.intensity.mean();
-        frame->photo.push_back(pp);
-    }
-}
-
-bool LocalBA::PhotoResidual(const PhotoPoint& pp, const cv::Mat& img, const LbaState& xh, const LbaState& xt,
-                            Eigen::Matrix<double, kPattern, 1>* res, Eigen::Matrix<double, kPattern, 12>* J) const {
-    // body t from body h
-    const Mat3 R_th = xt.R.transpose() * xh.R;
-    const Vec3 t_th = xt.R.transpose() * (xh.p - xt.p);
-    const Mat3 R_ci = R_ic_.transpose();
-    Eigen::Matrix<double, 2, 3> J_proj;
-    for (int k = 0; k < kPattern; ++k) {
-        const Vec3 pb = R_th * pp.p[k] + t_th;  // body t
-        const Vec3 pc = R_ci * (pb - t_ic_);
-        if (pc.z() < 0.1) return false;
-        Vec2 g;
-        if (!Sample(img, cam_->project(pc), &(*res)[k], J ? &g : nullptr)) return false;
-        if (!J) continue;
-        if (k == 0) {
-            // one numeric projection Jacobian serves the whole pattern
-            const double e = 1e-4 * pc.z();
-            for (int a = 0; a < 3; ++a) {
-                Vec3 d = Vec3::Zero();
-                d[a] = e;
-                J_proj.col(a) = (cam_->project(pc + d) - cam_->project(pc - d)) / (2 * e);
-            }
-        }
-        const Eigen::Matrix<double, 1, 3> gb = g.transpose() * J_proj * R_ci;  // d intensity / d pb
-        J->block<1, 3>(k, 0) = -gb * R_th * Hat(pp.p[k]);
-        J->block<1, 3>(k, 3) = gb * xt.R.transpose();
-        J->block<1, 3>(k, 6) = gb * Hat(pb);
-        J->block<1, 3>(k, 9) = -gb * xt.R.transpose();
-    }
-    res->array() -= res->mean();
-    *res -= pp.intensity;
-    res->array() *= pp.weight.array();
-    if (J) {
-        J->rowwise() -= J->colwise().mean().eval();
-        *J = pp.weight.asDiagonal() * *J;
-    }
-    return true;
-}
-
-double LocalBA::PhotoCost(const Eigen::Matrix<double, kPattern, 1>& res, Eigen::Matrix<double, kPattern, 1>* w) const {
-    const double huber = param_.photo_huber;
-    double cost = 0.0;
-    for (int k = 0; k < kPattern; ++k) {
-        const double a = std::abs(res[k]);
-        if (w) (*w)[k] = a <= huber ? 1.0 : huber / a;
-        cost += a <= huber ? 0.5 * a * a : huber * (a - 0.5 * huber);
-    }
-    return cost;
-}
-
-void LocalBA::GatePhotoPairs(const StateVec& xs) {
-    const int W = static_cast<int>(xs.size());
-    photo_pair_.assign(W * W, 0);
-    photo_pairs_used_ = 0;
-    int all_seen = 0, all_inliers = 0;
-    Eigen::Matrix<double, kPattern, 1> res;
-    for (int h = 0; h < W; ++h) {
-        for (int t = 0; t < W; ++t) {
-            if (t == h || frames_[h].photo.empty() || frames_[t].gray.empty()) continue;
-            int seen = 0, inliers = 0;
-            for (const PhotoPoint& pp : frames_[h].photo) {
-                if (!PhotoResidual(pp, frames_[t].gray, xs[h], xs[t], &res, nullptr)) continue;
-                ++seen;
-                if (PhotoCost(res, nullptr) < photo_cap_) ++inliers;
-            }
-            all_seen += seen;
-            all_inliers += inliers;
-            if (seen >= kMinPhotoPatches) {
-                photo_pair_[h * W + t] = 1;
-                ++photo_pairs_used_;
-            }
-        }
-    }
-    photo_inlier_ = all_seen > 0 ? static_cast<double>(all_inliers) / all_seen : 0.0;
-}
-
-double LocalBA::EvaluatePhoto(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::VectorXd* jact) const {
-    const int W = static_cast<int>(xs.size());
-    double cost = 0.0;
-    Eigen::Matrix<double, kPattern, 1> res, w;
-    Eigen::Matrix<double, kPattern, 12> J;  // host (theta, p), target (theta, p)
-    for (int h = 0; h < W; ++h) {
-        for (int t = 0; t < W; ++t) {
-            if (!photo_pair_[h * W + t]) continue;
-            for (const PhotoPoint& pp : frames_[h].photo) {
-                if (!PhotoResidual(pp, frames_[t].gray, xs[h], xs[t], &res, hess ? &J : nullptr)) continue;
-                const double patch_cost = PhotoCost(res, &w);
-                // truncated: a patch this far off is an occlusion or a mismatch and pulls on nothing
-                if (patch_cost >= photo_cap_) {
-                    cost += photo_cap_;
-                    continue;
-                }
-                cost += patch_cost;
-                if (!hess) continue;
-                const Eigen::Matrix<double, 12, kPattern> JTw = param_.photo_coef * J.transpose() * w.asDiagonal();
-                const Eigen::Matrix<double, 12, 12> A = JTw * J;
-                const Eigen::Matrix<double, 12, 1> b = JTw * res;
-                const int ih = kDim * h, it = kDim * t;
-                hess->block<6, 6>(ih, ih) += A.block<6, 6>(0, 0);
-                hess->block<6, 6>(ih, it) += A.block<6, 6>(0, 6);
-                hess->block<6, 6>(it, ih) += A.block<6, 6>(6, 0);
-                hess->block<6, 6>(it, it) += A.block<6, 6>(6, 6);
-                jact->segment<6>(ih) += b.head<6>();
-                jact->segment<6>(it) += b.tail<6>();
-            }
-        }
-    }
-    return param_.photo_coef * cost;
 }
 
 // Voxel-SLAM LI_BA_Optimizer::damping_iter: Levenberg-Marquardt with the oldest pose held fixed.
@@ -772,9 +585,6 @@ void LocalBA::Optimize() {
     const int n = kDim * W;
     StateVec xs(W), xs_temp(W);
     for (int i = 0; i < W; ++i) xs[i] = frames_[i].x;
-
-    // which image pairs take part is settled once, at the initial poses, so the cost stays one function
-    if (param_.photo_enable) GatePhotoPairs(xs);
 
     double u = 0.01, v = 2;
     Eigen::MatrixXd Hess(n, n), D = Eigen::MatrixXd::Zero(n, n);
@@ -820,8 +630,7 @@ void LocalBA::Optimize() {
     const double moved = (xs.back().p - frames_.back().x.p).norm();
     for (int i = 0; i < W; ++i) frames_[i].x = xs[i];
     LOG(INFO) << "LBA: frame " << frames_.back().id << " planes " << factors_.size() << " cost " << residual0 << " -> "
-              << std::min(residual1, residual2) << " moved " << moved << " voxels " << map_.size() << " photo pairs " << photo_pairs_used_
-              << " inliers " << photo_inlier_;
+              << std::min(residual1, residual2) << " moved " << moved << " voxels " << map_.size();
 }
 
 Trajectory LocalBA::CorrectTrajectory(const Trajectory& traj, double time_offset) const {

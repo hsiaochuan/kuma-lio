@@ -12,7 +12,6 @@
 
 #include <Eigen/Core>
 #include <Eigen/Dense>
-#include <opencv2/core/mat.hpp>
 
 #include <pcl/io/pcd_io.h>
 #include "pose3.h"
@@ -177,18 +176,10 @@ inline Mat3 RotationFromArray(const std::vector<double> &v) {
 }
 
 
-struct RgbImage {
-    using Ptr = std::shared_ptr<RgbImage>;
-    std::string filename = std::string();
-    std::int64_t time_ns_;
-    cv::Mat image_data_;
-};
-
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
-    std::vector<RgbImage> images;
 
     int obs_id = -1;
     int64_t obs_time_ns;

@@ -9,7 +9,6 @@
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <boost/filesystem.hpp>
-#include <opencv2/opencv.hpp>
 #include "laser_mapping.h"
 #include "rtklib_.h"
 #include "rtklib_func.h"
@@ -1365,39 +1364,6 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr& msg_in) {
     imu_buffer_.emplace_back(imu);
 }
 
-void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr& msg_in) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-    static int img_count = 0;
-    if (img_count % param->image_skip_ == 0) {
-        double timestamp = msg_in->header.stamp.toSec();
-        timestamp += param->camera_time_offset_;
-        if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
-        timestamp = timestamp - global_offset_time;
-        RgbImage im;
-        im.image_data_ = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        im.time_ns_ = S_TO_NS(timestamp);
-        im.filename = std::to_string(im.time_ns_) + ".jpg";
-        image_buffer_.emplace_back(im);
-    }
-    img_count++;
-}
-
-void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr& msg_in) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-    static int img_count = 0;
-    if (img_count % param->image_skip_ == 0) {
-        double timestamp = msg_in->header.stamp.toSec();
-        timestamp += param->camera_time_offset_;
-        if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
-        timestamp = timestamp - global_offset_time;
-        RgbImage im;
-        im.image_data_ = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        im.time_ns_ = S_TO_NS(timestamp);
-        im.filename = std::to_string(im.time_ns_) + ".jpg";
-        image_buffer_.emplace_back(im);
-    }
-    img_count++;
-}
 void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     gtime_t gpst{};
@@ -1475,7 +1441,7 @@ bool LaserMapping::Init(const std::string& config_fname, const std::string& came
     LOG(INFO) << "init laser mapping from " << config_fname;
     param = std::make_shared<LaserMappingParam>();
     param->LoadFromYaml(config_fname);
-    if (param->camera_enable_ && !camera_fname.empty()) {
+    if (!camera_fname.empty()) {
         param->cam_model_ = ReadCameraFromCamerasText(camera_fname);
         if (!param->cam_model_) LOG(INFO) << "Null camera model";
     }
@@ -1521,22 +1487,12 @@ void LaserMapping::InitialSubscribers(ros::NodeHandle& nh) {
 
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(param->imu_topic_, 200000,
                                               [this](const sensor_msgs::Imu::ConstPtr& msg) { IMUCallBack(msg); });
-    bool compressed_image = false;
-    if (!compressed_image) {
-        sub_img_ = nh.subscribe<sensor_msgs::Image>(
-            param->camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr& msg) { ImageMsgCallBack(msg); });
-    } else {
-        sub_img_ = nh.subscribe<sensor_msgs::CompressedImage>(
-            param->camera_topic_, 200000,
-            [this](const sensor_msgs::CompressedImage::ConstPtr& msg) { CompressedImageCallBack(msg); });
-    }
 }
 void LaserMapping::InitialPublishers(ros::NodeHandle& nh) {
     pub_laser_cloud_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_effect_world", 100000);
     pub_odom_aft_mapped_ = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
-    if (param->camera_enable_) pub_image_ = nh.advertise<sensor_msgs::Image>("/image_raw", 100000);
     pub_frustrum_ = nh.advertise<visualization_msgs::Marker>("/frustrum", 100000);
 }
 
@@ -1792,24 +1748,6 @@ void LaserMapping::PostUpdate() {
         pgo_->AddKnot(trajectory_.back().time, body_pose, *pgo_cloud_);
     }
 
-    if (!measures_.images.empty()) {
-        for (int i = 0; i < measures_.images.size(); ++i) {
-            Eigen::Isometry3d cam_state = resple_lio_->spl.Interpolate(measures_.images[i].time_ns_);
-            const Pose3 cam_pose = Pose3(cam_state) * param->extrin_ic_;
-            cam_states.emplace_back(measures_.images[i].time_ns_, cam_pose);
-        }
-    }
-
-    if (param->bag_save_en_ && !measures_.images.empty()) {
-        static int call_once = [&]() {
-            fs::create_directories(fs::path(output_dir) / "images");
-            return 0;
-        }();
-        for (int i = 0; i < measures_.images.size(); ++i) {
-            fs::path im_save_fname = fs::path(output_dir) / "images" / measures_.images[i].filename;
-            cv::imwrite(im_save_fname.string(), measures_.images[i].image_data_);
-        }
-    }
     if (param->pcd_save_en_) {
         static int call_once = [&]() {
             fs::create_directories(fs::path(output_dir) / "map");
@@ -1846,7 +1784,6 @@ void LaserMapping::PublishROSMsg() {
     PublishOdometry();
     PublishFrameWorld();
     PublishFrameEffectWorld();
-    PublishImage();
     PublishFrustrum();
 }
 bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
@@ -1856,9 +1793,6 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
     // buffer is not beyond the measures end
     if (imu_buffer_.back().time_ns < meas_end) return false;
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
-    if (param->camera_enable_) {
-        if (image_buffer_.back().time_ns_ < meas_end) return false;
-    }
 
     // push the imu data
     measures_.imu_.clear();
@@ -1881,13 +1815,6 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
         obss_time_buffer_.pop_front();
     }
 
-    measures_.images.clear();
-    while (!image_buffer_.empty() && image_buffer_.front().time_ns_ < meas_end) {
-        if (image_buffer_.front().time_ns_ >= meas_end - param->dt_ns) {
-            measures_.images.emplace_back(std::move(image_buffer_.front()));
-        }
-        image_buffer_.pop_front();
-    }
     if (measures_.lidar_->empty()) {
         LOG(INFO) << "Empty lidar points in measures";
     }
@@ -1982,7 +1909,6 @@ void LaserMapping::PublishFrameEffectWorld() {
     if (pub_laser_cloud_effect_world_) pub_laser_cloud_effect_world_.publish(eff_scan_msg);
     if (bag_.isOpen()) bag_.write("/cloud_registered_effect_world", ros_stamp, eff_scan_msg);
 }
-void LaserMapping::PublishImage() {}
 
 void LaserMapping::PublishFrustrum() {
     if (!pub_frustrum_) return;
@@ -2059,19 +1985,6 @@ void LaserMapping::Savetrajectory() {
     TrajectoryGenerator::save_to_tumtxt(resple_lio_->lba->CorrectTrajectory(trajectory_, global_offset_time),
                                         (fs::path(output_dir) / "traj_log_lba.txt").string());
     LOG(INFO) << "Save local-BA-corrected states, " << resple_lio_->lba->NumFrames() << " frames";
-
-    LOG(INFO) << "Save states in camera frame";
-    std::ofstream cam_ofs((fs::path(output_dir) / "cam_log.txt").string());
-    cam_ofs << std::fixed;
-    for (auto& cam_state : cam_states) {
-        int64_t& time_ns = cam_state.first;
-        Pose3& cam_pose = cam_state.second;
-        cam_ofs << std::to_string(time_ns) + ".jpg" << " ";
-        cam_ofs << cam_pose.Trans().x() << " " << cam_pose.Trans().y() << " " << cam_pose.Trans().z() << " ";
-        cam_ofs << cam_pose.Quat().x() << " " << cam_pose.Quat().y() << " " << cam_pose.Quat().z() << " "
-                << cam_pose.Quat().w() << std::endl;
-    }
-    cam_ofs.close();
 }
 
 void LaserMapping::Finish() {

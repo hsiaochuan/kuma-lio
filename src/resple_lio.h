@@ -9,10 +9,9 @@
 #include "laser_mapping_param.h"
 #include "spline_state.h"
 #include "timer.h"
-#include "visual_manager.h"
 namespace faster_lio {
-// window control points (4 x 6) | ba | bg | receiver clocks (4) | yaw_ecef_enu (1) | t_ecef_enu | inverse exposure (1)
-constexpr int XSIZE = 39;
+// window control points (4 x 6) | ba | bg | receiver clocks (4) | yaw_ecef_enu (1) | t_ecef_enu
+constexpr int XSIZE = 38;
 struct PointData {
     Vec3 point_body;
     Vec3 point_world;
@@ -80,7 +79,6 @@ class RESPLE_LIO {
     static constexpr int ROT_OFFSET = 34;    // yaw, R_ecef_enu = R_ecef_enu_init * Rz(yaw), 1-dim
     static constexpr int TRANS_OFFSET = 35;  // t_ecef_enu [m]
     static constexpr int GNSS_SIZE = 8;
-    static constexpr int EXPO_OFFSET = 38;   // inverse exposure of the camera, relative to the first image
     static constexpr double GRAVITY_NORM = 9.81;
     static constexpr int kMinParallelPoints = 2048;
     void Init();
@@ -142,36 +140,6 @@ class RESPLE_LIO {
     }
     void UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd);
 
-    // ---- photometric update (camera), after FAST-LIVO2 ----
-    /// Camera-from-world at spline time `t_ns`.
-    Pose3 CameraFromWorld(int64_t t_ns) const;
-    /// World point `p_w` in the camera frame at spline time `t_ns`, and its
-    /// derivative with respect to the window control points.
-    Vec3 CameraPoint(int64_t t_ns, const Vec3& p_w, Eigen::Matrix<double, 3, CP_SIZE>* J = nullptr) const;
-    /// Null unless the camera and `vio.enable` are both on.
-    std::shared_ptr<VisualManager> visual;
-    /// Recent LiDAR points with their map-plane normals, newest last.
-    std::deque<std::pair<int64_t, PointWithNormal>> visual_scan_;
-    /// The image of the current knot interval, if any.  Its photometric rows are
-    /// stacked with the LiDAR and IMU rows in UpdateLiDARInertial().
-    bool cam_frame_valid = false;
-    cv::Mat cam_gray;
-    int64_t cam_time_ns = 0;
-    int cam_level = 0;  ///< pyramid level of the current iteration
-    double cam_error_first = -1.0, cam_error_last = -1.0;  ///< mean squared residual at full resolution
-    /// Inverse exposure time of the current image up to a common scale (FAST-LIVO2's inv_expo_time); a
-    /// random walk between images, estimated with the pose by the photometric rows.
-    double inv_expo = 1.0;
-    /// Photometric rows at pyramid `level` about the current state, in the stacked form Update() takes;
-    /// returns the mean squared residual (-1 when no patch fit in the image).
-    double CameraRows(int level, Eigen::Matrix<double, Eigen::Dynamic, XSIZE>& H,
-                      Eigen::Matrix<double, Eigen::Dynamic, 1>& z, Eigen::Matrix<double, Eigen::Dynamic, 1>& cov_inv);
-    /// Sequential photometric update on top of the LiDAR-inertial posterior.
-    void UpdateVisual();
-    bool CameraRowsActive() const {
-        return cam_frame_valid && visual->NumTracked() >= param->vio_.min_points;
-    }
-
     bool if_GNSS_aligned = false;
 
     SplineState spl;
@@ -185,9 +153,9 @@ class RESPLE_LIO {
     std::shared_ptr<LaserMappingParam> param;
     /// Local BA; its voxel map is the local map Match() queries.
     std::unique_ptr<LocalBA> lba;
-    /// Registered raw returns (world frame) waiting for the image stamp that closes their frame.
+    /// Registered raw returns (world frame) waiting for the cut that closes their frame.
     std::deque<std::pair<int64_t, LbaPoint>> lba_points_;
-    /// Close a LiDAR frame at every image stamp of this interval (every `frame_dt` without a camera),
+    /// Close a LiDAR frame every `frame_dt`,
     /// run the BA and align the spline to it.
     void UpdateLocalBA(const MeasureGroup& measures);
     int64_t lba_last_cut_ns_ = -1;

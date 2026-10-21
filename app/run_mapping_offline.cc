@@ -140,17 +140,6 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        auto img_msg = m.instantiate<sensor_msgs::Image>();
-        if (laser_mapping->param->camera_enable_ && m.getTopic() == laser_mapping->param->camera_topic_ && img_msg) {
-            laser_mapping->ImageMsgCallBack(img_msg);
-            continue;
-        }
-        auto compress_img = m.instantiate<sensor_msgs::CompressedImage>();
-        if (laser_mapping->param->camera_enable_ && m.getTopic() == laser_mapping->param->camera_topic_ &&
-            compress_img) {
-            laser_mapping->CompressedImageCallBack(compress_img);
-            continue;
-        }
         auto gnss_nav_msg = m.instantiate<sensor_msgs::NavSatFix>();
         if (laser_mapping->param->gnss_enable_ && m.getTopic() == laser_mapping->param->gnss_topic_ && gnss_nav_msg) {
             laser_mapping->GnssSolutionCallback(gnss_nav_msg);

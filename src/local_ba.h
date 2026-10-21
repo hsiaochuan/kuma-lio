@@ -16,9 +16,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <opencv2/core.hpp>
-
-#include "cameras/cameras.h"
 #include "common_lib.h"
 #include "point_cluster.h"
 #include "stamp_pose.h"
@@ -44,18 +41,9 @@ struct LbaParam {
     double fb_std_pos = 0.01;         ///< [m] noise of that pose measurement
     double fb_std_ort = 0.002;        ///< [rad]
     bool fb_keep_cov = true;          ///< leave the filter covariance alone: the BA reuses the filter's own data
-    double frame_dt = 0.1;            ///< [s] frame length when there is no camera whose stamps cut the frames
+    double frame_dt = 0.1;            ///< [s] frame length
     double map_range = 200.0;         ///< [m] voxels farther than this from the sensor are dropped
     int num_threads = 4;              ///< for refitting the voxels
-    // DSO-style photometric factors between the window's images, with the LiDAR supplying the depth
-    bool photo_enable = false;
-    double photo_coef = 1e-6;         ///< weight of the photometric cost [gray^2] against the LiDAR eigenvalue cost
-    int photo_grid = 24;              ///< [px] at most one point per image cell of this size
-    double photo_grad_min = 15.0;     ///< [gray/px] smallest image gradient a point is picked at
-    double photo_huber = 9.0;         ///< [gray] Huber threshold per pixel (DSO)
-    double photo_outlier = 20.0;      ///< [gray] a patch with a mean error beyond this is ignored
-    double photo_grad_c = 0.0;        ///< [gray/px] DSO's gradient weight c^2 / (c^2 + |grad I|^2) per pixel; 0 turns it off
-    double photo_max_depth = 30.0;    ///< [m]
 };
 
 
@@ -118,13 +106,7 @@ class LocalBA {
     explicit LocalBA(const LbaParam& param);
     void InitMap(const std::vector<Vec3>& points, double var);
     void AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc);
-    bool AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points, const Vec3& gravity,
-                  const cv::Mat& gray = cv::Mat());
-    void SetCamera(const CamModel::Ptr& cam, const Pose3& body_from_cam) {
-        cam_ = cam;
-        R_ic_ = body_from_cam.q_.toRotationMatrix();
-        t_ic_ = body_from_cam.t_;
-    }
+    bool AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points, const Vec3& gravity);
 
     const LbaState& Newest() const { return newest_; }
     void SetOdomPose(const Eigen::Isometry3d& pose) { history_.back().odom = pose; }
@@ -134,22 +116,12 @@ class LocalBA {
     int NumFrames() const { return static_cast<int>(history_.size()); }
 
    private:
-    static constexpr int kPattern = 8;
-    static constexpr int kMinPhotoPatches = 20;
-    struct PhotoPoint {
-        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-        std::array<Vec3, kPattern> p;
-        Eigen::Matrix<double, kPattern, 1> intensity;
-        Eigen::Matrix<double, kPattern, 1> weight;
-    };
     struct Frame {
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         int id = 0;
         int64_t time_ns = 0;
         LbaState x;
         std::shared_ptr<ImuPreint> imu;  ///< from the previous frame to this one
-        cv::Mat gray;                    ///< CV_8U, empty without a camera
-        Eigen::aligned_vector<PhotoPoint> photo;  ///< points hosted by this frame
     };
     using Mat9 = Eigen::Matrix<double, 9, 9>;
 
@@ -221,13 +193,6 @@ class LocalBA {
                     Eigen::VectorXd* jact) const;
     double EvaluateLidar(const std::vector<LbaState, Eigen::aligned_allocator<LbaState>>& xs, Eigen::MatrixXd* hess,
                          Eigen::VectorXd* jact) const;
-    void SelectPhotoPoints(Frame* frame, const std::vector<LbaPoint>& points) const;
-    bool PhotoResidual(const PhotoPoint& pp, const cv::Mat& img, const LbaState& xh, const LbaState& xt,
-                       Eigen::Matrix<double, kPattern, 1>* res, Eigen::Matrix<double, kPattern, 12>* J) const;
-    double PhotoCost(const Eigen::Matrix<double, kPattern, 1>& res, Eigen::Matrix<double, kPattern, 1>* w) const;
-    void GatePhotoPairs(const std::vector<LbaState, Eigen::aligned_allocator<LbaState>>& xs);
-    double EvaluatePhoto(const std::vector<LbaState, Eigen::aligned_allocator<LbaState>>& xs, Eigen::MatrixXd* hess,
-                         Eigen::VectorXd* jact) const;
     void Optimize();
 
     LbaParam param_;
@@ -238,13 +203,6 @@ class LocalBA {
     std::unordered_map<VOXEL_LOCATION, Root> map_;
     std::vector<Root*> active_;
     LbaState newest_;
-    CamModel::Ptr cam_;
-    Mat3 R_ic_ = Mat3::Identity();
-    Vec3 t_ic_ = Vec3::Zero();
-    double photo_cap_ = 0.0;
-    std::vector<char> photo_pair_;
-    int photo_pairs_used_ = 0;
-    double photo_inlier_ = 0.0;
     std::vector<const PlaneFactor*> factors_;
     std::vector<History, Eigen::aligned_allocator<History>> history_;
 };

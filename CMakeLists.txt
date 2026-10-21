@@ -21,7 +21,6 @@ find_package(catkin REQUIRED COMPONENTS
         pcl_ros
         tf
         eigen_conversions
-        cv_bridge
         velodyne_pointcloud
         velodyne_msgs
 )
@@ -32,7 +31,6 @@ add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(GTSAM REQUIRED)
-find_package(OpenCV REQUIRED)
 find_package(OpenMP REQUIRED)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -44,7 +42,6 @@ include_directories(
         ${yaml-cpp_INCLUDE_DIRS}
         ${CERES_INCLUDE_DIRS}
         ${GTSAM_INCLUDE_DIR}
-        ${OpenCV_INCLUDE_DIRS}
         include
 )
 
@@ -89,7 +86,6 @@ add_library(${PROJECT_NAME}
         src/local_ba.cpp
         src/spline_state.cpp
         src/resple_lio.cpp
-        src/visual_manager.cpp
         src/pgo/pgo_backend.cc
         src/pgo/loop_detector.cc
         src/pgo/pose_graph.cc
@@ -100,7 +96,6 @@ target_link_libraries(${PROJECT_NAME}
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
         ${CERES_LIBRARIES}
-        ${OpenCV_LIBS}
         ${OpenMP_CXX_LIBRARIES}
         glog
         yaml-cpp

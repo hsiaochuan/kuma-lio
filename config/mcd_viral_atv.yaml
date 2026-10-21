@@ -1,14 +1,10 @@
 common:
   lid_topic: "/livox/lidar"
   imu_topic: "/vn100/imu"
-  camera_topic: ""
   gnss_topic: ""
-  camera_enable: false
   gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
-  camera_time_offset: 0
-  image_skip: 1
 
 lidar_type: LIVOX
 blind: 1.0
@@ -52,14 +48,7 @@ lba:
   fb_std_pos: 0.001
   fb_std_ort: 0.0002
   fb_keep_cov: true
-  photo_enable: false
-  photo_coef: 0.000001
-  photo_grid: 24
-  photo_grad_min: 15
-  photo_huber: 9
-  photo_outlier: 20
-  photo_grad_c: 0
-  photo_max_depth: 30
+  frame_dt: 0.1
 
 pgo:
   enable: true

@@ -4,9 +4,7 @@
 #include "livox_ros_driver/CustomMsg.h"
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/Image.h>
 #include <sensor_msgs/Imu.h>
-#include <sensor_msgs/CompressedImage.h>
 #include <sensor_msgs/NavSatFix.h>
 
 #include <rosbag/bag.h>
@@ -14,7 +12,6 @@
 #include "resple_lio.h"
 #include "stamp_pose.h"
 #include "pgo/pgo_backend.h"
-#include <cv_bridge/cv_bridge.h>
 
 namespace faster_lio {
 
@@ -41,8 +38,6 @@ class LaserMapping {
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
     void VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
-    void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
-    void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
     void GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg);
     bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
@@ -50,7 +45,6 @@ class LaserMapping {
     void PublishOdometry();
     void PublishFrameWorld();
     void PublishFrameEffectWorld();
-    void PublishImage();
     void PublishFrustrum();
     void Savetrajectory();
 
@@ -65,12 +59,10 @@ class LaserMapping {
 
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
-    ros::Subscriber sub_img_;
     ros::Publisher pub_laser_cloud_world_;
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
-    ros::Publisher pub_image_;
     ros::Publisher pub_frustrum_;
 
     double global_offset_time = std::numeric_limits<double>::quiet_NaN();
@@ -78,7 +70,6 @@ class LaserMapping {
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;
     std::deque<Imu> imu_buffer_;
-    std::deque<RgbImage> image_buffer_;
     obs_t obss{};
     nav_t nav{};
     std::deque<int64_t> obss_time_buffer_;
@@ -87,7 +78,6 @@ class LaserMapping {
     MeasureGroup measures_;
     PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
-    std::vector<std::pair<int64_t, Pose3>> cam_states;
 
     std::shared_ptr<LaserMappingParam> param;
     std::unique_ptr<pgo::PgoBackend> pgo_;

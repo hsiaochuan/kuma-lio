@@ -51,26 +51,11 @@ void RESPLE_LIO::Init() {
     cov_rcp.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
     a_mat.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
-    // inverse exposure: a random walk when it is estimated, otherwise held at 1
-    a_mat(EXPO_OFFSET, EXPO_OFFSET) = 1.0;
-    cov_rcp(EXPO_OFFSET, EXPO_OFFSET) = 1e-5;
-    if (param->camera_enable_ && param->vio_.enable && param->vio_.exposure_estimate_en) {
-        cov_sys(EXPO_OFFSET, EXPO_OFFSET) = param->vio_.inv_expo_cov * dt_s;
-    }
-
     param->lba_.num_threads = param->num_threads;
     static_detector = StaticDetector(param->zupt_);
     lba = std::make_unique<LocalBA>(param->lba_);
-    if (param->camera_enable_ && param->cam_model_) lba->SetCamera(param->cam_model_, param->extrin_ic_);
     LOG(INFO) << "local BA map shared with the odometry: voxel " << param->lba_.voxel_size << " window "
               << param->lba_.win_size;
-
-    if (param->camera_enable_ && param->vio_.enable) {
-        CHECK(param->cam_model_) << "vio.enable needs camera intrinsics: a `cam: {model, width, height, params}` "
-                                    "block in the config or --camera_fname";
-        visual = std::make_shared<VisualManager>(param->vio_, param->cam_model_);
-        LOG(INFO) << "photometric update enabled, image " << param->cam_model_->w() << "x" << param->cam_model_->h();
-    }
 }
 // receiver clock index; QZSS keeps GPS time
 static int SysIdx(int sys) {
@@ -170,39 +155,9 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
         pt_meas[i].body_cov = BodyPointCov(pt_meas[i].point_body, param->lba_.range_err, param->lba_.angle_err);
     }
 
-
-    cam_frame_valid = false;
-    std::vector<PointWithNormal> scan;
-    if (visual && !measures.images.empty()) {
-        const RgbImage& image = measures.images.back();
-        cam_gray = VisualManager::ToGray(image.image_data_);
-        cam_time_ns = image.time_ns_;
-        scan.reserve(visual_scan_.size());
-        for (const auto& s : visual_scan_) scan.push_back(s.second);
-        cam_frame_valid = true;
-        cam_error_first = cam_error_last = -1.0;
-    }
-
     // lidar-inertial update
     IterativeUpdate();
 
-    // visual update
-    if (cam_frame_valid) {
-        Timer visual_timer;
-        visual->SetInvExpo(inv_expo);
-        visual->Retrieve(cam_gray, CameraFromWorld(cam_time_ns), scan);
-        const double t_retrieve = visual_timer.ElapsedMiniSeconds(true);
-        if (CameraRowsActive())
-            UpdateVisual();
-        visual->SetInvExpo(inv_expo);
-        const double t_visual_update = visual_timer.ElapsedMiniSeconds(true);
-        const int num_tracked = visual->NumTracked();
-        visual->UpdateMap(cam_gray, CameraFromWorld(cam_time_ns), scan, *lba);
-        LOG(INFO) << "Visual: tracked " << num_tracked << " added " << visual->LastAdded() << " scan " << scan.size()
-                  << " error " << cam_error_first << " -> " << cam_error_last << " inv_expo " << visual->InvExpo()
-                  << " time [ms]: retrieve " << t_retrieve << " update " << t_visual_update << " map "
-                  << visual_timer.ElapsedMiniSeconds();
-    }
     if (param->zupt_.enable) {
         const bool was_static = is_static;
         is_static = static_detector.Quiet() && TrajectoryStill();
@@ -218,15 +173,6 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
         Eigen::Quaterniond interp_q;
         spl.itpQuaternion(pt_data.time_ns, &interp_q);
         pt_data.point_world = interp_q * pt_data.point_body + interp_pos;
-    }
-    if (visual) {
-        for (const PointData& pt_data : pt_meas) {
-            if (pt_data.if_valid) {
-                visual_scan_.emplace_back(pt_data.time_ns, PointWithNormal{pt_data.point_world, pt_data.ppl_normal});
-            }
-        }
-        const int64_t oldest = spl.maxTimeNs() - S_TO_NS(param->vio_.scan_window);
-        while (!visual_scan_.empty() && visual_scan_.front().first < oldest) visual_scan_.pop_front();
     }
     const double t_update = stage_timer.ElapsedMiniSeconds(true);
     UpdateLocalBA(measures);
@@ -465,7 +411,7 @@ void RESPLE_LIO::InitGnssState(const sol_t& sol) {
 Eigen::Matrix<double, XSIZE, 1> RESPLE_LIO::getState() {
     Eigen::Matrix<double, CP_SIZE, 1> cps_win = spl.getRCPs();
     Eigen::Matrix<double, XSIZE, 1> state;
-    state << cps_win, ba, bg, clk, theta_ecef_enu, t_ecef_enu, inv_expo;
+    state << cps_win, ba, bg, clk, theta_ecef_enu, t_ecef_enu;
     return state;
 }
 
@@ -667,40 +613,6 @@ void RESPLE_LIO::prepLiDAR(PointData& pt_data) const {
     }
 }
 
-Pose3 RESPLE_LIO::CameraFromWorld(int64_t t_ns) const {
-    Eigen::Quaterniond q_itp;
-    spl.itpQuaternion(t_ns, &q_itp);
-    const Pose3 world_from_body(q_itp, spl.itpPosition(t_ns));
-    return (world_from_body * param->extrin_ic_).GetInverse();
-}
-
-Vec3 RESPLE_LIO::CameraPoint(int64_t t_ns, const Vec3& p_w, Eigen::Matrix<double, 3, CP_SIZE>* J) const {
-    // p_c = R_ci * R_wi(t)^T * (p_w - p_i(t)) + t_ci
-    Eigen::Quaterniond q_itp;
-    Jacobian43 J_ortdel;
-    Jacobian J_pos;
-    spl.itpQuaternion(t_ns, &q_itp, nullptr, J ? &J_ortdel : nullptr);
-    const Vec3 p_itp = spl.itpPosition(t_ns, J ? &J_pos : nullptr);
-    const Mat3 R_ci = param->extrin_ic_.Mat3d().transpose();
-    const Vec3 t_ci = -R_ci * param->extrin_ic_.Trans();
-    const Vec3 p_b = q_itp.inverse() * (p_w - p_itp);
-    if (J) {
-        Eigen::Matrix<double, 3, 4> drot;
-        dRotInv(p_w - p_itp, q_itp, drot);
-        const Mat3 R_cw = R_ci * q_itp.inverse().toRotationMatrix();
-        J->setZero();
-        // same knot-to-window mapping as prepIMU: a knot outside the window has no column
-        const int recur_st_id = spl.num_knot - 4;
-        for (int i = 0; i < 4; i++) {
-            const int j = static_cast<int>(J_pos.start_idx) + i - recur_st_id;
-            if (j < 0) continue;
-            J->block<3, 3>(0, j * 6) = -R_cw * J_pos.d_val_d_knot[i];
-            J->block<3, 3>(0, j * 6 + 3) = R_ci * drot * J_ortdel.d_val_d_knot[i];
-        }
-    }
-    return R_ci * p_b + t_ci;
-}
-
 void RESPLE_LIO::propRCP() {
     Eigen::Matrix<double, 24, 1> cps_win = spl.getRCPs();
     Eigen::Matrix<double, 6, 1> cp_prop_pos = 2 * cps_win.block<6, 1>(12, 0) - cps_win.block<6, 1>(0, 0);
@@ -770,130 +682,6 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     Update(z, mat_cov_inv, H, x_prop, P_prop);
 }
 
-double RESPLE_LIO::CameraRows(int level, Eigen::Matrix<double, Eigen::Dynamic, XSIZE>& H,
-                              Eigen::Matrix<double, Eigen::Dynamic, 1>& z,
-                              Eigen::Matrix<double, Eigen::Dynamic, 1>& cov_inv) {
-    // The photometric rows all touch the same columns -- the CP_SIZE control points and the inverse
-    // exposure -- so the thousands of patch pixels are stacked as the VSIZE rows of their square-root
-    // information form: the same normal equations, a fraction of the size.
-    constexpr int VSIZE = CP_SIZE + 1;
-    H.setZero(VSIZE, XSIZE);
-    z.setZero(VSIZE);
-    cov_inv.setZero(VSIZE);
-    // per patch pixel: d(intensity)/d(camera point), chained onto the control points
-    const int num_cam_pt = visual->NumTracked();
-    const int patch = visual->PatchPixels();
-    const Pose3 camera_from_world = CameraFromWorld(cam_time_ns);
-    VecX res(patch), d_expo(patch);
-    Eigen::Matrix<double, Eigen::Dynamic, 2> G(patch, 2);
-    Eigen::Matrix<double, Eigen::Dynamic, 3> J(patch, 3);  // over (pixel, inverse exposure)
-    Eigen::Matrix<double, 2, 3> J_proj;
-    const double pix_var = param->vio_.pixel_std * param->vio_.pixel_std;
-    const double w = 1.0 / param->vio_.img_point_cov;
-    const bool expo_en = param->vio_.exposure_estimate_en;
-    Eigen::Matrix<double, 3, CP_SIZE> J_cp;
-    Eigen::Matrix<double, 3, VSIZE> L = Eigen::Matrix<double, 3, VSIZE>::Zero();
-    L(2, CP_SIZE) = 1.0;
-    Eigen::Matrix<double, VSIZE, VSIZE> HTH = Eigen::Matrix<double, VSIZE, VSIZE>::Zero();
-    Eigen::Matrix<double, VSIZE, 1> HTz = Eigen::Matrix<double, VSIZE, 1>::Zero();
-    double error = 0.0;
-    int num_rows = 0;
-    for (int i = 0; i < num_cam_pt; ++i) {
-        if (!visual->PatchResidual(i, cam_gray, camera_from_world, level, inv_expo, res, G, d_expo, &J_proj)) continue;
-        CameraPoint(cam_time_ns, visual->TrackedPoint(i), &J_cp);
-        J.leftCols<2>() = G;
-        if (expo_en) {
-            J.col(2) = d_expo;
-        } else {
-            J.col(2).setZero();
-        }
-        // The patch constrains its own pixel position and the exposure: information A = J^T J / var,
-        // gradient g = -J^T res / var.  With a position error of pixel_std on the visual point itself the
-        // information saturates, A' = (A^-1 + D)^-1 with D = pix_var on the two pixel axes, instead of
-        // growing with every pixel of every patch.
-        Eigen::Matrix3d A = w * J.transpose() * J;
-        Eigen::Vector3d g = -w * J.transpose() * res;
-        if (pix_var > 0.0) {
-            // Huber on the pixel displacement the patch asks for: a patch that wants to move far more than
-            // the point can be wrong is mismatched (occlusion, glass, motion blur), not informative.
-            const Eigen::Matrix2d A_px = A.topLeftCorner<2, 2>();
-            const double disp =
-                (A_px.determinant() > 1e-12 ? Eigen::Vector2d(A_px.inverse() * g.head<2>()) : Eigen::Vector2d::Zero())
-                    .norm();
-            const double huber = param->vio_.huber_px * param->vio_.pixel_std;
-            const double rw = (huber > 0.0 && disp > huber) ? huber / disp : 1.0;
-            A *= rw;
-            g *= rw;
-            const Eigen::Matrix3d M =
-                (Eigen::Matrix3d::Identity() + A * Eigen::Vector3d(pix_var, pix_var, 0.0).asDiagonal()).inverse();
-            A = M * A;
-            g = M * g;
-        }
-        L.block<2, CP_SIZE>(0, 0) = J_proj * J_cp;
-        HTH.noalias() += (L.transpose() * A * L) / w;
-        HTz.noalias() += (L.transpose() * g) / w;
-        error += res.squaredNorm();
-        num_rows += patch;
-    }
-    if (level == 0 && num_rows > 0) {
-        cam_error_last = error / num_rows;
-        if (cam_error_first < 0.0) cam_error_first = cam_error_last;
-    }
-    // HTH = V diag(e) V^T: rows sqrt(e_k) v_k^T with z_k = v_k^T HTz / sqrt(e_k) reproduce
-    // H^T H and H^T z exactly; the pose at one instant has 6 DoF, so most e_k are zero.
-    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, VSIZE, VSIZE>> eig(HTH);
-    const double e_min = 1e-9 * std::max(eig.eigenvalues().maxCoeff(), 1e-300);
-    for (int k = 0; k < VSIZE; ++k) {
-        cov_inv(k) = 1.0 / param->vio_.img_point_cov;
-        const double e = eig.eigenvalues()(k);
-        if (e <= e_min) continue;
-        const double s = std::sqrt(e);
-        H.block(k, 0, 1, CP_SIZE) = s * eig.eigenvectors().col(k).head<CP_SIZE>().transpose();
-        H(k, EXPO_OFFSET) = s * eig.eigenvectors()(CP_SIZE, k);
-        z(k) = eig.eigenvectors().col(k).dot(HTz) / s;
-    }
-    return num_rows > 0 ? error / num_rows : -1.0;
-}
-
-void RESPLE_LIO::UpdateVisual() {
-    // FAST-LIVO2 order: the LiDAR-inertial posterior is the prior of a separate
-    // iterated update that only sees the image, coarse to fine over the pyramid.
-    const Eigen::Matrix<double, XSIZE, 1> x_prop = getState();
-    const Eigen::Matrix<double, XSIZE, XSIZE> P_prop = cov_rcp;
-    Eigen::Matrix<double, Eigen::Dynamic, XSIZE> H;
-    Eigen::Matrix<double, Eigen::Dynamic, 1> z, cov_inv;
-    Eigen::Matrix<double, XSIZE, XSIZE> KH_last = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
-    bool updated = false;
-    for (int level = param->vio_.patch_pyramid_level - 1; level >= 0; --level) {
-        double last_error = std::numeric_limits<double>::max();
-        Eigen::Matrix<double, XSIZE, 1> old_state = getState();
-        for (int it = 0; it < param->vio_.max_iterations; ++it) {
-            const double error = CameraRows(level, H, z, cov_inv);
-            if (error < 0.0) break;
-            if (level == 0) {
-                cam_error_last = error;
-                if (cam_error_first < 0.0) cam_error_first = error;
-            }
-            // an iteration that raised the photometric error is undone and ends the level
-            if (error > last_error) {
-                UpdateState(old_state);
-                break;
-            }
-            last_error = error;
-            old_state = getState();
-            Update(z, cov_inv, H, x_prop, P_prop);
-            KH_last = KH;
-            updated = true;
-            const Eigen::Matrix<double, XSIZE, 1> step = getState() - old_state;
-            if (step.head<CP_SIZE>().norm() < 1e-5) break;
-        }
-    }
-    if (updated) {
-        cov_rcp = (Eigen::MatrixXd::Identity(XSIZE, XSIZE) - KH_last) * P_prop;
-        cov_rcp = 0.5 * (cov_rcp + cov_rcp.transpose());
-    }
-}
-
 bool RESPLE_LIO::TrajectoryStill() {
     const int64_t t1 = spl.maxTimeNs() - param->dt_ns;
     const int64_t t0 = t1 - S_TO_NS(param->zupt_.window);
@@ -950,45 +738,31 @@ void RESPLE_LIO::UpdateLocalBA(const MeasureGroup& measures) {
         pv.var = R * BodyPointCov(p_body, param->lba_.range_err, param->lba_.angle_err) * R.transpose();
         lba_points_.emplace_back(pt.GetTimeNs(), pv);
     }
-    // The spline has no frames, so every image stamp closes one: the points since the last
-    // stamp, moved into the body frame at this stamp. Without a camera the frames are frame_dt long and close at the start of this knot interval.
-    std::vector<int64_t> cuts;
-    std::vector<cv::Mat> grays;  // the image at each cut, for the BA's photometric factors
-    if (param->camera_enable_) {
-        for (const RgbImage& image : measures.images) {
-            cuts.push_back(image.time_ns_);
-            if (param->lba_.photo_enable)
-                grays.push_back(VisualManager::ToGray(image.image_data_));
-        }
-    } else {
-        const int64_t t_ns = spl.maxTimeNs() - param->dt_ns;
-        if (lba_last_cut_ns_ < 0) lba_last_cut_ns_ = t_ns;
-        if (t_ns - lba_last_cut_ns_ >= S_TO_NS(param->lba_.frame_dt))
-            cuts.push_back(t_ns);
+    // The spline has no frames, so one closes every frame_dt at the start of this knot interval: the
+    // points since the last cut, moved into the body frame at this instant.
+    const int64_t t_ns = spl.maxTimeNs() - param->dt_ns;
+    if (lba_last_cut_ns_ < 0) lba_last_cut_ns_ = t_ns;
+    if (t_ns - lba_last_cut_ns_ < S_TO_NS(param->lba_.frame_dt)) return;
+    lba_last_cut_ns_ = t_ns;
+    const Eigen::Isometry3d pose = spl.Interpolate(t_ns);
+    LbaState odom;
+    odom.R = pose.linear();
+    odom.p = pose.translation();
+    odom.v = spl.itpPosition<1>(t_ns);
+    odom.bg = bg;
+    odom.ba = ba;
+    std::vector<LbaPoint> points;
+    while (!lba_points_.empty() && lba_points_.front().first <= t_ns) {
+        const LbaPoint& pv = lba_points_.front().second;
+        points.push_back(LbaPoint{odom.R.transpose() * (pv.p - odom.p),
+                                  odom.R.transpose() * pv.var * odom.R});
+        lba_points_.pop_front();
     }
-    for (size_t c = 0; c < cuts.size(); ++c) {
-        const int64_t t_ns = cuts[c];
-        lba_last_cut_ns_ = t_ns;
-        const Eigen::Isometry3d pose = spl.Interpolate(t_ns);
-        LbaState odom;
-        odom.R = pose.linear();
-        odom.p = pose.translation();
-        odom.v = spl.itpPosition<1>(t_ns);
-        odom.bg = bg;
-        odom.ba = ba;
-        std::vector<LbaPoint> points;
-        while (!lba_points_.empty() && lba_points_.front().first <= t_ns) {
-            const LbaPoint& pv = lba_points_.front().second;
-            points.push_back(LbaPoint{odom.R.transpose() * (pv.p - odom.p),
-                                      odom.R.transpose() * pv.var * odom.R});
-            lba_points_.pop_front();
-        }
-        // local ba
-        if (lba->AddFrame(t_ns, odom, points, gravity, c < grays.size() ? grays[c] : cv::Mat()))
-            // align the front end
-            AlignToBA(t_ns, lba->Newest());
-        lba->SetOdomPose(spl.Interpolate(t_ns));
-    }
+    // local ba
+    if (lba->AddFrame(t_ns, odom, points, gravity))
+        // align the front end
+        AlignToBA(t_ns, lba->Newest());
+    lba->SetOdomPose(spl.Interpolate(t_ns));
 }
 
 void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {
@@ -1053,7 +827,6 @@ void RESPLE_LIO::UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd) {
     clk = xupd.segment<4>(CLK_OFFSET);
     theta_ecef_enu = xupd(ROT_OFFSET);
     t_ecef_enu = xupd.segment<3>(TRANS_OFFSET);
-    inv_expo = std::max(xupd(EXPO_OFFSET), 1e-3);
 }
 
 }  // namespace faster_lio

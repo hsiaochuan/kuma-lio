@@ -1,14 +1,10 @@
 common:
   lid_topic: "/hesai/pandar"
   imu_topic: "/alphasense/imu"
-  camera_topic: "/alphasense/cam0/image_raw"
   gnss_topic: ""
-  camera_enable: true
   gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
-  camera_time_offset: 0
-  image_skip: 4
 
 lidar_type: HESAI
 blind: 0.5
@@ -44,22 +40,6 @@ cam:
                 0.00673218, -0.999975, 0.00235777]
   extrin_t_cl: [-0.0549762, 0.0675401, -0.0520599]
 
-vio:
-  enable: true
-  max_iterations: 5
-  patch_size: 8
-  patch_pyramid_level: 4
-  grid_size: 32
-  voxel_size: 0.5
-  outlier_threshold: 40
-  img_point_cov: 1000
-  pixel_std: 0
-  huber_px: 0
-  scan_window: 0.3
-  exposure_estimate_en: true
-  inv_expo_cov: 0.01
-  min_points: 10
-
 lba:
   win_size: 10
   voxel_size: 0.5
@@ -77,14 +57,7 @@ lba:
   fb_std_pos: 0.001
   fb_std_ort: 0.0002
   fb_keep_cov: true
-  photo_enable: true
-  photo_coef: 0.00000001
-  photo_grid: 24
-  photo_grad_min: 15
-  photo_huber: 9
-  photo_outlier: 20
-  photo_grad_c: 50
-  photo_max_depth: 30
+  frame_dt: 0.1
 
 pgo:
   enable: false

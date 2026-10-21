@@ -12,7 +12,6 @@
 #include "pgo/pgo_types.h"
 #include "local_ba.h"
 #include "static_detector.h"
-#include "visual_manager.h"
 using namespace faster_lio;
 class LaserMappingParam {
    public:
@@ -43,14 +42,10 @@ class LaserMappingParam {
     }
     std::string lidar_topic_;
     std::string imu_topic_;
-    std::string camera_topic_;
     std::string gnss_topic_;
-    bool camera_enable_ = false;
     bool gnss_enable_ = false;
     bool acc_ratio_ = false;
     double lidar_time_offset_ = 0.;
-    double camera_time_offset_ = 0.;
-    int image_skip_ = 3;
 
     std::string lidar_type;
     float det_range_ = 300.0f;
@@ -105,7 +100,6 @@ class LaserMappingParam {
     double pcd_save_interval_ = 30;
     bool bag_save_en_ = false;
 
-    faster_lio::VisualParam vio_;
     faster_lio::LbaParam lba_;
     faster_lio::ZuptParam zupt_;
     faster_lio::pgo::PgoParam pgo_;
@@ -115,14 +109,10 @@ class LaserMappingParam {
         try {
             lidar_topic_ = yaml["common"]["lid_topic"].as<std::string>();
             imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
-            camera_topic_ = yaml["common"]["camera_topic"].as<std::string>();
             gnss_topic_ = yaml["common"]["gnss_topic"].as<std::string>();
-            camera_enable_ = yaml["common"]["camera_enable"].as<bool>();
             gnss_enable_ = yaml["common"]["gnss_enable"].as<bool>();
             acc_ratio_ = yaml["common"]["acc_ratio"].as<bool>();
-            camera_time_offset_ = yaml["common"]["camera_time_offset"].as<double>();
             lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();
-            image_skip_ = yaml["common"]["image_skip"].as<int>();
             blind = yaml["blind"].as<double>();
             lidar_type = yaml["lidar_type"].as<std::string>();
             point_filter_num = yaml["point_filter_num"].as<int>();
@@ -236,14 +226,6 @@ class LaserMappingParam {
                 lba_.fb_std_pos = b["fb_std_pos"].as<double>(lba_.fb_std_pos);
                 lba_.fb_std_ort = b["fb_std_ort"].as<double>(lba_.fb_std_ort);
                 lba_.fb_keep_cov = b["fb_keep_cov"].as<bool>(lba_.fb_keep_cov);
-                lba_.photo_enable = b["photo_enable"].as<bool>(lba_.photo_enable);
-                lba_.photo_coef = b["photo_coef"].as<double>(lba_.photo_coef);
-                lba_.photo_grid = b["photo_grid"].as<int>(lba_.photo_grid);
-                lba_.photo_grad_min = b["photo_grad_min"].as<double>(lba_.photo_grad_min);
-                lba_.photo_huber = b["photo_huber"].as<double>(lba_.photo_huber);
-                lba_.photo_outlier = b["photo_outlier"].as<double>(lba_.photo_outlier);
-                lba_.photo_grad_c = b["photo_grad_c"].as<double>(lba_.photo_grad_c);
-                lba_.photo_max_depth = b["photo_max_depth"].as<double>(lba_.photo_max_depth);
                 lba_.frame_dt = b["frame_dt"].as<double>(lba_.frame_dt);
                 lba_.map_range = b["map_range"].as<double>(lba_.map_range);
             }
@@ -260,27 +242,7 @@ class LaserMappingParam {
                 zupt_.std_gyr = z["std_gyr"].as<double>(zupt_.std_gyr);
             }
 
-            if (yaml["vio"]) {
-                const YAML::Node v = yaml["vio"];
-                vio_.enable = v["enable"].as<bool>(vio_.enable);
-                vio_.max_iterations = v["max_iterations"].as<int>(vio_.max_iterations);
-                vio_.patch_size = v["patch_size"].as<int>(vio_.patch_size);
-                vio_.patch_pyramid_level = v["patch_pyramid_level"].as<int>(vio_.patch_pyramid_level);
-                vio_.grid_size = v["grid_size"].as<int>(vio_.grid_size);
-                vio_.voxel_size = v["voxel_size"].as<double>(vio_.voxel_size);
-                vio_.outlier_threshold = v["outlier_threshold"].as<double>(vio_.outlier_threshold);
-                vio_.img_point_cov = v["img_point_cov"].as<double>(vio_.img_point_cov);
-                vio_.pixel_std = v["pixel_std"].as<double>(vio_.pixel_std);
-                vio_.huber_px = v["huber_px"].as<double>(vio_.huber_px);
-                vio_.scan_window = v["scan_window"].as<double>(vio_.scan_window);
-                vio_.exposure_estimate_en = v["exposure_estimate_en"].as<bool>(vio_.exposure_estimate_en);
-                vio_.inv_expo_cov = v["inv_expo_cov"].as<double>(vio_.inv_expo_cov);
-                vio_.min_points = v["min_points"].as<int>(vio_.min_points);
-                vio_.converge_en = v["converge_en"].as<bool>(vio_.converge_en);
-                vio_.max_view_angle = v["max_view_angle"].as<double>(vio_.max_view_angle);
-            }
-
-            if (camera_enable_) {
+            if (yaml["cam"]) {
                 // intrinsics as one COLMAP cameras.txt line: MODEL WIDTH HEIGHT PARAMS[]
                 if (yaml["cam"]["model"].IsDefined()) {
                     std::ostringstream line;
