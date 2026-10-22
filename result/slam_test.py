@@ -16,16 +16,13 @@ from pathlib import Path
 from enum import Enum
 import shutil
 import re
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 # Use the evo checked out in third_party/evo (not any pip-installed evo) for ATE evaluation
 _EVO_DIR = str(Path(__file__).resolve().parent.parent / "third_party" / "evo")
 if _EVO_DIR not in sys.path:
     sys.path.insert(0, _EVO_DIR)
-from evo.tools.settings import SETTINGS
 from evo.core import metrics, sync
+from evo import main_ape
 from evo.tools import file_interface
 # ──────────────────────────────────────────────
 # Data Structures
@@ -301,52 +298,11 @@ class SLAMTestRunner:
         return result
 
     def evaluate_ate(self, ground_truth_fname: str, output_dir: str) -> float:
-        est_fname = os.path.join(output_dir, "traj_log.txt")
         traj_ref = file_interface.read_tum_trajectory_file(ground_truth_fname)
-        traj_est = file_interface.read_tum_trajectory_file(est_fname)
+        traj_est = file_interface.read_tum_trajectory_file(os.path.join(output_dir, "traj_log.txt"))
         traj_ref, traj_est = sync.associate_trajectories(traj_ref, traj_est, max_diff=0.05)
-        traj_est.align(traj_ref, correct_scale=False)
-
-        ape_metric = metrics.APE(metrics.PoseRelation.translation_part)
-        ape_metric.process_data((traj_ref, traj_est))
-
-        self.save_ate_plots(traj_ref, traj_est, ape_metric, output_dir)
-
-        return ape_metric.get_statistic(metrics.StatisticsType.rmse)
-
-    def save_ate_plots(self, traj_ref, traj_est, ape_metric: "metrics.APE", output_dir: str):
-        try:
-            from evo.tools import plot
-            """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
-            over the trajectory index, and the trajectory colored by APE error."""
-            error_array = ape_metric.error
-            stats = ape_metric.get_all_statistics()
-
-            fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
-            plot.error_array(
-                fig_error.gca(), error_array,
-                statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
-                name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
-            )
-            fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
-            plt.close(fig_error)
-
-            plot_mode = plot.PlotMode.xy
-            fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
-            ax = plot.prepare_axis(fig_traj, plot_mode)
-            plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
-                      color=SETTINGS.plot_reference_color, label="reference",
-                      alpha=SETTINGS.plot_reference_alpha)
-            plot.traj_colormap(
-                ax, traj_est, error_array, plot_mode,
-                min_map=stats["min"], max_map=stats["max"],
-                title="ATE mapped onto trajectory (aligned)",
-            )
-            fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
-            plt.close(fig_traj)
-        except :
-            print("Error in plotting ATE")
-
+        result = main_ape.ape(traj_ref, traj_est, metrics.PoseRelation.translation_part, align=True)
+        return result.stats["rmse"]
 
     # ── Dataset run ────────────────────────────
 
@@ -555,13 +511,36 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         name="mars_lvig",
         config={".":"../config/mars_lvig.yaml"},
         bag_files=[
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS02.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS02.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS03.bag",
         ],
         gnss_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/GNSS",
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
     )
-    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig]
+    m3dgr = DatasetConfig(
+        name="m3dgr",
+        config={".":"../config/m3dgr.yaml"},
+        bag_files=[
+            f"/media/hsiaochuan/hsiaochuan-data/M3DGR/{seq}.bag"
+            for seq in ["Dark01",
+                        "Dark02",
+                        "Occlusion04",
+                        "Outdoor01",
+                        "Varying-illu03",
+                        "Varying-illu05",
+                        "GNSS-denial01",
+                        "GNSS-denial02",
+                        ]
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/groundtruth",
+    )
+    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
