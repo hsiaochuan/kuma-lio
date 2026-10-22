@@ -376,6 +376,10 @@ void LocalBA::RefitRoot(Root* root_ptr, RefitScratch* scratch) const {
             }
         }
     } // for layer
+    if (!root.active) {
+        std::vector<PlaneFactor>().swap(root.factors);
+        root.planes.shrink_to_fit();
+    }
 }
 
 void LocalBA::Marginalize(const Frame& frame) {
@@ -389,6 +393,8 @@ void LocalBA::Marginalize(const Frame& frame) {
                 cell.fix_cov += cell.win.front().cov;
             }
             cell.win.erase(cell.win.begin());
+            // most cells leave the window for good: give the capacity back (100k voxels on a long run)
+            if (cell.win.empty()) std::vector<WinPoints>().swap(cell.win);
         }
     }
 }
@@ -455,21 +461,26 @@ bool LocalBA::PlaneNormal(const Vec3& p, Vec3* normal) const {
 
 // Voxel-SLAM LidarFactor::acc_evaluate2: the cost of a plane is the smallest eigenvalue of the
 // covariance of all its points, with the closed-form gradient and Hessian over the window poses.
+// Parallel in two passes that keep the serial result bit for bit: the per-plane terms are computed
+// independently, then every Hessian block (and gradient segment) is summed over the planes in their
+// original order, so each element sees the same sequence of additions as a single loop would.
 double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::VectorXd* jact) const {
     const int W = static_cast<int>(xs.size());
-    double residual = 0.0;
-    Eigen::MatrixXd H6;
-    Eigen::VectorXd g6;
-    if (hess) {
-        H6 = Eigen::MatrixXd::Zero(6 * W, 6 * W);
-        g6 = Eigen::VectorXd::Zero(6 * W);
-    }
-    Eigen::aligned_vector<Vec3> viRiTuk(W);
-    Eigen::aligned_vector<Mat3> viRiTukukT(W);
-    Eigen::aligned_vector<Eigen::Matrix<double, 3, 6>> Auk(W);
-    PointCluster pcr;
-    for (const PlaneFactor* factor : factors_) {
-        const PlaneFactor& f = *factor;
+    const int F = static_cast<int>(factors_.size());
+    const int threads = F > 256 ? param_.num_threads : 1;
+    std::vector<double> lambda0(F);
+    // per plane: ukukT, umumT; per plane and window frame: Auk, viRiTuk, viRiTukukT, the gradient and the diagonal block
+    std::vector<double> NNs(hess ? F : 0);
+    Eigen::aligned_vector<Mat3> ukukTs(hess ? F : 0), umumTs(hess ? F : 0);
+    Eigen::aligned_vector<Eigen::Matrix<double, 3, 6>> Auks(hess ? F * W : 0);
+    Eigen::aligned_vector<Vec3> viRiTuks(hess ? F * W : 0);
+    Eigen::aligned_vector<Mat3> viRiTukukTs(hess ? F * W : 0);
+    Eigen::aligned_vector<Eigen::Matrix<double, 6, 1>> jjts(hess ? F * W : 0);
+    Eigen::aligned_vector<Eigen::Matrix<double, 6, 6>> Hdiags(hess ? F * W : 0);
+#pragma omp parallel for num_threads(threads) schedule(static)
+    for (int k = 0; k < F; ++k) {
+        const PlaneFactor& f = *factors_[k];
+        PointCluster pcr;
         PointCluster sig = f.fix;
         for (int i = 0; i < W; ++i) {
             if (f.win[i].N == 0) continue;
@@ -480,7 +491,7 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
         const Vec3 vBar = sig.v / NN;
         const Eigen::SelfAdjointEigenSolver<Mat3> saes(sig.P / NN - vBar * vBar.transpose());
         const Vec3 lmbd = saes.eigenvalues();
-        residual += lmbd[0];
+        lambda0[k] = lmbd[0];
         if (!hess) continue;
 
         const Mat3 U = saes.eigenvectors();
@@ -488,6 +499,9 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
         const Mat3 ukukT = uk * uk.transpose();
         Mat3 umumT = Mat3::Zero();
         for (int i = 1; i < 3; ++i) umumT += 2.0 / (lmbd[0] - lmbd[i]) * U.col(i) * U.col(i).transpose();
+        NNs[k] = NN;
+        ukukTs[k] = ukukT;
+        umumTs[k] = umumT;
 
         for (int i = 0; i < W; ++i) {
             if (f.win[i].N == 0) continue;
@@ -495,61 +509,79 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
             const Vec3& vi = f.win[i].v;
             const Mat3& Ri = xs[i].R;
             const double ni = f.win[i].N;
+            Vec3& viRiTuk = viRiTuks[k * W + i];
+            Mat3& viRiTukukT = viRiTukukTs[k * W + i];
+            Eigen::Matrix<double, 3, 6>& Auk = Auks[k * W + i];
 
             const Mat3 vihat = Hat(vi);
             const Vec3 RiTuk = Ri.transpose() * uk;
             const Mat3 RiTukhat = Hat(RiTuk);
             const Vec3 PiRiTuk = Pi * RiTuk;
-            viRiTuk[i] = vihat * RiTuk;
-            viRiTukukT[i] = viRiTuk[i] * uk.transpose();
+            viRiTuk = vihat * RiTuk;
+            viRiTukukT = viRiTuk * uk.transpose();
 
             const Vec3 ti_v = xs[i].p - vBar;
             const double ukTti_v = uk.dot(ti_v);
             const Mat3 combo1 = Hat(PiRiTuk) + vihat * ukTti_v;
             const Vec3 combo2 = Ri * vi + ni * ti_v;
-            Auk[i].block<3, 3>(0, 0) = (Ri * Pi + ti_v * vi.transpose()) * RiTukhat - Ri * combo1;
-            Auk[i].block<3, 3>(0, 3) = combo2 * uk.transpose() + combo2.dot(uk) * Mat3::Identity();
-            Auk[i] /= NN;
+            Auk.block<3, 3>(0, 0) = (Ri * Pi + ti_v * vi.transpose()) * RiTukhat - Ri * combo1;
+            Auk.block<3, 3>(0, 3) = combo2 * uk.transpose() + combo2.dot(uk) * Mat3::Identity();
+            Auk /= NN;
 
-            const Eigen::Matrix<double, 6, 1> jjt = Auk[i].transpose() * uk;
-            g6.segment<6>(6 * i) += jjt;
+            const Eigen::Matrix<double, 6, 1> jjt = Auk.transpose() * uk;
+            jjts[k * W + i] = jjt;
 
-            const Mat3 HRt = 2.0 / NN * (1.0 - ni / NN) * viRiTukukT[i];
-            Eigen::Matrix<double, 6, 6> Hb = Auk[i].transpose() * umumT * Auk[i];
+            const Mat3 HRt = 2.0 / NN * (1.0 - ni / NN) * viRiTukukT;
+            Eigen::Matrix<double, 6, 6> Hb = Auk.transpose() * umumT * Auk;
             Hb.block<3, 3>(0, 0) += 2.0 / NN * (combo1 - RiTukhat * Pi) * RiTukhat -
-                                    2.0 / NN / NN * viRiTuk[i] * viRiTuk[i].transpose() - 0.5 * Hat(jjt.head<3>());
+                                    2.0 / NN / NN * viRiTuk * viRiTuk.transpose() - 0.5 * Hat(jjt.head<3>());
             Hb.block<3, 3>(0, 3) += HRt;
             Hb.block<3, 3>(3, 0) += HRt.transpose();
             Hb.block<3, 3>(3, 3) += 2.0 / NN * (ni - ni * ni / NN) * ukukT;
-            H6.block<6, 6>(6 * i, 6 * i) += Hb;
-        }
-        for (int i = 0; i < W - 1; ++i) {
-            if (f.win[i].N == 0) continue;
-            const double ni = f.win[i].N;
-            for (int j = i + 1; j < W; ++j) {
-                if (f.win[j].N == 0) continue;
-                const double nj = f.win[j].N;
-                Eigen::Matrix<double, 6, 6> Hb = Auk[i].transpose() * umumT * Auk[j];
-                Hb.block<3, 3>(0, 0) += -2.0 / NN / NN * viRiTuk[i] * viRiTuk[j].transpose();
-                Hb.block<3, 3>(0, 3) += -2.0 * nj / NN / NN * viRiTukukT[i];
-                Hb.block<3, 3>(3, 0) += -2.0 * ni / NN / NN * viRiTukukT[j].transpose();
-                Hb.block<3, 3>(3, 3) += -2.0 * ni * nj / NN / NN * ukukT;
-                H6.block<6, 6>(6 * i, 6 * j) += Hb;
-            }
+            Hdiags[k * W + i] = Hb;
         }
     }
-    if (hess) {
-        for (int i = 0; i < W; ++i) {
-            jact->segment<6>(kDim * i) += g6.segment<6>(6 * i);
-            for (int j = 0; j < W; ++j) {
-                // only the upper triangle was filled
-                if (j >= i) {
-                    hess->block<6, 6>(kDim * i, kDim * j) += H6.block<6, 6>(6 * i, 6 * j);
-                } else {
-                    hess->block<6, 6>(kDim * i, kDim * j) += H6.block<6, 6>(6 * j, 6 * i).transpose();
-                }
+    double residual = 0.0;
+    for (int k = 0; k < F; ++k) residual += lambda0[k];
+    if (!hess) return residual;
+
+    // one task per upper-triangle block (i, j); the diagonal ones also carry the gradient segment
+    std::vector<std::pair<int, int>> blocks;
+    for (int i = 0; i < W; ++i)
+        for (int j = i; j < W; ++j) blocks.emplace_back(i, j);
+    const int num_blocks = static_cast<int>(blocks.size());
+#pragma omp parallel for num_threads(threads) schedule(dynamic)
+    for (int b = 0; b < num_blocks; ++b) {
+        const int i = blocks[b].first, j = blocks[b].second;
+        Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();
+        if (i == j) {
+            Eigen::Matrix<double, 6, 1> g = Eigen::Matrix<double, 6, 1>::Zero();
+            for (int k = 0; k < F; ++k) {
+                if (factors_[k]->win[i].N == 0) continue;
+                g += jjts[k * W + i];
+                H += Hdiags[k * W + i];
+            }
+            jact->segment<6>(kDim * i) += g;
+        } else {
+            for (int k = 0; k < F; ++k) {
+                const PlaneFactor& f = *factors_[k];
+                if (f.win[i].N == 0 || f.win[j].N == 0) continue;
+                const double NN = NNs[k];
+                const double ni = f.win[i].N;
+                const double nj = f.win[j].N;
+                const Eigen::Matrix<double, 3, 6>& Auki = Auks[k * W + i];
+                const Eigen::Matrix<double, 3, 6>& Aukj = Auks[k * W + j];
+                Eigen::Matrix<double, 6, 6> Hb = Auki.transpose() * umumTs[k] * Aukj;
+                Hb.block<3, 3>(0, 0) += -2.0 / NN / NN * viRiTuks[k * W + i] * viRiTuks[k * W + j].transpose();
+                Hb.block<3, 3>(0, 3) += -2.0 * nj / NN / NN * viRiTukukTs[k * W + i];
+                Hb.block<3, 3>(3, 0) += -2.0 * ni / NN / NN * viRiTukukTs[k * W + j].transpose();
+                Hb.block<3, 3>(3, 3) += -2.0 * ni * nj / NN / NN * ukukTs[k];
+                H += Hb;
             }
         }
+        // only the upper triangle was summed
+        hess->block<6, 6>(kDim * i, kDim * j) += H;
+        if (j != i) hess->block<6, 6>(kDim * j, kDim * i) += H.transpose();
     }
     return residual;
 }

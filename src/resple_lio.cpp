@@ -178,6 +178,11 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
     UpdateLocalBA(measures);
     LOG(INFO) << "Stage time [ms]: update " << t_update << " lba " << stage_timer.ElapsedMiniSeconds()
               << " raw points " << measures.lidar_->size();
+    if (spl.num_knot % 1000 == 0) {
+        LOG(INFO) << "Biases at " << NS_TO_S(spl.maxTimeNs()) << " s: ba " << ba.transpose() << " (std "
+                  << cov_rcp.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().cwiseSqrt().transpose() << ") bg "
+                  << bg.transpose();
+    }
 
     if (gnss_epoch_ok && !if_GNSS_aligned) {
         // align the antenna, not the IMU, with the SPP fix
@@ -458,14 +463,19 @@ void RESPLE_LIO::IterativeUpdate() {
     const int max_iter = 5;
     const int n_iter = 1;
     const double eps = 0.1;
-    Timer timer;
+    Timer timer, stage;
+    double t_match = 0.0, t_solve = 0.0;
     for (int i = 0; i < max_iter; i++) {
         Eigen::Matrix<double, XSIZE, 1> rcpi = getState();
         if (converged) {
+            stage.ElapsedMiniSeconds(true);
             num_eff = Match();
+            t_match += stage.ElapsedMiniSeconds(true);
         }
         if (num_eff > 0) {
+            stage.ElapsedMiniSeconds(true);
             UpdateLiDARInertial(num_eff, rcp_prop, cov_prop);
+            t_solve += stage.ElapsedMiniSeconds(true);
         } else {
             LOG(INFO) << "No effective points";
             break;
@@ -491,7 +501,7 @@ void RESPLE_LIO::IterativeUpdate() {
               << " Imu: " << imu_meas.size()
               << " Effect Points: " << num_eff
               << " GNSS " << tdcp_meas.size()
-              << " Time: " << update_time;
+              << " Time: " << update_time << " match " << t_match << " solve " << t_solve;
 }
 double RESPLE_LIO::AntennaRange(int64_t t_ns, const Vec3& sv_pos, Eigen::Matrix<double, 1, XSIZE>* H) const {
     Eigen::Quaterniond q_itp;

@@ -1439,6 +1439,9 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
 
 bool LaserMapping::Init(const std::string& config_fname, const std::string& camera_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
+    // Eigen would otherwise split every large product over all cores (the build has -fopenmp): a thread-team
+    // fork/join per filter iteration, which costs far more than the product itself at a few hundred rows
+    Eigen::setNbThreads(1);
     param = std::make_shared<LaserMappingParam>();
     param->LoadFromYaml(config_fname);
     if (!camera_fname.empty()) {
