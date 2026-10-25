@@ -52,7 +52,6 @@ void RESPLE_LIO::Init() {
     a_mat.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
     param->lba_.num_threads = param->num_threads;
-    static_detector = StaticDetector(param->zupt_);
     lba = std::make_unique<LocalBA>(param->lba_);
     LOG(INFO) << "local BA map shared with the odometry: voxel " << param->lba_.voxel_size << " window "
               << param->lba_.win_size;
@@ -104,10 +103,7 @@ static bool Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu, const std::vector<Vec3
 }
 void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
     Timer stage_timer;
-    for (const Imu& imu : measures.imu_) {
-        lba->AddImu(imu.time_ns, imu.angular_velocity, imu.linear_acceleration);
-        static_detector.Add(imu);
-    }
+    for (const Imu& imu : measures.imu_) lba->AddImu(imu.time_ns, imu.angular_velocity, imu.linear_acceleration);
     if (measures.lidar_->empty()) {
         LOG(INFO) << "No LiDAR data, skip process measurement";
         return;
@@ -158,13 +154,6 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
     // lidar-inertial update
     IterativeUpdate();
 
-    if (param->zupt_.enable) {
-        const bool was_static = is_static;
-        is_static = static_detector.Quiet() && TrajectoryStill();
-        if (is_static) ZeroVelocityUpdate();
-        if (is_static != was_static)
-            LOG(INFO) << "ZUPT: " << (is_static ? "at rest" : "moving") << " from " << NS_TO_S(spl.maxTimeNs()) << " s";
-    }
     const int num_pt = static_cast<int>(pt_meas.size());
 #pragma omp parallel for num_threads(param->num_threads) if (num_pt > kMinParallelPoints)
     for (int i = 0; i < num_pt; ++i) {
@@ -692,52 +681,7 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     Update(z, mat_cov_inv, H, x_prop, P_prop);
 }
 
-bool RESPLE_LIO::TrajectoryStill() {
-    const int64_t t1 = spl.maxTimeNs() - param->dt_ns;
-    const int64_t t0 = t1 - S_TO_NS(param->zupt_.window);
-    if (t0 < spl.start_t_ns) return false;
-    const Eigen::Isometry3d a = spl.Interpolate(t0), b = spl.Interpolate(t1);
-    return (b.translation() - a.translation()).norm() < param->zupt_.max_move &&
-           Eigen::AngleAxisd(a.linear().transpose() * b.linear()).angle() < param->zupt_.max_turn;
-}
-
-void RESPLE_LIO::ZeroVelocityUpdate() {
-    // rows: linear velocity, then angular rate, at the start of the newest knot interval
-    const int64_t t_ns = spl.maxTimeNs() - param->dt_ns;
-    Eigen::Matrix<double, 6, XSIZE> H = Eigen::Matrix<double, 6, XSIZE>::Zero();
-    Eigen::Matrix<double, 6, 1> innov, R_inv;
-    Eigen::Quaterniond q;
-    Vec3 rot_vel;
-    Jacobian43 J_ortdel;
-    Jacobian33 J_gyro;
-    Jacobian J_vel;
-    spl.itpQuaternion(t_ns, &q, &rot_vel, &J_ortdel, &J_gyro);
-    innov.head<3>() = -spl.itpPosition<1>(t_ns, &J_vel);
-    innov.tail<3>() = -rot_vel;
-    const int recur_st_id = spl.num_knot - 4;
-    for (int i = 0; i < 4; ++i) {
-        const int j = static_cast<int>(J_vel.start_idx) + i - recur_st_id;
-        if (j < 0) continue;
-        H.block<3, 3>(0, j * 6) = J_vel.d_val_d_knot[i] * Mat3::Identity();
-        H.block<3, 3>(3, j * 6 + 3) = J_gyro.d_val_d_knot[i];
-    }
-    R_inv.head<3>().setConstant(1.0 / (param->zupt_.std_vel * param->zupt_.std_vel));
-    R_inv.tail<3>().setConstant(1.0 / (param->zupt_.std_gyr * param->zupt_.std_gyr));
-
-    const Eigen::Matrix<double, XSIZE, XSIZE> cov_prior = cov_rcp;
-    const Eigen::Matrix<double, XSIZE, 1> x_prior = getState();
-    Update<6>(innov, R_inv, H, x_prior, cov_prior);
-    cov_rcp = (Eigen::Matrix<double, XSIZE, XSIZE>::Identity() - KH) * cov_prior;
-    cov_rcp = 0.5 * (cov_rcp + cov_rcp.transpose());
-}
-
 void RESPLE_LIO::UpdateLocalBA(const MeasureGroup& measures) {
-    if (is_static) {
-        // the scans of a sensor at rest add nothing to the map
-        lba_points_.clear();
-        lba_last_cut_ns_ = spl.maxTimeNs() - param->dt_ns;
-        return;
-    }
     for (const Point& pt : measures.lidar_->points) {
         const Vec3 p_body = param->extrin_il_ * Vec3(pt.getVector3fMap().cast<double>());
         Eigen::Quaterniond q;
@@ -776,10 +720,12 @@ void RESPLE_LIO::UpdateLocalBA(const MeasureGroup& measures) {
 }
 
 void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {
-    // Rows: position, then the three body axes in the world frame.  The axes carry the rotation
-    // with the Jacobian the LiDAR rows already use; their 9 rows hold 2 / sigma^2 per angle.
-    Eigen::Matrix<double, 12, XSIZE> H = Eigen::Matrix<double, 12, XSIZE>::Zero();
-    Eigen::Matrix<double, 12, 1> innov, R_inv;
+    // One update with both measurements of the refined frame.  Rows: position, then the three body
+    // axes in the world frame (they carry the rotation with the Jacobian the LiDAR rows already use;
+    // their 9 rows hold 2 / sigma^2 per angle), then the gyroscope and accelerometer biases.
+    const LbaParam& lp = param->lba_;
+    Eigen::Matrix<double, 18, XSIZE> H = Eigen::Matrix<double, 18, XSIZE>::Zero();
+    Eigen::Matrix<double, 18, 1> innov, R_inv;
     Eigen::Quaterniond q;
     Jacobian43 J_ortdel;
     Jacobian J_pos;
@@ -803,19 +749,27 @@ void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {
         if (j < 0) continue;
         H.block<3, 3>(0, j * 6) = J_pos.d_val_d_knot[i] * Mat3::Identity();
     }
-    R_inv.head<3>().setConstant(1.0 / (param->lba_.fb_std_pos * param->lba_.fb_std_pos));
-    R_inv.tail<9>().setConstant(0.5 / (param->lba_.fb_std_ort * param->lba_.fb_std_ort));
+    R_inv.head<3>().setConstant(1.0 / (lp.fb_std_pos * lp.fb_std_pos));
+    R_inv.segment<9>(3).setConstant(0.5 / (lp.fb_std_ort * lp.fb_std_ort));
+    // the newest frame's biases as the BA left them
+    H.block<3, 3>(12, BG_OFFSET).setIdentity();
+    H.block<3, 3>(15, BA_OFFSET).setIdentity();
+    innov.segment<3>(12) = x.bg - bg;
+    innov.segment<3>(15) = x.ba - ba;
+    R_inv.segment<3>(12).setConstant(1.0 / (lp.fb_std_bg * lp.fb_std_bg));
+    R_inv.segment<3>(15).setConstant(1.0 / (lp.fb_std_ba * lp.fb_std_ba));
 
     const Eigen::Matrix<double, XSIZE, XSIZE> cov_prior = cov_rcp;
     const Eigen::Matrix<double, XSIZE, 1> x_prior = getState();
-    Update<12>(innov, R_inv, H, x_prior, cov_prior);
-    if (!param->lba_.fb_keep_cov) {
+    Update<18>(innov, R_inv, H, x_prior, cov_prior);
+    if (!lp.fb_keep_cov) {
         cov_rcp = (Eigen::Matrix<double, XSIZE, XSIZE>::Identity() - KH) * cov_prior;
         cov_rcp = 0.5 * (cov_rcp + cov_rcp.transpose());
     }
     const Eigen::Isometry3d after = spl.Interpolate(t_ns);
-    LOG(INFO) << "LBA align: offset " << innov.head<3>().norm() << " m " << innov.tail<9>().norm() / std::sqrt(2.0)
-              << " rad, left " << (x.p - after.translation()).norm() << " m";
+    LOG(INFO) << "LBA align: offset " << innov.head<3>().norm() << " m " << innov.segment<9>(3).norm() / std::sqrt(2.0)
+              << " rad, left " << (x.p - after.translation()).norm() << " m, bias offset bg "
+              << innov.segment<3>(12).norm() << " ba " << innov.segment<3>(15).norm();
 }
 
 void RESPLE_LIO::UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd) {

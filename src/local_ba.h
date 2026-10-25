@@ -32,6 +32,8 @@ struct LbaParam {
     double imu_coef = 2.5e-5;         ///< weight of the IMU cost against the LiDAR eigenvalue cost
     double cov_gyr = 1e-4;            ///< [(rad/s)^2] per gyroscope sample
     double cov_acc = 1.0;             ///< [(m/s^2)^2] per accelerometer sample
+    double rdw_gyr = 1e-4;            ///< [(rad/s)^2 / s] gyroscope bias random walk (Voxel-SLAM rdw_gyr)
+    double rdw_acc = 1e-4;            ///< [(m/s^2)^2 / s] accelerometer bias random walk (Voxel-SLAM rdw_acc)
     double sigma_num = 3.0;           ///< a plane explains a point within this many standard deviations
     double pose_var = 1e-4;           ///< [m^2] pose uncertainty added to every map point
     double range_err = 0.02;          ///< [m] LiDAR range error
@@ -40,6 +42,8 @@ struct LbaParam {
     double r_base = 0.001;            ///< [m^2] added to the per-point residual variance when cov_en
     double fb_std_pos = 0.01;         ///< [m] noise of that pose measurement
     double fb_std_ort = 0.002;        ///< [rad]
+    double fb_std_bg = 1e-3;          ///< [rad/s] noise of the BA gyroscope bias fed back with the pose
+    double fb_std_ba = 1e-2;          ///< [m/s^2] noise of the BA accelerometer bias fed back with the pose
     bool fb_keep_cov = true;          ///< leave the filter covariance alone: the BA reuses the filter's own data
     double frame_dt = 0.1;            ///< [s] frame length
     double map_range = 200.0;         ///< [m] voxels farther than this from the sensor are dropped
@@ -69,37 +73,42 @@ struct LbaState {
     Mat3 R = Mat3::Identity();
     Vec3 p = Vec3::Zero();
     Vec3 v = Vec3::Zero();
-    Vec3 bg = Vec3::Zero();  ///< the biases are the filter's and are not optimized: one second of
-    Vec3 ba = Vec3::Zero();  ///< window cannot tell a bias from motion the LiDAR leaves unobserved
+    Vec3 bg = Vec3::Zero();
+    Vec3 ba = Vec3::Zero();
 };
 
-/// IMU preintegration between two frames (Voxel-SLAM IMU_PRE) at fixed biases.
+/// IMU preintegration between two frames (Voxel-SLAM IMU_PRE), integrated at the biases of the first
+/// frame and corrected to first order when the BA moves them.
 class ImuPreint {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     using Mat9 = Eigen::Matrix<double, 9, 9>;
-    using Mat18 = Eigen::Matrix<double, 18, 18>;
-    using Vec18 = Eigen::Matrix<double, 18, 1>;
+    using Mat30 = Eigen::Matrix<double, 30, 30>;
+    using Vec30 = Eigen::Matrix<double, 30, 1>;
 
-    ImuPreint(const Vec3& bg, const Vec3& ba, const Eigen::Matrix<double, 6, 6>& noise_meas)
-        : bg_(bg), ba_(ba), noise_meas_(noise_meas) {}
+    ImuPreint(const Vec3& bg, const Vec3& ba, const Eigen::Matrix<double, 6, 6>& noise_meas,
+              const Eigen::Matrix<double, 6, 6>& noise_walk)
+        : bg_(bg), ba_(ba), noise_meas_(noise_meas), noise_walk_(noise_walk) {}
     void Add(const Vec3& gyro, const Vec3& acc, double dt);
-    double Evaluate(const LbaState& s1, const LbaState& s2, const Vec3& g, Mat18* jtj = nullptr,
-                    Vec18* gg = nullptr) const;
+    /// Residual (R p v bg ba) between the two frames, with the Gauss-Newton terms over both (R p v bg ba).
+    double Evaluate(const LbaState& s1, const LbaState& s2, const Vec3& g, Mat30* jtj = nullptr,
+                    Vec30* gg = nullptr) const;
 
    private:
     Vec3 bg_, ba_;
-    Eigen::Matrix<double, 6, 6> noise_meas_;
+    Eigen::Matrix<double, 6, 6> noise_meas_, noise_walk_;
     Mat3 R_delta_ = Mat3::Identity();
     Vec3 p_delta_ = Vec3::Zero(), v_delta_ = Vec3::Zero();
+    Mat3 R_bg_ = Mat3::Zero(), p_bg_ = Mat3::Zero(), p_ba_ = Mat3::Zero(), v_bg_ = Mat3::Zero(), v_ba_ = Mat3::Zero();
     Mat9 cov_ = Mat9::Zero();
+    Eigen::Matrix<double, 6, 6> cov_walk_ = Eigen::Matrix<double, 6, 6>::Zero();
     double dtime_ = 0.0;
 };
 
 class LocalBA {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    static constexpr int kDim = 9;      ///< R p v
+    static constexpr int kDim = 15;     ///< R p v bg ba
     static constexpr int kLayers = 3;   ///< fixed depth of the voxel grid
     static constexpr int kCells = 64;   ///< finest cells per layer-0 voxel, 4 per axis
 
@@ -197,7 +206,7 @@ class LocalBA {
 
     LbaParam param_;
     Vec3 g_;  ///< gravity acceleration, world frame
-    Eigen::Matrix<double, 6, 6> noise_meas_;
+    Eigen::Matrix<double, 6, 6> noise_meas_, noise_walk_;
     std::deque<Imu> imu_buf_;
     std::deque<Frame, Eigen::aligned_allocator<Frame>> frames_;
     std::unordered_map<VOXEL_LOCATION, Root> map_;

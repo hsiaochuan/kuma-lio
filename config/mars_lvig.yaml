@@ -24,8 +24,8 @@ coeff_cov: 2.0
 std_sys_pos: 0.1
 std_sys_ort: 0.1
 cov_acc: [1.0, 1.0, 1.0]
-cov_gyro: [0.1, 0.1, 0.1]
-cov_bg: [0.2, 0.2, 0.2]
+cov_gyro: [0.001, 0.001, 0.001]
+cov_bg: [1.0e-6, 1.0e-6, 1.0e-6]
 
 pcd_save_en: false
 pcd_save_interval: 30

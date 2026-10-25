@@ -11,7 +11,6 @@
 #include "pose3.h"
 #include "pgo/pgo_types.h"
 #include "local_ba.h"
-#include "static_detector.h"
 using namespace faster_lio;
 class LaserMappingParam {
    public:
@@ -101,7 +100,6 @@ class LaserMappingParam {
     bool bag_save_en_ = false;
 
     faster_lio::LbaParam lba_;
-    faster_lio::ZuptParam zupt_;
     faster_lio::pgo::PgoParam pgo_;
 
     void LoadFromYaml(const std::string& config_fname) {
@@ -217,6 +215,8 @@ class LaserMappingParam {
                 lba_.imu_coef = b["imu_coef"].as<double>(lba_.imu_coef);
                 lba_.cov_gyr = b["cov_gyr"].as<double>(lba_.cov_gyr);
                 lba_.cov_acc = b["cov_acc"].as<double>(lba_.cov_acc);
+                lba_.rdw_gyr = b["rdw_gyr"].as<double>(lba_.rdw_gyr);
+                lba_.rdw_acc = b["rdw_acc"].as<double>(lba_.rdw_acc);
                 lba_.sigma_num = b["sigma_num"].as<double>(lba_.sigma_num);
                 lba_.pose_var = b["pose_var"].as<double>(lba_.pose_var);
                 lba_.range_err = b["range_err"].as<double>(lba_.range_err);
@@ -225,21 +225,11 @@ class LaserMappingParam {
                 lba_.r_base = b["r_base"].as<double>(lba_.r_base);
                 lba_.fb_std_pos = b["fb_std_pos"].as<double>(lba_.fb_std_pos);
                 lba_.fb_std_ort = b["fb_std_ort"].as<double>(lba_.fb_std_ort);
+                lba_.fb_std_bg = b["fb_std_bg"].as<double>(lba_.fb_std_bg);
+                lba_.fb_std_ba = b["fb_std_ba"].as<double>(lba_.fb_std_ba);
                 lba_.fb_keep_cov = b["fb_keep_cov"].as<bool>(lba_.fb_keep_cov);
                 lba_.frame_dt = b["frame_dt"].as<double>(lba_.frame_dt);
                 lba_.map_range = b["map_range"].as<double>(lba_.map_range);
-            }
-
-            if (yaml["zupt"]) {
-                const YAML::Node z = yaml["zupt"];
-                zupt_.enable = z["enable"].as<bool>(zupt_.enable);
-                zupt_.window = z["window"].as<double>(zupt_.window);
-                zupt_.noise_ratio = z["noise_ratio"].as<double>(zupt_.noise_ratio);
-                zupt_.peak_ratio = z["peak_ratio"].as<double>(zupt_.peak_ratio);
-                zupt_.max_move = z["max_move"].as<double>(zupt_.max_move);
-                zupt_.max_turn = z["max_turn"].as<double>(zupt_.max_turn);
-                zupt_.std_vel = z["std_vel"].as<double>(zupt_.std_vel);
-                zupt_.std_gyr = z["std_gyr"].as<double>(zupt_.std_gyr);
             }
 
             if (yaml["cam"]) {

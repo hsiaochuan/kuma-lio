@@ -96,39 +96,61 @@ void ImuPreint::Add(const Vec3& gyro, const Vec3& acc, double dt) {
     B.block<3, 3>(3, 3) = R_dt2_2;
     B.block<3, 3>(6, 3) = R_dt;
     cov_ = A * cov_ * A.transpose() + B * noise_meas_ * B.transpose();
+    cov_walk_ += noise_walk_ * dt;
+
+    // first-order dependence of the deltas on the biases, before the deltas move on
+    p_ba_ += v_ba_ * dt - R_dt2_2;
+    p_bg_ += v_bg_ * dt - R_dt2_2 * acc_skew * R_bg_;
+    v_ba_ -= R_dt;
+    v_bg_ -= R_dt * acc_skew * R_bg_;
+    R_bg_ = R_inc.transpose() * R_bg_ - R_jr * dt;
 
     p_delta_ += v_delta_ * dt + R_dt2_2 * a;
     v_delta_ += R_dt * a;
     R_delta_ = R_delta_ * R_inc;
 }
 
-double ImuPreint::Evaluate(const LbaState& s1, const LbaState& s2, const Vec3& g, Mat18* jtj, Vec18* gg) const {
-    const Mat3 res_r = R_delta_.transpose() * s1.R.transpose() * s2.R;
+// Voxel-SLAM IMU_PRE::give_evaluate
+double ImuPreint::Evaluate(const LbaState& s1, const LbaState& s2, const Vec3& g, Mat30* jtj, Vec30* gg) const {
+    using Mat15 = Eigen::Matrix<double, 15, 15>;
+    const Vec3 dbg = s1.bg - bg_, dba = s1.ba - ba_;
+    const Mat3 R_corr = R_delta_ * ExpMat(Vec3(R_bg_ * dbg));
+    const Vec3 p_corr = p_delta_ + p_bg_ * dbg + p_ba_ * dba;
+    const Vec3 v_corr = v_delta_ + v_bg_ * dbg + v_ba_ * dba;
+    const Mat3 res_r = R_corr.transpose() * s1.R.transpose() * s2.R;
     const Vec3 exp_v = s1.R.transpose() * (s2.v - s1.v - dtime_ * g);
     const Vec3 exp_t = s1.R.transpose() * (s2.p - s1.p - s1.v * dtime_ - 0.5 * dtime_ * dtime_ * g);
     const Vec3 log_r = LogMat(res_r);
 
-    Eigen::Matrix<double, 9, 1> rr;
-    rr.segment<3>(0) = log_r;
-    rr.segment<3>(3) = exp_t - p_delta_;
-    rr.segment<3>(6) = exp_v - v_delta_;
-    const Mat9 cov_inv = cov_.inverse();
+    Eigen::Matrix<double, 15, 1> rr;
+    rr << log_r, exp_t - p_corr, exp_v - v_corr, s2.bg - s1.bg, s2.ba - s1.ba;
+    Mat15 cov = Mat15::Zero();
+    cov.topLeftCorner<9, 9>() = cov_;
+    cov.bottomRightCorner<6, 6>() = cov_walk_;
+    const Mat15 cov_inv = cov.inverse();
 
     if (jtj) {
-        Eigen::Matrix<double, 9, 18> joc = Eigen::Matrix<double, 9, 18>::Zero();
+        Eigen::Matrix<double, 15, 30> joc = Eigen::Matrix<double, 15, 30>::Zero();
         const Mat3 JR_inv = RightJacobianInv(log_r);
         const Mat3 R1T = s1.R.transpose();
         // s1
         joc.block<3, 3>(0, 0) = -JR_inv * s2.R.transpose() * s1.R;
+        joc.block<3, 3>(0, 9) = -JR_inv * res_r.transpose() * RightJacobian(Vec3(R_bg_ * dbg)) * R_bg_;
         joc.block<3, 3>(3, 0) = Hat(exp_t);
         joc.block<3, 3>(3, 3) = -R1T;
         joc.block<3, 3>(3, 6) = -R1T * dtime_;
+        joc.block<3, 3>(3, 9) = -p_bg_;
+        joc.block<3, 3>(3, 12) = -p_ba_;
         joc.block<3, 3>(6, 0) = Hat(exp_v);
         joc.block<3, 3>(6, 6) = -R1T;
+        joc.block<3, 3>(6, 9) = -v_bg_;
+        joc.block<3, 3>(6, 12) = -v_ba_;
+        joc.block<6, 6>(9, 9) = -Eigen::Matrix<double, 6, 6>::Identity();
         // s2
-        joc.block<3, 3>(0, 9) = JR_inv;
-        joc.block<3, 3>(3, 12) = R1T;
-        joc.block<3, 3>(6, 15) = R1T;
+        joc.block<3, 3>(0, 15) = JR_inv;
+        joc.block<3, 3>(3, 18) = R1T;
+        joc.block<3, 3>(6, 21) = R1T;
+        joc.block<6, 6>(9, 24) = Eigen::Matrix<double, 6, 6>::Identity();
 
         *jtj = joc.transpose() * cov_inv * joc;
         *gg = joc.transpose() * cov_inv * rr;
@@ -140,6 +162,8 @@ LocalBA::LocalBA(const LbaParam& param) : param_(param), g_(Vec3::Zero()) {
     CHECK_GE(param_.win_size, 2);
     noise_meas_.setZero();
     noise_meas_.diagonal() << Vec3::Constant(param_.cov_gyr), Vec3::Constant(param_.cov_acc);
+    noise_walk_.setZero();
+    noise_walk_.diagonal() << Vec3::Constant(param_.rdw_gyr), Vec3::Constant(param_.rdw_acc);
 }
 
 void LocalBA::AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc) {
@@ -167,7 +191,7 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
         const Frame& prev = frames_.back();
 
         // midpoint integration over (prev.time, time], holding the end samples where the buffer falls short
-        frame.imu = std::make_shared<ImuPreint>(prev.x.bg, prev.x.ba, noise_meas_);
+        frame.imu = std::make_shared<ImuPreint>(prev.x.bg, prev.x.ba, noise_meas_, noise_walk_);
         CHECK(!imu_buf_.empty()) << "local BA frame without IMU";
         while (imu_buf_.size() > 1 && imu_buf_[1].time_ns <= prev.time_ns) imu_buf_.pop_front();
         int64_t cursor = prev.time_ns;
@@ -593,8 +617,8 @@ double LocalBA::Evaluate(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::Vecto
         hess->setZero();
         jact->setZero();
     }
-    ImuPreint::Mat18 jtj;
-    ImuPreint::Vec18 gg;
+    ImuPreint::Mat30 jtj;
+    ImuPreint::Vec30 gg;
     for (int i = 0; i + 1 < W; ++i) {
         residual += frames_[i + 1].imu->Evaluate(xs[i], xs[i + 1], g_, hess ? &jtj : nullptr, hess ? &gg : nullptr);
         if (hess) {
@@ -611,7 +635,7 @@ double LocalBA::Evaluate(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::Vecto
     return residual;
 }
 
-// Voxel-SLAM LI_BA_Optimizer::damping_iter: Levenberg-Marquardt with the oldest pose held fixed.
+// Voxel-SLAM LI_BA_Optimizer::damping_iter: Levenberg-Marquardt with the oldest pose and biases held fixed.
 void LocalBA::Optimize() {
     const int W = static_cast<int>(frames_.size());
     const int n = kDim * W;
@@ -627,11 +651,14 @@ void LocalBA::Optimize() {
         if (is_calc_hess) {
             residual1 = Evaluate(xs, &Hess, &JacT);
             if (iter == 0) residual0 = residual1;
-            // the gauge is the oldest pose; its velocity stays free
-            Hess.topRows(6).setZero();
-            Hess.leftCols(6).setZero();
-            Hess.block<6, 6>(0, 0).setIdentity();
-            JacT.head(6).setZero();
+            // the gauge is the oldest pose; its biases, as the last window left them, anchor the random
+            // walk (Voxel-SLAM fixes the whole oldest state); its velocity stays free
+            for (const int k : {0, 9}) {
+                Hess.middleRows(k, 6).setZero();
+                Hess.middleCols(k, 6).setZero();
+                Hess.block<6, 6>(k, k).setIdentity();
+                JacT.segment<6>(k).setZero();
+            }
         }
         D.diagonal() = Hess.diagonal();
         dxi = (Hess + u * D).ldlt().solve(-JacT);
@@ -639,8 +666,8 @@ void LocalBA::Optimize() {
             xs_temp[j].R = xs[j].R * ExpMat(dxi.segment<3>(kDim * j));
             xs_temp[j].p = xs[j].p + dxi.segment<3>(kDim * j + 3);
             xs_temp[j].v = xs[j].v + dxi.segment<3>(kDim * j + 6);
-            xs_temp[j].bg = xs[j].bg;
-            xs_temp[j].ba = xs[j].ba;
+            xs_temp[j].bg = xs[j].bg + dxi.segment<3>(kDim * j + 9);
+            xs_temp[j].ba = xs[j].ba + dxi.segment<3>(kDim * j + 12);
         }
         const double q1 = 0.5 * dxi.dot(u * D * dxi - JacT);
         residual2 = Evaluate(xs_temp, nullptr, nullptr);
@@ -662,7 +689,8 @@ void LocalBA::Optimize() {
     const double moved = (xs.back().p - frames_.back().x.p).norm();
     for (int i = 0; i < W; ++i) frames_[i].x = xs[i];
     LOG(INFO) << "LBA: frame " << frames_.back().id << " planes " << factors_.size() << " cost " << residual0 << " -> "
-              << std::min(residual1, residual2) << " moved " << moved << " voxels " << map_.size();
+              << std::min(residual1, residual2) << " moved " << moved << " voxels " << map_.size() << " bg "
+              << xs.back().bg.transpose() << " ba " << xs.back().ba.transpose();
 }
 
 Trajectory LocalBA::CorrectTrajectory(const Trajectory& traj, double time_offset) const {

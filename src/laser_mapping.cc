@@ -1699,9 +1699,6 @@ void LaserMapping::Run() {
             init_points->emplace_back(points_buffer_.front());
             points_buffer_.pop_front();
         }
-        resple_lio_->static_detector.SetReference(imu_buffer_, resple_lio_->spl.maxTimeNs());
-        LOG(INFO) << "IMU scatter at rest: acc " << resple_lio_->static_detector.AccReference() << " m/s^2, gyro "
-                  << resple_lio_->static_detector.GyrReference() << " rad/s";
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < resple_lio_->spl.maxTimeNs()) {
             imu_buffer_.pop_front();
         }

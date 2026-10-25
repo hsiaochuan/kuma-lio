@@ -159,12 +159,6 @@ class RESPLE_LIO {
     /// run the BA and align the spline to it.
     void UpdateLocalBA(const MeasureGroup& measures);
     int64_t lba_last_cut_ns_ = -1;
-    /// At rest: the IMU is quiet and the trajectory has not moved over the detector's window.  Then
-    /// the scans repeat themselves, so the map takes no points and the velocities are measured as zero.
-    StaticDetector static_detector;
-    bool is_static = false;
-    bool TrajectoryStill();
-    void ZeroVelocityUpdate();
     /// EKF update of the window with the refined pose `x` at `t_ns` as a measurement.
     void AlignToBA(int64_t t_ns, const LbaState& x);
     Eigen::aligned_deque<ImuData> imu_meas;
