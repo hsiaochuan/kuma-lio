@@ -177,12 +177,9 @@ void LocalBA::AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc) {
 bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points,
                        const Vec3& gravity) {
     g_ = -gravity;
-    Eigen::Isometry3d odom_pose = Eigen::Isometry3d::Identity();
-    odom_pose.linear() = odom.R;
-    odom_pose.translation() = odom.p;
 
     Frame frame;
-    frame.id = static_cast<int>(history_.size());
+    frame.id = frames_.empty() ? 0 : frames_.back().id + 1;
     frame.time_ns = time_ns;
     frame.x = odom;
     if (!frames_.empty()) {
@@ -209,10 +206,6 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
                            NS_TO_S(time_ns - cursor));
         }
     }
-    History h;
-    h.time_ns = time_ns;
-    h.odom = odom_pose;
-    history_.push_back(h);
     frames_.push_back(frame);
     Timer timer;
     InsertFrame(frame, points);
@@ -223,16 +216,11 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
     const bool full = static_cast<int>(frames_.size()) >= param_.win_size;
     if (full) Optimize();
     const double t_optimize = timer.ElapsedMiniSeconds(true);
-    for (const Frame& f : frames_) {
-        history_[f.id].refined.linear() = f.x.R;
-        history_[f.id].refined.translation() = f.x.p;
-    }
-    newest_ = frames_.back().x;
     if (full) {
         Marginalize(frames_.front());
         frames_.pop_front();
         Refresh();  // the planes the odometry sees follow the refined poses
-        if (frame.id % 50 == 0) Slide(newest_.p);
+        if (frame.id % 50 == 0) Slide(frames_.back().x.p);
     }
     LOG(INFO) << "LBA time [ms]: insert " << t_insert << " refresh " << t_refresh << " optimize " << t_optimize
               << " marginalize+refresh " << timer.ElapsedMiniSeconds() << " points " << points.size() << " active "
@@ -691,21 +679,6 @@ void LocalBA::Optimize() {
     LOG(INFO) << "LBA: frame " << frames_.back().id << " planes " << factors_.size() << " cost " << residual0 << " -> "
               << std::min(residual1, residual2) << " moved " << moved << " voxels " << map_.size() << " bg "
               << xs.back().bg.transpose() << " ba " << xs.back().ba.transpose();
-}
-
-Trajectory LocalBA::CorrectTrajectory(const Trajectory& traj, double time_offset) const {
-    Trajectory out = traj;
-    if (history_.empty()) return out;
-    size_t k = 0;
-    for (StampedPose& sp : out) {
-        const int64_t t_ns = S_TO_NS(sp.time - time_offset);
-        while (k + 1 < history_.size() &&
-               std::abs(history_[k + 1].time_ns - t_ns) <= std::abs(history_[k].time_ns - t_ns)) {
-            ++k;
-        }
-        sp.pose = history_[k].refined * history_[k].odom.inverse() * sp.pose;
-    }
-    return out;
 }
 
 }  // namespace faster_lio

@@ -11,7 +11,6 @@
 #include "pointcloud_preprocess.h"
 #include "resple_lio.h"
 #include "stamp_pose.h"
-#include "pgo/pgo_backend.h"
 
 namespace faster_lio {
 
@@ -80,8 +79,6 @@ class LaserMapping {
     Trajectory trajectory_;
 
     std::shared_ptr<LaserMappingParam> param;
-    std::unique_ptr<pgo::PgoBackend> pgo_;
-    pgo::PgoCloudPtr pgo_cloud_{new pgo::PgoCloud()};
     rosbag::Bag bag_;
 
     // prior pose for localization, forwarded to the odometry in Init()

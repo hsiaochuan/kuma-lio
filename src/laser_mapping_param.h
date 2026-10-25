@@ -9,7 +9,6 @@
 #include "cameras/camera_io.h"
 #include "cameras/cameras.h"
 #include "pose3.h"
-#include "pgo/pgo_types.h"
 #include "local_ba.h"
 using namespace faster_lio;
 class LaserMappingParam {
@@ -100,7 +99,6 @@ class LaserMappingParam {
     bool bag_save_en_ = false;
 
     faster_lio::LbaParam lba_;
-    faster_lio::pgo::PgoParam pgo_;
 
     void LoadFromYaml(const std::string& config_fname) {
         auto yaml = YAML::LoadFile(config_fname);
@@ -156,52 +154,6 @@ class LaserMappingParam {
                 std_clk_init = gnss["std_clk_init"].as<double>(std_clk_init);
                 std_ext_yaw_init = gnss["std_ext_yaw_init"].as<double>(std_ext_yaw_init);
                 std_ext_pos_init = gnss["std_ext_pos_init"].as<double>(std_ext_pos_init);
-            }
-
-            if (yaml["pgo"]) {
-                const YAML::Node g = yaml["pgo"];
-                pgo_.enable = g["enable"].as<bool>(pgo_.enable);
-                pgo_.kf_dis_th = g["kf_dis_th"].as<double>(pgo_.kf_dis_th);
-                pgo_.kf_angle_th_deg = g["kf_angle_th"].as<double>(pgo_.kf_angle_th_deg);
-                pgo_.kf_max_dt = g["kf_max_dt"].as<double>(pgo_.kf_max_dt);
-                pgo_.kf_voxel_leaf = g["kf_voxel_leaf"].as<double>(pgo_.kf_voxel_leaf);
-                pgo_.kf_max_range = g["kf_max_range"].as<double>(pgo_.kf_max_range);
-                pgo_.kf_min_points = g["kf_min_points"].as<int>(pgo_.kf_min_points);
-                pgo_.kf_max_staging_points =
-                    g["kf_max_staging_points"].as<int>(pgo_.kf_max_staging_points);
-                pgo_.loop_enable = g["loop_enable"].as<bool>(pgo_.loop_enable);
-                pgo_.loop_search_radius = g["loop_search_radius"].as<double>(pgo_.loop_search_radius);
-                pgo_.loop_search_max_dz = g["loop_search_max_dz"].as<double>(pgo_.loop_search_max_dz);
-                pgo_.loop_min_kf_id = g["loop_min_kf_id"].as<int>(pgo_.loop_min_kf_id);
-                pgo_.loop_closest_id_th = g["loop_closest_id_th"].as<int>(pgo_.loop_closest_id_th);
-                pgo_.loop_kf_gap = g["loop_kf_gap"].as<int>(pgo_.loop_kf_gap);
-                pgo_.loop_max_candidates = g["loop_max_candidates"].as<int>(pgo_.loop_max_candidates);
-                pgo_.submap_half_size = g["submap_half_size"].as<int>(pgo_.submap_half_size);
-                pgo_.submap_stride = g["submap_stride"].as<int>(pgo_.submap_stride);
-                pgo_.loop_coarse_leaf = g["loop_coarse_leaf"].as<double>(pgo_.loop_coarse_leaf);
-                pgo_.loop_fine_leaf = g["loop_fine_leaf"].as<double>(pgo_.loop_fine_leaf);
-                pgo_.loop_coarse_max_corr = g["loop_coarse_max_corr"].as<double>(pgo_.loop_coarse_max_corr);
-                pgo_.loop_fine_max_corr = g["loop_fine_max_corr"].as<double>(pgo_.loop_fine_max_corr);
-                pgo_.loop_max_iterations = g["loop_max_iterations"].as<int>(pgo_.loop_max_iterations);
-                pgo_.loop_fitness_th = g["loop_fitness_th"].as<double>(pgo_.loop_fitness_th);
-                pgo_.loop_min_overlap = g["loop_min_overlap"].as<double>(pgo_.loop_min_overlap);
-                pgo_.loop_max_corr_trans = g["loop_max_corr_trans"].as<double>(pgo_.loop_max_corr_trans);
-                pgo_.loop_max_corr_rot = g["loop_max_corr_rot"].as<double>(pgo_.loop_max_corr_rot);
-                pgo_.loop_min_odom_sigma_ratio =
-                    g["loop_min_odom_sigma_ratio"].as<double>(pgo_.loop_min_odom_sigma_ratio);
-                pgo_.odom_sigma_trans = g["odom_sigma_trans"].as<double>(pgo_.odom_sigma_trans);
-                pgo_.odom_sigma_rot = g["odom_sigma_rot"].as<double>(pgo_.odom_sigma_rot);
-                pgo_.loop_sigma_trans = g["loop_sigma_trans"].as<double>(pgo_.loop_sigma_trans);
-                pgo_.loop_sigma_rot = g["loop_sigma_rot"].as<double>(pgo_.loop_sigma_rot);
-                pgo_.loop_robust_delta = g["loop_robust_delta"].as<double>(pgo_.loop_robust_delta);
-                pgo_.prior_sigma_trans = g["prior_sigma_trans"].as<double>(pgo_.prior_sigma_trans);
-                pgo_.prior_sigma_rot = g["prior_sigma_rot"].as<double>(pgo_.prior_sigma_rot);
-                pgo_.final_lm_iterations = g["final_lm_iterations"].as<int>(pgo_.final_lm_iterations);
-                pgo_.final_outlier_reject = g["final_outlier_reject"].as<bool>(pgo_.final_outlier_reject);
-                pgo_.final_outlier_chi2 = g["final_outlier_chi2"].as<double>(pgo_.final_outlier_chi2);
-                pgo_.final_reject_rounds = g["final_reject_rounds"].as<int>(pgo_.final_reject_rounds);
-                pgo_.final_sweep_max_loops = g["final_sweep_max_loops"].as<int>(pgo_.final_sweep_max_loops);
-                pgo_.save_debug = g["save_debug"].as<bool>(pgo_.save_debug);
             }
 
             if (yaml["lba"]) {

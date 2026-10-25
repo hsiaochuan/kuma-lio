@@ -716,7 +716,6 @@ void RESPLE_LIO::UpdateLocalBA(const MeasureGroup& measures) {
     if (lba->AddFrame(t_ns, odom, points, gravity))
         // align the front end
         AlignToBA(t_ns, lba->Newest());
-    lba->SetOdomPose(spl.Interpolate(t_ns));
 }
 
 void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {

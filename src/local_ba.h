@@ -117,12 +117,9 @@ class LocalBA {
     void AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc);
     bool AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points, const Vec3& gravity);
 
-    const LbaState& Newest() const { return newest_; }
-    void SetOdomPose(const Eigen::Isometry3d& pose) { history_.back().odom = pose; }
+    const LbaState& Newest() const { return frames_.back().x; }
     bool Query(const LbaPoint& pv, PlaneHit* hit) const;
     bool PlaneNormal(const Vec3& p, Vec3* normal) const;
-    Trajectory CorrectTrajectory(const Trajectory& traj, double time_offset) const;
-    int NumFrames() const { return static_cast<int>(history_.size()); }
 
    private:
     struct Frame {
@@ -172,13 +169,6 @@ class LocalBA {
         std::vector<PointCluster> win, fix, all;
         Eigen::aligned_vector<Mat9> cov;
     };
-    struct History {
-        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-        int64_t time_ns = 0;
-        Eigen::Isometry3d odom = Eigen::Isometry3d::Identity();
-        Eigen::Isometry3d refined = Eigen::Isometry3d::Identity();
-    };
-
 
     static int NodeOf(int idx, int layer) {
         const int s = kLayers - 1 - layer;
@@ -211,9 +201,7 @@ class LocalBA {
     std::deque<Frame, Eigen::aligned_allocator<Frame>> frames_;
     std::unordered_map<VOXEL_LOCATION, Root> map_;
     std::vector<Root*> active_;
-    LbaState newest_;
     std::vector<const PlaneFactor*> factors_;
-    std::vector<History, Eigen::aligned_allocator<History>> history_;
 };
 
 }  // namespace faster_lio

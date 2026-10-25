@@ -86,9 +86,6 @@ add_library(${PROJECT_NAME}
         src/local_ba.cpp
         src/spline_state.cpp
         src/resple_lio.cpp
-        src/pgo/pgo_backend.cc
-        src/pgo/loop_detector.cc
-        src/pgo/pose_graph.cc
         src/timer.cpp
         )
 
