@@ -49,6 +49,7 @@ lba:
   fb_std_ort: 0.002
   fb_keep_cov: true
   frame_dt: 0.1
+  map_range: 1000.0
 
 pgo:
   enable: false
