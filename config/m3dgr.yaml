@@ -34,7 +34,7 @@ bag_save_en: false
 
 lba:
   win_size: 10
-  voxel_size: 0.5
+  voxel_size: 1.0
   min_eigen_value: 0.001
   min_points: 5
   max_fix_points: 20

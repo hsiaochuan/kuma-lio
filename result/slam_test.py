@@ -529,9 +529,11 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
             f"/media/hsiaochuan/hsiaochuan-data/M3DGR/{seq}.bag"
             for seq in ["Dark01",
                         "Dark02",
+                        "Occlusion03",
                         "Occlusion04",
                         "Outdoor01",
                         "Varying-illu03",
+                        "Varying-illu04",
                         "Varying-illu05",
                         "GNSS-denial01",
                         "GNSS-denial02",
