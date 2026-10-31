@@ -29,6 +29,8 @@ void RESPLE_LIO::Init() {
     const Eigen::Matrix<double, 6, 6> q_old = q_block(param->q_std_pos_old, param->q_std_ort_old);
     for (int i = 0; i < 3; ++i) Q_mat.block<6, 6>(6 * i, 6 * i) = q_old;
     Q_mat.block<6, 6>(18, 18) = q_block(param->q_std_pos_new, param->q_std_ort_new);
+    Q_mat.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().setConstant(param->q_std_ba * param->q_std_ba * dt_s);
+    Q_mat.block<3, 3>(BG_OFFSET, BG_OFFSET).diagonal().setConstant(param->q_std_bg * param->q_std_bg * dt_s);
 
     // A
     A_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();

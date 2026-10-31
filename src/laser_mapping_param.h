@@ -61,6 +61,8 @@ class LaserMappingParam {
     double q_std_ort_old = 0.0316228;
     double q_std_pos_new = 0.1;
     double q_std_ort_new = 0.1;
+    double q_std_bg = 1e-3;
+    double q_std_ba = 1e-2;
     Vec3 cov_acc = Vec3(1.0, 1.0, 1.0);
     Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
     int64_t dt_ns = S_TO_NS(0.01);   // 1 / knot_hz [s]
@@ -126,6 +128,8 @@ class LaserMappingParam {
             q_std_ort_old = yaml["q_std_ort_old"].as<double>();
             q_std_pos_new = yaml["q_std_pos_new"].as<double>();
             q_std_ort_new = yaml["q_std_ort_new"].as<double>();
+            q_std_bg = yaml["q_std_bg"].as<double>();
+            q_std_ba = yaml["q_std_ba"].as<double>();
             cov_acc = VecFromArray(yaml["cov_acc"].as<std::vector<double>>());
             cov_gyro = VecFromArray(yaml["cov_gyro"].as<std::vector<double>>());
             cov_bg = VecFromArray(yaml["cov_bg"].as<std::vector<double>>());

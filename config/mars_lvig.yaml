@@ -25,6 +25,8 @@ q_std_pos_old: 0.0316228
 q_std_ort_old: 0.0316228
 q_std_pos_new: 0.1
 q_std_ort_new: 0.1
+q_std_bg: 1.0e-3
+q_std_ba: 1.0e-2
 cov_acc: [1.0, 1.0, 1.0]
 cov_gyro: [0.001, 0.001, 0.001]
 cov_bg: [1.0e-6, 1.0e-6, 1.0e-6]

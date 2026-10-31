@@ -639,7 +639,7 @@ double LocalBA::Evaluate(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::Vecto
     return residual;
 }
 
-// Voxel-SLAM LI_BA_Optimizer::damping_iter: Levenberg-Marquardt with the oldest pose and biases held fixed.
+// Voxel-SLAM LI_BA_Optimizer::damping_iter: Levenberg-Marquardt with the whole oldest state (R p v bg ba) held fixed.
 void LocalBA::Optimize() {
     const int W = static_cast<int>(frames_.size());
     const int n = kDim * W;
@@ -656,10 +656,10 @@ void LocalBA::Optimize() {
             residual1 = Evaluate(xs, &Hess, &JacT);
             if (iter == 0)
                 residual0 = residual1;
-            Hess.topRows(6).setZero();
-            Hess.leftCols(6).setZero();
-            Hess.block<6, 6>(0, 0).setIdentity();
-            JacT.head(6).setZero();
+            Hess.topRows(kDim).setZero();
+            Hess.leftCols(kDim).setZero();
+            Hess.block<kDim, kDim>(0, 0).setIdentity();
+            JacT.head(kDim).setZero();
         }
         D.diagonal() = Hess.diagonal();
         dxi = (Hess + u * D).ldlt().solve(-JacT);
