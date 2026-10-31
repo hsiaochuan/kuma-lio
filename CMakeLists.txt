@@ -107,6 +107,31 @@ target_link_libraries(run_mapping_offline
         ${PROJECT_NAME}
         )
 
+# pose graph optimization: its own library and executable, nothing here depends on the odometry
+add_library(faster_pgo STATIC
+        src/pgo/plane_cloud.cc
+        src/pgo/icp_normal.cc
+        src/pgo/loop_detector.cc
+        src/pgo/pose_graph.cc
+        src/pgo/pgo_backend.cc
+        src/stamp_pose.cpp
+        src/timer.cpp
+        )
+# common_lib.h (VOXEL_LOCATION) includes the RTKLIB headers
+target_link_libraries(faster_pgo
+        rtklib
+        ${catkin_LIBRARIES}
+        ${PCL_LIBRARIES}
+        ${OpenMP_CXX_LIBRARIES}
+        glog
+        gflags
+        yaml-cpp
+        gtsam
+        )
+
+add_executable(run_pgo app/run_pgo.cc)
+target_link_libraries(run_pgo faster_pgo)
+
 add_executable(points_jet ./src/points_jet.cpp)
 target_link_libraries(points_jet ${PROJECT_NAME})
 

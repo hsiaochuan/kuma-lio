@@ -183,14 +183,12 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
     frame.time_ns = time_ns;
     frame.x = odom;
     if (!frames_.empty()) {
-        // The odometry matched this frame against the very map the BA maintains, so its pose is
-        // already in the BA's frame and is the initial value as it stands.
         const Frame& prev = frames_.back();
-
-        // midpoint integration over (prev.time, time], holding the end samples where the buffer falls short
+        // midpoint integration
         frame.imu = std::make_shared<ImuPreint>(prev.x.bg, prev.x.ba, noise_meas_, noise_walk_);
         CHECK(!imu_buf_.empty()) << "local BA frame without IMU";
-        while (imu_buf_.size() > 1 && imu_buf_[1].time_ns <= prev.time_ns) imu_buf_.pop_front();
+        while (imu_buf_.size() > 1 && imu_buf_[1].time_ns <= prev.time_ns)
+            imu_buf_.pop_front();
         int64_t cursor = prev.time_ns;
         for (size_t i = 0; i < imu_buf_.size() && cursor < time_ns; ++i) {
             const Imu& b = imu_buf_[i];
@@ -206,9 +204,10 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
                            NS_TO_S(time_ns - cursor));
         }
     }
-    frames_.push_back(frame);
+    frames_.push_back(std::move(frame));
+    Frame& cur = frames_.back();
     Timer timer;
-    InsertFrame(frame, points);
+    InsertFrame(cur, points);
     const double t_insert = timer.ElapsedMiniSeconds(true);
 
     Refresh(true);
@@ -220,7 +219,7 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
         Marginalize(frames_.front());
         frames_.pop_front();
         Refresh();  // the planes the odometry sees follow the refined poses
-        if (frame.id % 50 == 0) Slide(frames_.back().x.p);
+        if (cur.id % 50 == 0) Slide(frames_.back().x.p);
     }
     LOG(INFO) << "LBA time [ms]: insert " << t_insert << " refresh " << t_refresh << " optimize " << t_optimize
               << " marginalize+refresh " << timer.ElapsedMiniSeconds() << " points " << points.size() << " active "
@@ -262,12 +261,12 @@ void LocalBA::InsertFrame(const Frame& frame, const std::vector<LbaPoint>& point
         const Vec3 pw = frame.x.R * pt.p + frame.x.p;
         const Mat3 var = frame.x.R * pt.var * frame.x.R.transpose() + param_.pose_var * Mat3::Identity();
         Cell& cell = CellAt(pw);
-        if (cell.win.empty() || cell.win.back().id != frame.id) {
-            cell.win.emplace_back();
-            cell.win.back().id = frame.id;
+        if (cell.clusters.empty() || cell.clusters.back().id != frame.id) {
+            cell.clusters.emplace_back();
+            cell.clusters.back().id = frame.id;
         }
-        cell.win.back().pc.Push(pt.p);
-        AddPointCov(pw, var, &cell.win.back().cov);
+        cell.clusters.back().clu.Push(pt.p);
+        AddPointCov(pw, var, &cell.clusters.back().cov);
     }
 }
 
@@ -297,7 +296,7 @@ void LocalBA::Refresh(bool dirty_only) {
     for (Root* root : active_) {
         if (root->active) active_voxels.push_back(root);
         for (PlaneFactor& f : root->factors) {
-            f.win.resize(W);  // a factor kept from before the newest frame was added
+            f.clus.resize(W);  // a factor kept from before the newest frame was added
             factors_.push_back(&f);
         }
     }
@@ -307,19 +306,19 @@ void LocalBA::Refresh(bool dirty_only) {
 void LocalBA::RefitRoot(Root* root_ptr, RefitScratch* scratch) const {
     const int W = static_cast<int>(frames_.size());
     const int base = frames_.empty() ? 0 : frames_.front().id;
-    std::vector<PointCluster>& win = scratch->win;
-    std::vector<PointCluster>& fix = scratch->fix;
-    std::vector<PointCluster>& all = scratch->all;
-    Eigen::aligned_vector<Mat9>& cov = scratch->cov;
-    PointCluster world;
+    std::vector<PointCluster>& nodes_clus = scratch->win;
+    std::vector<PointCluster>& nodes_fix = scratch->fix;
+    std::vector<PointCluster>& nodes_total = scratch->all;
+    Eigen::aligned_vector<Mat9>& nodes_cov = scratch->cov;
+    PointCluster tr_clu;
     Root& root = *root_ptr;
-    root.active = std::any_of(root.cells.begin(), root.cells.end(), [](const Cell& c) { return !c.win.empty(); });
+    root.active = std::any_of(root.cells.begin(), root.cells.end(), [](const Cell& c) { return !c.clusters.empty(); });
     root.planes.clear();
     root.factors.clear();
     bool split[kLayers][kCells] = {};
+    bool on_plane[kLayers][kCells] = {};
     for (int layer = 0; layer < kLayers; ++layer) {
         const int num_nodes = 1 << (3 * layer);
-        // only the nodes that cells fall into are summed, and a layer nothing was split into ends the walk
         bool touched[kCells] = {};
         bool any = false;
         for (const Cell& cell : root.cells) {
@@ -327,40 +326,43 @@ void LocalBA::RefitRoot(Root* root_ptr, RefitScratch* scratch) const {
             const int n = NodeOf(cell.idx, layer);
             if (!touched[n]) {
                 touched[n] = any = true;
-                std::fill(win.begin() + n * W, win.begin() + (n + 1) * W, PointCluster());
-                fix[n] = PointCluster();
-                all[n] = PointCluster();
-                cov[n].setZero();
+                std::fill(nodes_clus.begin() + n * W, nodes_clus.begin() + (n + 1) * W, PointCluster());
+                nodes_fix[n] = PointCluster();
+                nodes_total[n] = PointCluster();
+                nodes_cov[n].setZero();
             }
-            fix[n] += cell.fix;
-            all[n] += cell.fix;
-            cov[n] += cell.fix_cov;
-            for (const WinPoints& w : cell.win) {
-                const LbaState& x = frames_[w.id - base].x;
-                win[n * W + w.id - base] += w.pc;
-                world.Transform(w.pc, x.R, x.p);
-                all[n] += world;
-                cov[n] += w.cov;
+            nodes_fix[n] += cell.fix;
+            nodes_total[n] += cell.fix;
+            nodes_cov[n] += cell.fix_cov;
+            for (const FrameCluster& clu : cell.clusters) {
+                const LbaState& x = frames_[clu.id - base].x;
+                nodes_clus[n * W + clu.id - base] += clu.clu;
+                tr_clu.Transform(clu.clu, x.R, x.p);
+                nodes_total[n] += tr_clu;
+                nodes_cov[n] += clu.cov;
             }
-        }
+        } // for cell
         if (!any) break;
         for (int n = 0; n < num_nodes; ++n) {
-            if (!touched[n] || all[n].N <= param_.min_points) continue;
-            const Eigen::SelfAdjointEigenSolver<Mat3> saes(all[n].Cov());
+            if (!touched[n] || nodes_total[n].N <= param_.min_points) continue;
+            const Eigen::SelfAdjointEigenSolver<Mat3> saes(nodes_total[n].Cov());
             const Vec3 eig = saes.eigenvalues();
-            if (eig[0] >= param_.min_eigen_value) {
+            // lambda_0 / lambda_1
+            if (eig[0] >= param_.plane_eigen_ratio * eig[1]) {
                 split[layer][n] = true;
                 continue;
             }
-            // plane_update: first-order covariance of (normal, center)
+            // extent
+            const double extent = param_.min_plane_size * param_.voxel_size / (1 << layer);
+            if (eig[1] < extent * extent) continue;
             const Mat3 U = saes.eigenvectors();
             Plane plane;
             plane.layer = layer;
             plane.node = n;
-            plane.center = all[n].Mean();
+            plane.center = nodes_total[n].Mean();
             plane.normal = U.col(0);
             plane.radius = std::sqrt(eig[2]);
-            const double nv = 1.0 / all[n].N;
+            const double nv = 1.0 / nodes_total[n].N;
             Eigen::Matrix<double, 3, 9> u_c = Eigen::Matrix<double, 3, 9>::Zero();
             for (int k = 1; k < 3; ++k) {
                 const Mat3 ukl = U.col(k) * U.col(0).transpose();
@@ -371,23 +373,37 @@ void LocalBA::RefitRoot(Root* root_ptr, RefitScratch* scratch) const {
                     -(U.col(k).dot(plane.center) * U.col(0) + U.col(0).dot(plane.center) * U.col(k)).transpose();
                 u_c += nv / (eig[0] - eig[k]) * U.col(k) * fkl;
             }
-            const Eigen::Matrix<double, 3, 9> Jc = u_c * cov[n];
+            const Eigen::Matrix<double, 3, 9> Jc = u_c * nodes_cov[n];
             plane.plane_var.block<3, 3>(0, 0) = Jc * u_c.transpose();
             plane.plane_var.block<3, 3>(0, 3) = nv * Jc.block<3, 3>(0, 6);
             plane.plane_var.block<3, 3>(3, 0) = plane.plane_var.block<3, 3>(0, 3).transpose();
-            plane.plane_var.block<3, 3>(3, 3) = nv * nv * cov[n].block<3, 3>(6, 6);
+            plane.plane_var.block<3, 3>(3, 3) = nv * nv * nodes_cov[n].block<3, 3>(6, 6);
             if (!plane.plane_var.allFinite()) continue;
             root.planes.push_back(plane);
+            on_plane[layer][n] = true;
 
-            if (W >= 2 && all[n].N > fix[n].N && eig[0] / eig[1] <= 0.12) {
-                // a plane with points of the window on it (and not a line)
-                PlaneFactor f;
-                f.fix = fix[n];
-                f.win.assign(win.begin() + n * W, win.begin() + (n + 1) * W);
-                root.factors.push_back(std::move(f));
+            if (W >= 2 && nodes_total[n].N > nodes_fix[n].N) {
+                PlaneFactor factor;
+                factor.fix = nodes_fix[n];
+                factor.clus.assign(nodes_clus.begin() + n * W, nodes_clus.begin() + (n + 1) * W);
+                root.factors.push_back(std::move(factor));
             }
         }
     } // for layer
+    if (param_.clutter_points > 0) {
+        for (Cell& cell : root.cells) {
+            bool on = false;
+            for (int l = 0; l < kLayers && !on; ++l) on = on_plane[l][NodeOf(cell.idx, l)];
+            if (on) continue;
+            int cnt = cell.fix.N;
+            for (const FrameCluster& clu : cell.clusters)
+                cnt += clu.clu.N;
+            if (cnt < param_.clutter_points) continue;
+            cell.fix = PointCluster();
+            cell.fix_cov.setZero();
+            std::vector<FrameCluster>().swap(cell.clusters);
+        }
+    }
     if (!root.active) {
         std::vector<PlaneFactor>().swap(root.factors);
         root.planes.shrink_to_fit();
@@ -398,15 +414,15 @@ void LocalBA::Marginalize(const Frame& frame) {
     PointCluster world;
     for (Root* root : active_) {
         for (Cell& cell : root->cells) {
-            if (cell.win.empty() || cell.win.front().id != frame.id) continue;
+            if (cell.clusters.empty() || cell.clusters.front().id != frame.id) continue;
             if (cell.fix.N < param_.max_fix_points) {
-                world.Transform(cell.win.front().pc, frame.x.R, frame.x.p);
+                world.Transform(cell.clusters.front().clu, frame.x.R, frame.x.p);
                 cell.fix += world;
-                cell.fix_cov += cell.win.front().cov;
+                cell.fix_cov += cell.clusters.front().cov;
             }
-            cell.win.erase(cell.win.begin());
+            cell.clusters.erase(cell.clusters.begin());
             // most cells leave the window for good: give the capacity back (100k voxels on a long run)
-            if (cell.win.empty()) std::vector<WinPoints>().swap(cell.win);
+            if (cell.clusters.empty()) std::vector<FrameCluster>().swap(cell.clusters);
         }
     }
 }
@@ -491,17 +507,17 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
     Eigen::aligned_vector<Eigen::Matrix<double, 6, 6>> Hdiags(hess ? F * W : 0);
 #pragma omp parallel for num_threads(threads) schedule(static)
     for (int k = 0; k < F; ++k) {
-        const PlaneFactor& f = *factors_[k];
-        PointCluster pcr;
-        PointCluster sig = f.fix;
+        const PlaneFactor& factor = *factors_[k];
+        PointCluster tr_clu;
+        PointCluster total = factor.fix;
         for (int i = 0; i < W; ++i) {
-            if (f.win[i].N == 0) continue;
-            pcr.Transform(f.win[i], xs[i].R, xs[i].p);
-            sig += pcr;
+            if (factor.clus[i].N == 0) continue;
+            tr_clu.Transform(factor.clus[i], xs[i].R, xs[i].p);
+            total += tr_clu;
         }
-        const double NN = sig.N;
-        const Vec3 vBar = sig.v / NN;
-        const Eigen::SelfAdjointEigenSolver<Mat3> saes(sig.P / NN - vBar * vBar.transpose());
+        const double NN = total.N;
+        const Vec3 vBar = total.v / NN;
+        const Eigen::SelfAdjointEigenSolver<Mat3> saes(total.P / NN - vBar * vBar.transpose());
         const Vec3 lmbd = saes.eigenvalues();
         lambda0[k] = lmbd[0];
         if (!hess) continue;
@@ -516,11 +532,11 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
         umumTs[k] = umumT;
 
         for (int i = 0; i < W; ++i) {
-            if (f.win[i].N == 0) continue;
-            const Mat3& Pi = f.win[i].P;
-            const Vec3& vi = f.win[i].v;
+            if (factor.clus[i].N == 0) continue;
+            const Mat3& Pi = factor.clus[i].P;
+            const Vec3& vi = factor.clus[i].v;
             const Mat3& Ri = xs[i].R;
-            const double ni = f.win[i].N;
+            const double ni = factor.clus[i].N;
             Vec3& viRiTuk = viRiTuks[k * W + i];
             Mat3& viRiTukukT = viRiTukukTs[k * W + i];
             Eigen::Matrix<double, 3, 6>& Auk = Auks[k * W + i];
@@ -569,7 +585,7 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
         if (i == j) {
             Eigen::Matrix<double, 6, 1> g = Eigen::Matrix<double, 6, 1>::Zero();
             for (int k = 0; k < F; ++k) {
-                if (factors_[k]->win[i].N == 0) continue;
+                if (factors_[k]->clus[i].N == 0) continue;
                 g += jjts[k * W + i];
                 H += Hdiags[k * W + i];
             }
@@ -577,10 +593,10 @@ double LocalBA::EvaluateLidar(const StateVec& xs, Eigen::MatrixXd* hess, Eigen::
         } else {
             for (int k = 0; k < F; ++k) {
                 const PlaneFactor& f = *factors_[k];
-                if (f.win[i].N == 0 || f.win[j].N == 0) continue;
+                if (f.clus[i].N == 0 || f.clus[j].N == 0) continue;
                 const double NN = NNs[k];
-                const double ni = f.win[i].N;
-                const double nj = f.win[j].N;
+                const double ni = f.clus[i].N;
+                const double nj = f.clus[j].N;
                 const Eigen::Matrix<double, 3, 6>& Auki = Auks[k * W + i];
                 const Eigen::Matrix<double, 3, 6>& Aukj = Auks[k * W + j];
                 Eigen::Matrix<double, 6, 6> Hb = Auki.transpose() * umumTs[k] * Aukj;
@@ -638,15 +654,12 @@ void LocalBA::Optimize() {
     for (int iter = 0; iter < param_.max_iter; ++iter) {
         if (is_calc_hess) {
             residual1 = Evaluate(xs, &Hess, &JacT);
-            if (iter == 0) residual0 = residual1;
-            // the gauge is the oldest pose; its biases, as the last window left them, anchor the random
-            // walk (Voxel-SLAM fixes the whole oldest state); its velocity stays free
-            for (const int k : {0, 9}) {
-                Hess.middleRows(k, 6).setZero();
-                Hess.middleCols(k, 6).setZero();
-                Hess.block<6, 6>(k, k).setIdentity();
-                JacT.segment<6>(k).setZero();
-            }
+            if (iter == 0)
+                residual0 = residual1;
+            Hess.topRows(6).setZero();
+            Hess.leftCols(6).setZero();
+            Hess.block<6, 6>(0, 0).setIdentity();
+            JacT.head(6).setZero();
         }
         D.diagonal() = Hess.diagonal();
         dxi = (Hess + u * D).ldlt().solve(-JacT);

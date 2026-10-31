@@ -33,6 +33,7 @@ using Vec4 = Eigen::Vector4d;
 using Vec4f = Eigen::Vector4f;
 using Mat4 = Eigen::Matrix<double, 4, 4>;
 
+using Vec6 = Eigen::Matrix<double, 6, 1>;
 using Mat6 = Eigen::Matrix<double, 6, 6>;
 }
 namespace Eigen {

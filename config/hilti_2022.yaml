@@ -19,11 +19,14 @@ knot_hz: 100
 w_pt: 0.01
 nn_thresh: 0.5
 coeff_cov: 2.0
-std_sys_pos: 0.05
-std_sys_ort: 0.05
+q_std_pos_old: 0.0158114
+q_std_ort_old: 0.0158114
+q_std_pos_new: 0.05
+q_std_ort_new: 0.05
 cov_acc: [1.0, 1.0, 1.0]
 cov_gyro: [0.001, 0.001, 0.001]
 cov_bg: [0.000001, 0.000001, 0.000001]
+cov_ba: [0.2, 0.2, 0.2]
 
 pcd_save_en: true
 pcd_save_interval: 30
@@ -43,7 +46,9 @@ cam:
 lba:
   win_size: 10
   voxel_size: 0.5
-  min_eigen_value: 0.001
+  plane_eigen_ratio: 0.1      # 平面判据 lambda_0/lambda_1 的上限，无量纲
+  min_plane_size: 0.1        # 平面面内较小方向的最小标准差，按本层格子边长的比例给（铺满约 0.289）
+  clutter_points: 30         # 一个 cell 点数超过此值且不属于任何平面就清空其中的点，0 为关闭
   min_points: 5
   max_fix_points: 20
   max_iter: 3
@@ -58,3 +63,4 @@ lba:
   fb_std_ort: 0.0002
   fb_keep_cov: true
   frame_dt: 0.1
+

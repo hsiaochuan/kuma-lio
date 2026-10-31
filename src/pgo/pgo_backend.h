@@ -1,0 +1,73 @@
+//
+// Drives the pose graph: takes the scans in time order, seals keyframes out of them, looks for
+// loops, and solves when a loop is worth it.  What it hands back is a corrected pose per scan.
+//
+
+#ifndef FASTER_LIO_PGO_BACKEND_H
+#define FASTER_LIO_PGO_BACKEND_H
+
+#include <deque>
+#include <string>
+#include <vector>
+
+#include "pgo/loop_detector.h"
+#include "pgo/pgo_types.h"
+#include "pgo/pose_graph.h"
+
+namespace faster_lio {
+namespace pgo {
+
+class PgoBackend {
+   public:
+    explicit PgoBackend(const PgoParam& prm);
+
+    /// One scan, `body_pts` in its own frame and `pose` the odometry's T_world_body for it.  Scans
+    /// must arrive in time order.  Cheap unless it seals a keyframe.
+    void AddScan(double time, const Eigen::Isometry3d& pose, const std::vector<Vec3>& body_pts);
+
+    /// Solves once more if a loop worth correcting is still waiting behind the cooldown.
+    void Finish();
+
+    const ScanNodes& nodes() const { return nodes_; }
+    /// The odometry pose each node came in with, before any correction.
+    const Isometries& raw_poses() const { return raw_; }
+    const LoopEdges& loops() const { return loops_; }
+    int num_solves() const { return num_solves_; }
+
+    /// loops, rejected candidates and keyframe poses, for looking at why a loop was or was not found.
+    void SaveDebug(const std::string& output_dir) const;
+
+   private:
+    void SealKeyframe(const Eigen::Isometry3d& anchor_pose);
+    void Solve();
+
+    PgoParam prm_;
+    PoseGraph graph_;
+    LoopDetector detector_;
+
+    ScanNodes nodes_;
+    Isometries raw_;
+    KeyFrames kfs_;
+    LoopEdges loops_;
+
+    /// scans waiting to be merged into the next keyframe, with the pose each was taken at
+    struct Staged {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+        std::vector<Vec3> pts;
+    };
+    std::deque<Staged, Eigen::aligned_allocator<Staged>> stage_;
+
+    /// What the last solve did to the newest node.  Every later scan comes in as dx_ * odometry, so
+    /// the graph stays one rigid chain instead of a corrected past glued to an uncorrected future.
+    Eigen::Isometry3d dx_ = Eigen::Isometry3d::Identity();
+    double jour_ = 0.0;     ///< travelled distance [m]
+    int kf_since_opt_ = 0;  ///< keyframes since the last solve, the cooldown of Voxel-SLAM
+    int num_solves_ = 0;
+    double unsolved_drift_ = 0.0;  ///< largest drift among loops added since the last solve
+};
+
+}  // namespace pgo
+}  // namespace faster_lio
+
+#endif  // FASTER_LIO_PGO_BACKEND_H

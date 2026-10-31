@@ -8,7 +8,7 @@ common:
 
 lidar_type: LIVOX
 blind: 0.5
-point_filter_num: 2
+point_filter_num: 1
 det_range: 450.0
 
 # Livox Avia with its internal IMU (same extrinsic as the FAST-LIO2 / Voxel-SLAM baselines)
@@ -17,16 +17,19 @@ extrin_R_il: [1, 0, 0,
               0, 1, 0,
               0, 0, 1]
 
-ds_scan_voxel: 0.3
+ds_scan_voxel: 0.1
 knot_hz: 100
 w_pt: 0.01
 nn_thresh: 0.5
 coeff_cov: 3.0
-std_sys_pos: 0.2
-std_sys_ort: 0.1
+q_std_pos_old: 0.0632456
+q_std_ort_old: 0.0316228
+q_std_pos_new: 0.2
+q_std_ort_new: 0.1
 cov_acc: [1.0, 1.0, 1.0]
-cov_gyro: [0.1, 0.1, 0.1]
-cov_bg: [0.2, 0.2, 0.2]
+cov_gyro: [0.001, 0.001, 0.001]
+cov_bg: [1.0e-6, 1.0e-6, 1.0e-6]
+cov_ba: [0.2, 0.2, 0.2]
 
 pcd_save_en: false
 pcd_save_interval: 30
@@ -35,7 +38,9 @@ bag_save_en: false
 lba:
   win_size: 10
   voxel_size: 1.0
-  min_eigen_value: 0.0025
+  plane_eigen_ratio: 0.1
+  min_plane_size: 0.1
+  clutter_points: 20
   min_points: 5
   max_fix_points: 20
   max_iter: 3
@@ -50,3 +55,4 @@ lba:
   fb_std_ort: 0.002
   fb_keep_cov: true
   frame_dt: 0.1
+

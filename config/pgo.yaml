@@ -1,0 +1,32 @@
+# run_pgo 的参数，扁平键，全部可省略（缺省值即下面这些）。
+# 关键帧：Voxel-SLAM 每 win_size 个 scan 封一个
+kf_scans: 10
+kf_min_angle: 5.0        # [deg] 同时低于它和 kf_min_dist 才跳过
+kf_min_dist: 0.1         # [m]
+kf_ds_voxel: 0.2         # [m]
+kf_max_range: 0.0        # [m] 关键帧点云裁剪半径，0 关闭；实测不改善回环，仅用于控制内存
+# 回环 ICP 用的平面点云，替代 BTC 的平面提取
+plane_voxel: 1.0         # [m]
+plane_min_points: 10
+plane_min_eigen: 0.01    # [m^2]
+# 候选搜索，替代 BTC 的检索
+loop_radius: 20.0        # [m]
+loop_max_dz: 4.0         # [m]
+loop_min_kf_gap: 30      # 关键帧数
+loop_min_travel: 30.0    # [m] 两端之间的路程
+loop_max_candidates: 3
+loop_max_yaw_diff: 90.0  # [deg] 朝向差超过此值的候选直接跳过，窄视场下永远匹配不上
+# icp_normal
+icp_max_iter: 20
+icp_eigval: 3.0          # sum(n n^T) 的最小特征值，论文附录 B；实测 10 在走廊类重访过严
+icp_min_match: 50
+# 接受与触发
+ratio_drift: 0.01        # 漂移 / 路程，论文：<= 1%
+opt_halt_kf: 10          # 两次求解之间的关键帧冷却
+opt_min_drift: 0.5       # [m] 低于此值只记录不求解；要高过平面 ICP 自身的噪声水平
+isam_extra_iter: 5
+# 噪声，按 gtsam::Pose3 的 [rot, trans] 给方差
+loop_var: 1.0e-4
+prior_var: 1.0e-9
+odom_var_rot: 1.0e-6     # [rad^2] 相邻 scan 间相对位姿；TUM 里没有协方差，所以是常数
+odom_var_trans: 1.0e-5   # [m^2]

@@ -25,7 +25,11 @@ namespace faster_lio {
 struct LbaParam {
     int win_size = 10;
     double voxel_size = 1.0;          ///< [m] layer-0 voxel; layers 1 and 2 halve it
-    double min_eigen_value = 0.0025;  ///< [m^2] plane when the smallest covariance eigenvalue is below this
+    double plane_eigen_ratio = 0.1;   ///< plane when lambda_0 / lambda_1 is below this; scale free
+    double min_plane_size = 0.1;      ///< smallest in-plane standard deviation a plane may have, as a
+                                      ///< fraction of the cell edge of its own layer
+    int clutter_points = 0;           ///< a cell holding this many points and lying on no plane is
+                                      ///< dropped; 0 disables
     int min_points = 5;               ///< a node with this many points or fewer is neither a plane nor split
     int max_fix_points = 20;          ///< a finest cell stops absorbing marginalized points beyond this
     int max_iter = 3;                 ///< LM iterations per window
@@ -127,21 +131,21 @@ class LocalBA {
         int id = 0;
         int64_t time_ns = 0;
         LbaState x;
-        std::shared_ptr<ImuPreint> imu;  ///< from the previous frame to this one
+        std::shared_ptr<ImuPreint> imu;
     };
     using Mat9 = Eigen::Matrix<double, 9, 9>;
 
-    struct WinPoints {
-        int id = 0;       ///< frame id
-        PointCluster pc;  ///< in that frame's body frame
-        Mat9 cov = Mat9::Zero();  ///< Voxel-SLAM cov_add of these points, world frame at insertion
+    struct FrameCluster {
+        int id = 0;
+        PointCluster clu;
+        Mat9 cov = Mat9::Zero();
     };
 
     struct Cell {
         int idx = 0;       ///< 16 ix + 4 iy + iz, each in [0, 4)
-        PointCluster fix;  ///< marginalized points, world frame
+        PointCluster fix;
         Mat9 fix_cov = Mat9::Zero();
-        std::vector<WinPoints> win;  ///< oldest frame first
+        std::vector<FrameCluster> clusters;
     };
 
     struct Plane {
@@ -154,7 +158,7 @@ class LocalBA {
     /// A plane seen from the window: the LiDAR BA factor of Voxel-SLAM.
     struct PlaneFactor {
         PointCluster fix;
-        std::vector<PointCluster> win;  ///< by window slot, body frame
+        std::vector<PointCluster> clus;  ///< by window slot, body frame
     };
     /// A layer-0 voxel.
     struct Root {

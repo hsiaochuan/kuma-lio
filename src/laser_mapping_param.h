@@ -57,12 +57,10 @@ class LaserMappingParam {
     double cov_P0 = 0.02;
     Vec3 cov_ba = Vec3(0.2, 0.2, 0.2);
     Vec3 cov_bg = Vec3(0.2, 0.2, 0.2);
-    double cov_RCP_pos_old = 0.1;
-    double cov_RCP_ort_old = 0.1;
-    double cov_RCP_pos_new = 1.0;
-    double cov_RCP_ort_new = 1.0;
-    double std_sys_pos = 0.1;
-    double std_sys_ort = 0.1;
+    double q_std_pos_old = 0.0316228;
+    double q_std_ort_old = 0.0316228;
+    double q_std_pos_new = 0.1;
+    double q_std_ort_new = 0.1;
     Vec3 cov_acc = Vec3(1.0, 1.0, 1.0);
     Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
     int64_t dt_ns = S_TO_NS(0.01);   // 1 / knot_hz [s]
@@ -124,13 +122,14 @@ class LaserMappingParam {
             if (yaml["plane_thresh"]) plane_thresh = yaml["plane_thresh"].as<double>();
             ppl_thr = yaml["nn_thresh"].as<double>();
             coeff_cov = yaml["coeff_cov"].as<double>();
-            std_sys_pos = yaml["std_sys_pos"].as<double>();
-            std_sys_ort = yaml["std_sys_ort"].as<double>();
+            q_std_pos_old = yaml["q_std_pos_old"].as<double>();
+            q_std_ort_old = yaml["q_std_ort_old"].as<double>();
+            q_std_pos_new = yaml["q_std_pos_new"].as<double>();
+            q_std_ort_new = yaml["q_std_ort_new"].as<double>();
             cov_acc = VecFromArray(yaml["cov_acc"].as<std::vector<double>>());
             cov_gyro = VecFromArray(yaml["cov_gyro"].as<std::vector<double>>());
-            // initial variance of the biases; small after a stationary start, which measures the gyro bias
-            if (yaml["cov_bg"]) cov_bg = VecFromArray(yaml["cov_bg"].as<std::vector<double>>());
-            if (yaml["cov_ba"]) cov_ba = VecFromArray(yaml["cov_ba"].as<std::vector<double>>());
+            cov_bg = VecFromArray(yaml["cov_bg"].as<std::vector<double>>());
+            cov_ba = VecFromArray(yaml["cov_ba"].as<std::vector<double>>());
 
             pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
             pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
@@ -160,7 +159,9 @@ class LaserMappingParam {
                 const YAML::Node b = yaml["lba"];
                 lba_.win_size = b["win_size"].as<int>(lba_.win_size);
                 lba_.voxel_size = b["voxel_size"].as<double>(lba_.voxel_size);
-                lba_.min_eigen_value = b["min_eigen_value"].as<double>(lba_.min_eigen_value);
+                lba_.plane_eigen_ratio = b["plane_eigen_ratio"].as<double>(lba_.plane_eigen_ratio);
+                lba_.min_plane_size = b["min_plane_size"].as<double>(lba_.min_plane_size);
+                lba_.clutter_points = b["clutter_points"].as<int>(lba_.clutter_points);
                 lba_.min_points = b["min_points"].as<int>(lba_.min_points);
                 lba_.max_fix_points = b["max_fix_points"].as<int>(lba_.max_fix_points);
                 lba_.max_iter = b["max_iter"].as<int>(lba_.max_iter);

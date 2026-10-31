@@ -11,45 +11,38 @@ namespace faster_lio {
 void RESPLE_LIO::Init() {
     const double dt_s = param->dt_ns * 1e-9;
     // set P0
-    cov_rcp.setZero();
-    cov_rcp.topLeftCorner<CP_SIZE, CP_SIZE>() =
+    P.setZero();
+    P.topLeftCorner<CP_SIZE, CP_SIZE>() =
         param->cov_P0 * dt_s * dt_s * Eigen::Matrix<double, CP_SIZE, CP_SIZE>::Identity();
-    cov_rcp.block<3, 3>(BA_OFFSET, BA_OFFSET) = param->cov_ba.asDiagonal();
-    cov_rcp.block<3, 3>(BG_OFFSET, BG_OFFSET) = param->cov_bg.asDiagonal();
+    P.block<3, 3>(BA_OFFSET, BA_OFFSET) = param->cov_ba.asDiagonal();
+    P.block<3, 3>(BG_OFFSET, BG_OFFSET) = param->cov_bg.asDiagonal();
+    P.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
-    // set Q
-    double cov_sys_pos = param->std_sys_pos * param->std_sys_pos * dt_s * dt_s;
-    double cov_sys_ort = param->std_sys_ort * param->std_sys_ort * dt_s * dt_s;
-    Eigen::Matrix<double, XSIZE, XSIZE> Q = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
-    Eigen::Matrix<double, 6, 6> Q_block_old = Eigen::Matrix<double, 6, 6>::Zero();
-    Q_block_old.topLeftCorner<3, 3>() = param->cov_RCP_pos_old * cov_sys_pos * Eigen::Matrix3d::Identity();
-    Q_block_old.bottomRightCorner<3, 3>() = param->cov_RCP_ort_old * cov_sys_ort * Eigen::Matrix3d::Identity();
-    Eigen::Matrix<double, 6, 6> Q_block_new = Eigen::Matrix<double, 6, 6>::Zero();
-    Q_block_new.topLeftCorner<3, 3>() = param->cov_RCP_pos_new * cov_sys_pos * Eigen::Matrix3d::Identity();
-    Q_block_new.bottomRightCorner<3, 3>() = param->cov_RCP_ort_new * cov_sys_ort * Eigen::Matrix3d::Identity();
-    Q.topLeftCorner<6, 6>() = Q_block_old;
-    Q.block<6, 6>(6, 6) = Q_block_old;
-    Q.block<6, 6>(12, 12) = Q_block_old;
-    Q.block<6, 6>(18, 18) = Q_block_new;
-    cov_sys = Q;
+    // set Q: each RCP is a (position, orientation increment) pair with its own random walk
+    auto q_block = [dt_s](double std_pos, double std_ort) {
+        Eigen::Matrix<double, 6, 6> q = Eigen::Matrix<double, 6, 6>::Zero();
+        q.topLeftCorner<3, 3>().diagonal().setConstant(std_pos * std_pos * dt_s * dt_s);
+        q.bottomRightCorner<3, 3>().diagonal().setConstant(std_ort * std_ort * dt_s * dt_s);
+        return q;
+    };
+    Q_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
+    const Eigen::Matrix<double, 6, 6> q_old = q_block(param->q_std_pos_old, param->q_std_ort_old);
+    for (int i = 0; i < 3; ++i) Q_mat.block<6, 6>(6 * i, 6 * i) = q_old;
+    Q_mat.block<6, 6>(18, 18) = q_block(param->q_std_pos_new, param->q_std_ort_new);
 
     // A
-    a_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
-    Eigen::Matrix<double, 6, 6> matblock = Eigen::Matrix<double, 6, 6>::Zero();
-    matblock.topLeftCorner<3, 3>().setIdentity();
-    matblock.bottomRightCorner<3, 3>().setIdentity();
-    a_mat.block(0, 6, 6, 6) = matblock;
-    a_mat.block(6, 12, 6, 6) = matblock;
-    a_mat.block(12, 18, 6, 6) = matblock;
-    a_mat.block(18, 0, 3, 3) = -Eigen::Matrix3d::Identity();
-    a_mat.block(18, 12, 3, 3) = 2 * Eigen::Matrix3d::Identity();
-    a_mat.block(21, 9, 3, 3) = Eigen::Matrix3d::Identity();
-    a_mat.block(BA_OFFSET, BA_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
-    a_mat.block(BG_OFFSET, BG_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
+    A_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
+    Eigen::Matrix<double, 6, 6> I6 = Eigen::Matrix<double, 6, 6>::Identity();
+    A_mat.block(0, 6, 6, 6) = I6;
+    A_mat.block(6, 12, 6, 6) = I6;
+    A_mat.block(12, 18, 6, 6) = I6;
+    A_mat.block(18, 0, 3, 3) = -Eigen::Matrix3d::Identity();
+    A_mat.block(18, 12, 3, 3) = 2 * Eigen::Matrix3d::Identity();
+    A_mat.block(21, 9, 3, 3) = Eigen::Matrix3d::Identity();
+    A_mat.block(BA_OFFSET, BA_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
+    A_mat.block(BG_OFFSET, BG_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
+    A_mat.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
-    // GNSS states are frozen at a placeholder covariance until InitGnssState()
-    cov_rcp.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
-    a_mat.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
     param->lba_.num_threads = param->num_threads;
     lba = std::make_unique<LocalBA>(param->lba_);
@@ -102,7 +95,7 @@ static bool Alignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu, const std::vector<Vec3
     return true;
 }
 void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
-    Timer stage_timer;
+    Timer timer;
     for (const Imu& imu : measures.imu_) lba->AddImu(imu.time_ns, imu.angular_velocity, imu.linear_acceleration);
     if (measures.lidar_->empty()) {
         LOG(INFO) << "No LiDAR data, skip process measurement";
@@ -163,13 +156,14 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
         spl.itpQuaternion(pt_data.time_ns, &interp_q);
         pt_data.point_world = interp_q * pt_data.point_body + interp_pos;
     }
-    const double t_update = stage_timer.ElapsedMiniSeconds(true);
+    const double t_update = timer.ElapsedMiniSeconds(true);
     UpdateLocalBA(measures);
-    LOG(INFO) << "Stage time [ms]: update " << t_update << " lba " << stage_timer.ElapsedMiniSeconds()
+    const double ba_time = timer.ElapsedMicroSeconds(true);
+    LOG(INFO) << "time [ms]: update " << t_update << " lba " << ba_time
               << " raw points " << measures.lidar_->size();
     if (spl.num_knot % 1000 == 0) {
         LOG(INFO) << "Biases at " << NS_TO_S(spl.maxTimeNs()) << " s: ba " << ba.transpose() << " (std "
-                  << cov_rcp.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().cwiseSqrt().transpose() << ") bg "
+                  << P.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().cwiseSqrt().transpose() << ") bg "
                   << bg.transpose();
     }
 
@@ -346,7 +340,7 @@ void RESPLE_LIO::PrepareTdCpEpoch() {
         res[i] = data.cp_diff + CLIGHT * (data.sv_dt - data.sv_dt_anchor) - (range - range_anchor);
         // innovation variance without the clock column: the median below takes the clock step out
         const Eigen::Matrix<double, 1, XSIZE> h = H_cur - H_anchor;
-        var_innov[i] = (h * cov_rcp * h.transpose())(0) + data.var;
+        var_innov[i] = (h * P * h.transpose())(0) + data.var;
     }
     std::vector<double> sorted = res;
     std::nth_element(sorted.begin(), sorted.begin() + num / 2, sorted.end());
@@ -383,17 +377,17 @@ void RESPLE_LIO::InitGnssState(const sol_t& sol) {
     clk_anchor = clk;
     theta_ecef_enu = 0.0;
 
-    cov_rcp.middleRows<GNSS_SIZE>(CLK_OFFSET).setZero();
-    cov_rcp.middleCols<GNSS_SIZE>(CLK_OFFSET).setZero();
-    cov_rcp.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
+    P.middleRows<GNSS_SIZE>(CLK_OFFSET).setZero();
+    P.middleCols<GNSS_SIZE>(CLK_OFFSET).setZero();
+    P.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
         param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
-    cov_rcp(ROT_OFFSET, ROT_OFFSET) = param->std_ext_yaw_init * param->std_ext_yaw_init;
-    cov_rcp.block<3, 3>(TRANS_OFFSET, TRANS_OFFSET) =
+    P(ROT_OFFSET, ROT_OFFSET) = param->std_ext_yaw_init * param->std_ext_yaw_init;
+    P.block<3, 3>(TRANS_OFFSET, TRANS_OFFSET) =
         param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
 
     // one receiver oscillator drives all four clocks, plus a slow per-system bias
     const double dt_s = param->dt_ns * 1e-9;
-    cov_sys.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
+    Q_mat.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
         (param->std_clk * param->std_clk * Eigen::Matrix4d::Ones() +
          param->std_isb * param->std_isb * Eigen::Matrix4d::Identity()) * dt_s;
 
@@ -444,7 +438,7 @@ int RESPLE_LIO::Match() {
 }
 
 void RESPLE_LIO::IterativeUpdate() {
-    const Eigen::Matrix<double, XSIZE, XSIZE> cov_prop = cov_rcp;
+    const Eigen::Matrix<double, XSIZE, XSIZE> cov_prop = P;
     Eigen::Matrix<double, XSIZE, 1> rcp_prop = getState();
     bool converged = true;
     int num_eff = 0;
@@ -480,8 +474,8 @@ void RESPLE_LIO::IterativeUpdate() {
             converged = true;
         }
         if (t > n_iter || (i == max_iter - 1)) {
-            cov_rcp = (Eigen::MatrixXd::Identity(XSIZE, XSIZE) - KH) * cov_prop;
-            cov_rcp = 0.5 * (cov_rcp + cov_rcp.transpose());
+            P = (Eigen::MatrixXd::Identity(XSIZE, XSIZE) - KH) * cov_prop;
+            P = 0.5 * (P + P.transpose());
             break;
         }
     }  // iter
@@ -617,7 +611,7 @@ void RESPLE_LIO::propRCP() {
     Eigen::Matrix<double, 6, 1> cp_prop_pos = 2 * cps_win.block<6, 1>(12, 0) - cps_win.block<6, 1>(0, 0);
     Eigen::Vector3d delta = cps_win.segment<3>(9);
     spl.addOneStateKnot(cp_prop_pos.head<3>(), delta);
-    cov_rcp = a_mat * cov_rcp * a_mat.transpose() + cov_sys;
+    P = A_mat * P * A_mat.transpose() + Q_mat;
 }
 
 void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<double, XSIZE, 1>& x_prop,
@@ -657,7 +651,7 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     int idx_offset = 0;
     for (const PointData& pt_data : pt_meas) {
         if (!pt_data.if_valid) continue;
-        double lid_cov = pt_data.H * cov_rcp.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
+        double lid_cov = pt_data.H * P.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
         if (std::abs(pt_data.z) < param->ppl_thr || lid_cov < pt_data.pt_wt * param->coeff_cov) {
             z(idx_offset) = -pt_data.z;
             H.block(idx_offset, 0, 1, 24) = pt_data.H;
@@ -713,9 +707,10 @@ void RESPLE_LIO::UpdateLocalBA(const MeasureGroup& measures) {
         lba_points_.pop_front();
     }
     // local ba
-    if (lba->AddFrame(t_ns, odom, points, gravity))
+    if (lba->AddFrame(t_ns, odom, points, gravity)) {
         // align the front end
         AlignToBA(t_ns, lba->Newest());
+    }
 }
 
 void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {
@@ -758,12 +753,12 @@ void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {
     R_inv.segment<3>(12).setConstant(1.0 / (lp.fb_std_bg * lp.fb_std_bg));
     R_inv.segment<3>(15).setConstant(1.0 / (lp.fb_std_ba * lp.fb_std_ba));
 
-    const Eigen::Matrix<double, XSIZE, XSIZE> cov_prior = cov_rcp;
+    const Eigen::Matrix<double, XSIZE, XSIZE> cov_prior = P;
     const Eigen::Matrix<double, XSIZE, 1> x_prior = getState();
     Update<18>(innov, R_inv, H, x_prior, cov_prior);
     if (!lp.fb_keep_cov) {
-        cov_rcp = (Eigen::Matrix<double, XSIZE, XSIZE>::Identity() - KH) * cov_prior;
-        cov_rcp = 0.5 * (cov_rcp + cov_rcp.transpose());
+        P = (Eigen::Matrix<double, XSIZE, XSIZE>::Identity() - KH) * cov_prior;
+        P = 0.5 * (P + P.transpose());
     }
     const Eigen::Isometry3d after = spl.Interpolate(t_ns);
     LOG(INFO) << "LBA align: offset " << innov.head<3>().norm() << " m " << innov.segment<9>(3).norm() / std::sqrt(2.0)

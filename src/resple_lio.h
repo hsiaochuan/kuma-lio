@@ -143,9 +143,9 @@ class RESPLE_LIO {
     bool if_GNSS_aligned = false;
 
     SplineState spl;
-    Eigen::Matrix<double, XSIZE, XSIZE> cov_rcp;
-    Eigen::Matrix<double, XSIZE, XSIZE> cov_sys;
-    Eigen::Matrix<double, XSIZE, XSIZE> a_mat;
+    Eigen::Matrix<double, XSIZE, XSIZE> P;
+    Eigen::Matrix<double, XSIZE, XSIZE> Q_mat;
+    Eigen::Matrix<double, XSIZE, XSIZE> A_mat;
     Eigen::Matrix<double, XSIZE, XSIZE> KH;
     Eigen::Vector3d bg = Eigen::Vector3d::Zero();
     Eigen::Vector3d ba = Eigen::Vector3d::Zero();
