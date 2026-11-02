@@ -9,13 +9,13 @@
 namespace faster_lio {
 
 void RESPLE_LIO::Init() {
-    const double dt_s = param->dt_ns * 1e-9;
+    const double dt_s = param->resple_.dt_ns * 1e-9;
     // set P0
     P.setZero();
     P.topLeftCorner<CP_SIZE, CP_SIZE>() =
-        param->cov_P0 * dt_s * dt_s * Eigen::Matrix<double, CP_SIZE, CP_SIZE>::Identity();
-    P.block<3, 3>(BA_OFFSET, BA_OFFSET) = param->cov_ba.asDiagonal();
-    P.block<3, 3>(BG_OFFSET, BG_OFFSET) = param->cov_bg.asDiagonal();
+        param->resple_.cov_P0 * dt_s * dt_s * Eigen::Matrix<double, CP_SIZE, CP_SIZE>::Identity();
+    P.block<3, 3>(BA_OFFSET, BA_OFFSET) = param->resple_.cov_ba.asDiagonal();
+    P.block<3, 3>(BG_OFFSET, BG_OFFSET) = param->resple_.cov_bg.asDiagonal();
     P.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
     // set Q: each RCP is a (position, orientation increment) pair with its own random walk
@@ -26,11 +26,11 @@ void RESPLE_LIO::Init() {
         return q;
     };
     Q_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
-    const Eigen::Matrix<double, 6, 6> q_old = q_block(param->q_std_pos_old, param->q_std_ort_old);
+    const Eigen::Matrix<double, 6, 6> q_old = q_block(param->resple_.q_std_pos_old, param->resple_.q_std_ort_old);
     for (int i = 0; i < 3; ++i) Q_mat.block<6, 6>(6 * i, 6 * i) = q_old;
-    Q_mat.block<6, 6>(18, 18) = q_block(param->q_std_pos_new, param->q_std_ort_new);
-    Q_mat.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().setConstant(param->q_std_ba * param->q_std_ba * dt_s);
-    Q_mat.block<3, 3>(BG_OFFSET, BG_OFFSET).diagonal().setConstant(param->q_std_bg * param->q_std_bg * dt_s);
+    Q_mat.block<6, 6>(18, 18) = q_block(param->resple_.q_std_pos_new, param->resple_.q_std_ort_new);
+    Q_mat.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().setConstant(param->resple_.q_std_ba * param->resple_.q_std_ba * dt_s);
+    Q_mat.block<3, 3>(BG_OFFSET, BG_OFFSET).diagonal().setConstant(param->resple_.q_std_bg * param->resple_.q_std_bg * dt_s);
 
     // A
     A_mat = Eigen::Matrix<double, XSIZE, XSIZE>::Zero();
@@ -108,9 +108,9 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
     pcl::transformPointCloud(*measures.lidar_, *points_body, param->extrin_il_.Mat4d(), true);
 
     // downsample point
-    if (param->ds_scan_voxel > 0) {
+    if (param->resple_.ds_scan_voxel > 0) {
         pcl::UniformSampling<Point> scan_sampler;
-        scan_sampler.setRadiusSearch(param->ds_scan_voxel);
+        scan_sampler.setRadiusSearch(param->resple_.ds_scan_voxel);
         scan_sampler.setInputCloud(points_body);
         scan_sampler.filter(*points_body);
         std::sort(points_body->points.begin(), points_body->points.end(),
@@ -142,7 +142,7 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
         pt_meas[i].point_body = points_body->at(i).getVector3fMap().cast<double>();
         pt_meas[i].point = points_body->at(i);
         pt_meas[i].time_ns = points_body->at(i).GetTimeNs();
-        pt_meas[i].pt_wt = param->w_pt;
+        pt_meas[i].pt_wt = param->resple_.w_pt;
         pt_meas[i].body_cov = BodyPointCov(pt_meas[i].point_body, param->lba_.range_err, param->lba_.angle_err);
     }
 
@@ -388,7 +388,7 @@ void RESPLE_LIO::InitGnssState(const sol_t& sol) {
         param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
 
     // one receiver oscillator drives all four clocks, plus a slow per-system bias
-    const double dt_s = param->dt_ns * 1e-9;
+    const double dt_s = param->resple_.dt_ns * 1e-9;
     Q_mat.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
         (param->std_clk * param->std_clk * Eigen::Matrix4d::Ones() +
          param->std_isb * param->std_isb * Eigen::Matrix4d::Identity()) * dt_s;
@@ -424,9 +424,9 @@ int RESPLE_LIO::Match() {
             pt_data.if_valid = true;
             pt_data.ppl_normal = hit.normal;
             pt_data.ppl_d = hit.d;
-            pt_data.pt_wt = param->lba_.cov_en
-                                ? param->lba_.r_base + hit.plane_sigma + hit.normal.dot(var_w * hit.normal)
-                                : param->w_pt;
+            pt_data.pt_wt = param->resple_.cov_en
+                                ? param->resple_.r_base + hit.plane_sigma + hit.normal.dot(var_w * hit.normal)
+                                : param->resple_.w_pt;
         }
     }  // for point
 
@@ -573,12 +573,12 @@ void RESPLE_LIO::prepIMU(ImuData& imu_data) {
     imu_data.z = imu - imu_data.imu_itp;
 
     for (int i = 0; i < 3; i++) {
-        imu_data.if_acc_valid[i] = std::abs(imu_data.accel(i) - imu_data.imu_itp(i)) <= param->imu_acc_outlier;
+        imu_data.if_acc_valid[i] = std::abs(imu_data.accel(i) - imu_data.imu_itp(i)) <= param->resple_.imu_acc_outlier;
         if (!imu_data.if_acc_valid[i]) {
             imu_data.H.row(i).setZero();
             imu_data.z(i) = 0;
         }
-        imu_data.if_gyro_valid[i] = std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= param->imu_gyro_outlier;
+        imu_data.if_gyro_valid[i] = std::abs(imu_data.gyro(i) - imu_data.imu_itp(i + 3)) <= param->resple_.imu_gyro_outlier;
         if (!imu_data.if_gyro_valid[i]) {
             imu_data.H.row(i + 3).setZero();
             imu_data.z(i + 3) = 0;
@@ -619,12 +619,12 @@ void RESPLE_LIO::propRCP() {
 void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<double, XSIZE, 1>& x_prop,
                                      const Eigen::Matrix<double, XSIZE, XSIZE>& P_prop) {
     Eigen::Matrix<double, 6, 1> cov_imu_inv;
-    cov_imu_inv(0) = 1. / param->cov_acc(0);
-    cov_imu_inv(1) = 1. / param->cov_acc(1);
-    cov_imu_inv(2) = 1. / param->cov_acc(2);
-    cov_imu_inv(3) = 1. / param->cov_gyro(0);
-    cov_imu_inv(4) = 1. / param->cov_gyro(1);
-    cov_imu_inv(5) = 1. / param->cov_gyro(2);
+    cov_imu_inv(0) = 1. / param->resple_.cov_acc(0);
+    cov_imu_inv(1) = 1. / param->resple_.cov_acc(1);
+    cov_imu_inv(2) = 1. / param->resple_.cov_acc(2);
+    cov_imu_inv(3) = 1. / param->resple_.cov_gyro(0);
+    cov_imu_inv(4) = 1. / param->resple_.cov_gyro(1);
+    cov_imu_inv(5) = 1. / param->resple_.cov_gyro(2);
 
     const int num_pt = static_cast<int>(pt_meas.size());
 #pragma omp parallel for num_threads(param->num_threads) schedule(dynamic) if (num_pt > kMinParallelPoints)
@@ -654,7 +654,7 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     for (const PointData& pt_data : pt_meas) {
         if (!pt_data.if_valid) continue;
         double lid_cov = pt_data.H * P.topLeftCorner<24, 24>() * pt_data.H.transpose() + pt_data.pt_wt;
-        if (std::abs(pt_data.z) < param->ppl_thr || lid_cov < pt_data.pt_wt * param->coeff_cov) {
+        if (std::abs(pt_data.z) < param->resple_.ppl_thr || lid_cov < pt_data.pt_wt * param->resple_.coeff_cov) {
             z(idx_offset) = -pt_data.z;
             H.block(idx_offset, 0, 1, 24) = pt_data.H;
         }
@@ -690,7 +690,7 @@ void RESPLE_LIO::UpdateLocalBA(const MeasureGroup& measures) {
     }
     // The spline has no frames, so one closes every frame_dt at the start of this knot interval: the
     // points since the last cut, moved into the body frame at this instant.
-    const int64_t t_ns = spl.maxTimeNs() - param->dt_ns;
+    const int64_t t_ns = spl.maxTimeNs() - param->resple_.dt_ns;
     if (lba_last_cut_ns_ < 0) lba_last_cut_ns_ = t_ns;
     if (t_ns - lba_last_cut_ns_ < S_TO_NS(param->lba_.frame_dt)) return;
     lba_last_cut_ns_ = t_ns;
@@ -719,7 +719,7 @@ void RESPLE_LIO::AlignToBA(int64_t t_ns, const LbaState& x) {
     // One update with both measurements of the refined frame.  Rows: position, then the three body
     // axes in the world frame (they carry the rotation with the Jacobian the LiDAR rows already use;
     // their 9 rows hold 2 / sigma^2 per angle), then the gyroscope and accelerometer biases.
-    const LbaParam& lp = param->lba_;
+    const RespleParam& lp = param->resple_;
     Eigen::Matrix<double, 18, XSIZE> H = Eigen::Matrix<double, 18, XSIZE>::Zero();
     Eigen::Matrix<double, 18, 1> innov, R_inv;
     Eigen::Quaterniond q;

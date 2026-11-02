@@ -113,18 +113,25 @@ int main(int argc, char **argv) {
         fs::path sol_fname = fs::path(output_dir) / "rtkpos.txt";
         laser_mapping->ReadObsNav(gnss_obs_fname, nav_fname, sol_fname.string());
     }
+    const auto run_front_end = [&laser_mapping]() {
+        if (laser_mapping->param->front_end == "fastlio") {
+            laser_mapping->RunFastLio();
+        } else {
+            laser_mapping->RunRESPLE();
+        }
+    };
     for (const rosbag::MessageInstance &m : view) {
         auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>();
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && livox_msg) {
             laser_mapping->LivoxPCLCallBack(livox_msg);
-            laser_mapping->Run();
+            run_front_end();
             continue;
         }
 
         auto point_cloud_msg = m.instantiate<sensor_msgs::PointCloud2>();
         if (m.getTopic() == laser_mapping->param->lidar_topic_ && point_cloud_msg) {
             laser_mapping->StandardPCLCallBack(point_cloud_msg);
-            laser_mapping->Run();
+            run_front_end();
             continue;
         }
 

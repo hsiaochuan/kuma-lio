@@ -10,6 +10,7 @@
 #include <sensor_msgs/NavSatFix.h>
 
 #include <rosbag/bag.h>
+#include "fast_lio.h"
 #include "pointcloud_preprocess.h"
 #include "resple_lio.h"
 #include "stamp_pose.h"
@@ -29,11 +30,14 @@ class LaserMapping {
 
     /// init without ros
     bool Init(const std::string &config_fname, const std::string& camera_fname);
-    void Run();
+    void RunRESPLE();
+    void RunFastLio();
     enum class DynamicInitResult { SUCCESS, STATIONARY, FAIL };
     DynamicInitResult TryDynamicInit(std::int64_t window_begin_ns, std::int64_t window_end_ns);
     void PostUpdate();
+    void PostUpdateFastLio();
     void PublishROSMsg();
+    void PublishROSMsgFastLio();
     // callbacks of lidar and imu
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
@@ -44,10 +48,12 @@ class LaserMapping {
     bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     bool CollectMeasures(const std::int64_t& meas_end);
-    void PublishOdometry();
+    /// The next frame of the FAST-LIO front end: lba.frame_dt long, or up to the next image.
+    bool CollectMeasuresFastLio();
+    void PublishOdometry(const Eigen::Isometry3d& pub_pose, std::int64_t time_ns);
     void PublishFrameWorld();
     void PublishFrameEffectWorld();
-    void PublishFrustrum();
+    void PublishFrustrum(std::int64_t time_ns);
     void Savetrajectory();
 
     void Finish();
@@ -56,7 +62,8 @@ class LaserMapping {
     void InitialPublishers(ros::NodeHandle& nh);
    public:
     /// modules
-    std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;
+    std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;  // front_end: resple
+    std::shared_ptr<FastLio> fast_lio_ = nullptr;       // front_end: fast_lio
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
 
     ros::Subscriber sub_pcl_;

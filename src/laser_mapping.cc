@@ -1412,8 +1412,10 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
     // RTKLIB expects observations sorted by time/sat and ephemerides uniquified before use.
     sortobs(&obss);
     uniqnav(&nav);
-    resple_lio_->obss = obss;
-    resple_lio_->nav = nav;
+    if (resple_lio_) {
+        resple_lio_->obss = obss;
+        resple_lio_->nav = nav;
+    }
 
     LOG(INFO) << "read " << obss.n << " observations, " << nav.n << " eph, " << nav.ng << " geph, " << nav.ns
               << " seph";
@@ -1461,9 +1463,15 @@ bool LaserMapping::Init(const std::string& config_fname, const std::string& came
     preprocess_->param = param;
 
     // the estimation algorithm
-    resple_lio_ = std::make_shared<RESPLE_LIO>();
-    resple_lio_->param = param;
-    resple_lio_->Init();
+    if (param->front_end == "fastlio") {
+        fast_lio_ = std::make_shared<FastLio>();
+        fast_lio_->param = param;
+        fast_lio_->Init();
+    } else {
+        resple_lio_ = std::make_shared<RESPLE_LIO>();
+        resple_lio_->param = param;
+        resple_lio_->Init();
+    }
 
     if (param->bag_save_en_) {
         bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
@@ -1544,7 +1552,7 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
         obss_time_ns.push_back(obs_time_ns);
     }
 
-    VoxelInitializer dynamic_initializer(window_begin_ns, window_end_ns, param->ds_scan_voxel, param->plane_thresh);
+    VoxelInitializer dynamic_initializer(window_begin_ns, window_end_ns, param->resple_.ds_scan_voxel, param->resple_.plane_thresh);
     dynamic_initializer.param = param;
     dynamic_initializer.obss = obss;
     dynamic_initializer.nav = nav;
@@ -1564,7 +1572,7 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
     // On a uniform cubic B-spline the value at t_{j+1} = start + (j+1)*dt is (k_j + 4 k_{j+1} + k_{j+2})/6,
     // i.e. knot j shapes the trajectory around t_{j+1}. Seed each knot with the IMU-propagated pose at
     // that time; starting the spline one dt before scan 0 makes knot 0 scan 0's gauge-fixed pose.
-    const std::int64_t dt_ns = param->dt_ns;
+    const std::int64_t dt_ns = param->resple_.dt_ns;
     resple_lio_->spl.init(dt_ns, s0.time_ns - dt_ns, Eigen::Quaterniond(s0.R));
     Mat3 R_prev = s0.R;
     for (std::int64_t t_k = s0.time_ns; t_k <= s_last.time_ns; t_k += dt_ns) {
@@ -1606,7 +1614,70 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
     return DynamicInitResult::SUCCESS;
 }
 
-void LaserMapping::Run() {
+void LaserMapping::RunFastLio() {
+    static constexpr int INIT_IMU_COUNT = 20;
+    static constexpr int64_t INIT_POINTS_SPAN = S_TO_NS(0.3);
+    if (!if_localmap_initialized) {
+        if (points_buffer_.empty() || imu_buffer_.empty()) return;
+        if (static_cast<int>(imu_buffer_.size()) < INIT_IMU_COUNT) return;
+
+        const std::int64_t end_time_ns = points_buffer_.front().GetTimeNs() + INIT_POINTS_SPAN;
+        if (points_buffer_.back().GetTimeNs() < end_time_ns || imu_buffer_.back().time_ns < end_time_ns) return;
+
+        // standing still: gravity and the gyroscope bias come from the first samples
+        Vec3 acc_sum = Vec3::Zero();
+        Vec3 gyr_sum = Vec3::Zero();
+        for (int i = 0; i < INIT_IMU_COUNT; ++i) {
+            acc_sum += imu_buffer_[i].linear_acceleration;
+            gyr_sum += imu_buffer_[i].angular_velocity;
+        }
+        const Vec3 gravity_body = (acc_sum / INIT_IMU_COUNT).normalized() * FastLio::GRAVITY_NORM;
+        Mat3 R0 = Eigen::Quaterniond::FromTwoVectors(gravity_body.normalized(), Vec3(0, 0, 1)).toRotationMatrix();
+        const double yaw = std::atan2(R0(1, 0), R0(0, 0));
+        R0 = Eigen::AngleAxisd(-yaw, Vec3::UnitZ()).toRotationMatrix() * R0;
+
+        FastLioState state;
+        state.R = R0;
+        state.bg = gyr_sum / INIT_IMU_COUNT;
+
+        PointCloud::Ptr init_points(new PointCloud);
+        while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < end_time_ns) {
+            init_points->emplace_back(points_buffer_.front());
+            points_buffer_.pop_front();
+        }
+        Imu last_imu = imu_buffer_.front();
+        while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < end_time_ns) {
+            last_imu = imu_buffer_.front();
+            imu_buffer_.pop_front();
+        }
+        while (!image_buff_.empty() && image_buff_.front().time_ns < end_time_ns) {
+            image_buff_.pop_front();
+        }
+        if (init_points->size() < 100) {
+            LOG(WARNING) << "only " << init_points->size() << " points for map init, waiting";
+            return;
+        }
+        PointCloud::Ptr init_points_world(new PointCloud);
+        pcl::transformPointCloud(*init_points, *init_points_world,
+                                 (Pose3(Eigen::Quaterniond(R0), Vec3::Zero()) * param->extrin_il_).Mat4d(), true);
+        std::vector<Vec3> init_ps;
+        for (const Point& pt : init_points_world->points) init_ps.push_back(pt.getVector3fMap().cast<double>());
+        fast_lio_->lba->InitMap(init_ps, param->lba_.range_err * param->lba_.range_err + param->lba_.pose_var);
+        fast_lio_->Start(state, R0 * gravity_body, end_time_ns, last_imu);
+        if_localmap_initialized = true;
+        LOG(INFO) << "localmap initialized with " << init_points_world->size() << " points, frames from "
+                  << param->fast_lio_.frame_source;
+        return;
+    }
+
+    while (CollectMeasuresFastLio()) {
+        fast_lio_->ProcessMeasurement(measures_);
+        PublishROSMsgFastLio();
+        PostUpdateFastLio();
+    }
+}
+
+void LaserMapping::RunRESPLE() {
     static constexpr int INIT_IMU_COUNT = 20;
     static constexpr int64_t INIT_POINTS_SPAN = S_TO_NS(0.3);
     static constexpr int64_t DYNAMIC_INIT_SPAN = S_TO_NS(1.0);
@@ -1690,7 +1761,7 @@ void LaserMapping::Run() {
             Eigen::Quaterniond q0(R0);
             resple_lio_->bg = acc_gyro / INIT_IMU_COUNT;
             resple_lio_->gravity = q0 * gravity_body;
-            resple_lio_->spl.init(param->dt_ns, 0, q0);
+            resple_lio_->spl.init(param->resple_.dt_ns, 0, q0);
             if_inertial_initialized = true;
             LOG(INFO) << "Inertial initialized, gravity: " << resple_lio_->gravity.transpose();
         }
@@ -1736,7 +1807,7 @@ void LaserMapping::Run() {
         return;
     }
 
-    while (CollectMeasures(resple_lio_->spl.maxTimeNs() + param->dt_ns)) {
+    while (CollectMeasures(resple_lio_->spl.maxTimeNs() + param->resple_.dt_ns)) {
         resple_lio_->propRCP();
         resple_lio_->ProcessMeasurement(measures_);
         PublishROSMsg();
@@ -1745,7 +1816,7 @@ void LaserMapping::Run() {
 }
 
 void LaserMapping::PostUpdate() {
-    int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
+    int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->resple_.dt_ns;
     Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
     trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
 
@@ -1772,7 +1843,7 @@ void LaserMapping::PostUpdate() {
 
             pcl::UniformSampling<Point> sampler;
             sampler.setInputCloud(wait_save_points_);
-            sampler.setRadiusSearch(param->ds_scan_voxel);
+            sampler.setRadiusSearch(param->resple_.ds_scan_voxel);
             sampler.filter(*wait_save_points_);
             pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(),
                                        *wait_save_points_);
@@ -1780,13 +1851,114 @@ void LaserMapping::PostUpdate() {
         }
     }
 }
+void LaserMapping::PostUpdateFastLio() {
+    const std::int64_t time_ns = measures_.mea_end_;
+    trajectory_.emplace_back(global_offset_time + time_ns * 1e-9, fast_lio_->x.Isometry());
+
+    if (param->pcd_save_en_) {
+        static int call_once = [&]() {
+            fs::create_directories(fs::path(output_dir) / "map");
+            return 0;
+        }();
+        wait_save_points_->reserve(wait_save_points_->size() + fast_lio_->points.size());
+        for (const FastLioPoint& pt : fast_lio_->points) {
+            Point point{};
+            point.getVector3fMap() = pt.world.cast<float>();
+            point.SetTimeNs(time_ns);
+            wait_save_points_->push_back(point);
+        }
+
+        if (wait_save_points_->size() >= 2 &&
+            wait_save_points_->back().GetTimeNs() - wait_save_points_->front().GetTimeNs() >
+                S_TO_NS(param->pcd_save_interval_)) {
+            double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
+            std::stringstream stamp_string;
+            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
+
+            pcl::UniformSampling<Point> sampler;
+            sampler.setInputCloud(wait_save_points_);
+            sampler.setRadiusSearch(param->fast_lio_.down_size);
+            sampler.filter(*wait_save_points_);
+            pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(),
+                                       *wait_save_points_);
+            wait_save_points_->clear();
+        }
+    }
+}
+
 void LaserMapping::PublishROSMsg() {
     // publish
-    PublishOdometry();
+    PublishOdometry(resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1), resple_lio_->spl.maxTimeNs());
     PublishFrameWorld();
     PublishFrameEffectWorld();
-    PublishFrustrum();
+    PublishFrustrum(resple_lio_->spl.maxTimeNs());
 }
+
+void LaserMapping::PublishROSMsgFastLio() {
+    const std::int64_t time_ns = measures_.mea_end_;
+    PublishOdometry(fast_lio_->x.Isometry(), time_ns);
+    if (!fast_lio_->points.empty()) {
+        const ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(time_ns));
+        PointCloud::Ptr points_world(new PointCloud);
+        PointCloud::Ptr eff_points(new PointCloud);
+        for (const FastLioPoint& pt : fast_lio_->points) {
+            Point point{};
+            point.getVector3fMap() = pt.world.cast<float>();
+            points_world->push_back(point);
+            if (pt.valid) eff_points->push_back(point);
+        }
+        sensor_msgs::PointCloud2 scan_msg;
+        pcl::toROSMsg(*points_world, scan_msg);
+        scan_msg.header.stamp = ros_stamp;
+        scan_msg.header.frame_id = "world";
+        if (pub_laser_cloud_world_) pub_laser_cloud_world_.publish(scan_msg);
+        if (bag_.isOpen()) bag_.write("/cloud_registered", ros_stamp, scan_msg);
+
+        sensor_msgs::PointCloud2 eff_scan_msg;
+        pcl::toROSMsg(*eff_points, eff_scan_msg);
+        eff_scan_msg.header.stamp = ros_stamp;
+        eff_scan_msg.header.frame_id = "world";
+        if (pub_laser_cloud_effect_world_) pub_laser_cloud_effect_world_.publish(eff_scan_msg);
+        if (bag_.isOpen()) bag_.write("/cloud_registered_effect_world", ros_stamp, eff_scan_msg);
+    }
+    PublishFrustrum(time_ns);
+}
+bool LaserMapping::CollectMeasuresFastLio() {
+    std::int64_t meas_end;
+    if (param->fast_lio_.frame_source == "camera") {
+        while (!image_buff_.empty() && image_buff_.front().time_ns <= fast_lio_->last_end_ns) {
+            image_buff_.pop_front();
+        }
+        if (image_buff_.empty()) return false;
+        meas_end = image_buff_.front().time_ns;
+    } else {
+        meas_end = fast_lio_->last_end_ns + S_TO_NS(param->lba_.frame_dt);
+    }
+
+    if (points_buffer_.empty() || imu_buffer_.empty()) return false;
+    if (imu_buffer_.back().time_ns < meas_end) return false;
+    if (points_buffer_.back().GetTimeNs() < meas_end) return false;
+
+    measures_.mea_end_ = meas_end;
+    measures_.imu_.clear();
+    while (!imu_buffer_.empty() && imu_buffer_.front().time_ns <= meas_end) {
+        measures_.imu_.emplace_back(imu_buffer_.front());
+        imu_buffer_.pop_front();
+    }
+    measures_.lidar_->clear();
+    while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() <= meas_end) {
+        measures_.lidar_->emplace_back(points_buffer_.front());
+        points_buffer_.pop_front();
+    }
+    // no image processing yet, the frame only carries it
+    measures_.rgb_image_ = RgbImage();
+    while (!image_buff_.empty() && image_buff_.front().time_ns <= meas_end) {
+        measures_.rgb_image_ = std::move(image_buff_.front());
+        image_buff_.pop_front();
+    }
+    return true;
+}
+
 bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
     if (points_buffer_.empty()) return false;
     if (imu_buffer_.empty()) return false;
@@ -1827,10 +1999,7 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
     }
     return true;
 }
-void LaserMapping::PublishOdometry() {
-    Eigen::Isometry3d pub_pose;
-    pub_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
-
+void LaserMapping::PublishOdometry(const Eigen::Isometry3d& pub_pose, std::int64_t time_ns) {
     nav_msgs::Odometry body_odometry;
     geometry_msgs::PoseStamped pose_stamped;
     pose_stamped.pose.position.x = pub_pose.translation().x();
@@ -1841,7 +2010,7 @@ void LaserMapping::PublishOdometry() {
     pose_stamped.pose.orientation.y = q.y();
     pose_stamped.pose.orientation.z = q.z();
     pose_stamped.pose.orientation.w = q.w();
-    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(time_ns));
     pose_stamped.header.stamp = ros_stamp;
     pose_stamped.header.frame_id = "world";
 
@@ -1917,9 +2086,9 @@ void LaserMapping::PublishFrameEffectWorld() {
     if (bag_.isOpen()) bag_.write("/cloud_registered_effect_world", ros_stamp, eff_scan_msg);
 }
 
-void LaserMapping::PublishFrustrum() {
+void LaserMapping::PublishFrustrum(std::int64_t time_ns) {
     if (!pub_frustrum_) return;
-    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(time_ns));
     // virtual pinhole camera, drawn at the body-to-camera extrinsic (identity if uncalibrated)
     constexpr double kDepth = 1.0;        // frustum depth, meters
     constexpr double kHalfFovH = 0.5236;  // 60 deg horizontal half-FOV, rad
@@ -1992,7 +2161,7 @@ void LaserMapping::Finish() {
 
         pcl::UniformSampling<Point> sampler;
         sampler.setInputCloud(wait_save_points_);
-        sampler.setRadiusSearch(param->ds_scan_voxel);
+        sampler.setRadiusSearch(fast_lio_ ? param->fast_lio_.down_size : param->resple_.ds_scan_voxel);
         sampler.filter(*wait_save_points_);
         fs::create_directories(fs::path(output_dir) / "map");
         pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(), *wait_save_points_);

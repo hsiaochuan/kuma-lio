@@ -2,48 +2,59 @@ common:
   lid_topic: "/hesai/pandar"
   imu_topic: "/alphasense/imu"
   gnss_topic: ""
+  img_topic: ""
   gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
 
+front_end: resple
+num_threads: 4
 lidar_type: HESAI
 blind: 0.5
 point_filter_num: 2
 det_range: 100.0
-
 extrin_t_il: [-0.001, -0.00855, 0.055]
 extrin_R_il: [0.7071068, -0.7071068, 0, 0]
-
-ds_scan_voxel: 0.25
-knot_hz: 100
-w_pt: 0.01
-nn_thresh: 0.5
-coeff_cov: 2.0
-q_std_pos_old: 0.0158114
-q_std_ort_old: 0.0158114
-q_std_pos_new: 0.05
-q_std_ort_new: 0.05
-q_std_bg: 1.0e-3
-q_std_ba: 1.0e-2
-cov_acc: [1.0, 1.0, 1.0]
-cov_gyro: [0.001, 0.001, 0.001]
-cov_bg: [0.000001, 0.000001, 0.000001]
-cov_ba: [0.2, 0.2, 0.2]
-
 pcd_save_en: true
 pcd_save_interval: 30
 bag_save_en: false
 
-cam:
-  model: OPENCV_FISHEYE
-  width: 720
-  height: 540
-  params: [351.31400364193297, 351.4911744656785, 367.8522793375995, 253.8402144980996,
-           -0.03696737352869157, -0.008917880497032812, 0.008912969593422046, -0.0037685977496087313]
-  extrin_R_cl: [-0.999926, -0.00670802, 0.0101073,
-                -0.0100912, -0.00242564, -0.999946,
-                0.00673218, -0.999975, 0.00235777]
-  extrin_t_cl: [-0.0549762, 0.0675401, -0.0520599]
+resple:
+  knot_hz: 100
+  ds_scan_voxel: 0.25
+  w_pt: 0.01
+  nn_thresh: 0.5
+  coeff_cov: 2.0
+  plane_thresh: 0.1
+  imu_acc_outlier: 10.0
+  imu_gyro_outlier: 5.0
+  q_std_pos_old: 0.0158114
+  q_std_ort_old: 0.0158114
+  q_std_pos_new: 0.05
+  q_std_ort_new: 0.05
+  q_std_bg: 1.0e-3
+  q_std_ba: 1.0e-2
+  cov_P0: 0.02
+  cov_acc: [1.0, 1.0, 1.0]
+  cov_gyro: [0.001, 0.001, 0.001]
+  cov_bg: [0.000001, 0.000001, 0.000001]
+  cov_ba: [0.2, 0.2, 0.2]
+  cov_en: true
+  r_base: 0.001
+  fb_std_pos: 0.001
+  fb_std_ort: 0.0002
+  fb_std_bg: 1.0e-3
+  fb_std_ba: 1.0e-2
+  fb_keep_cov: true
+
+fastlio:
+  frame_source: time
+  down_size: 0.25
+  cov_gyr: 0.01
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  r_base: 0.0005
 
 lba:
   win_size: 10
@@ -57,12 +68,40 @@ lba:
   imu_coef: 0.000025
   cov_gyr: 0.0001
   cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
   sigma_num: 3
+  pose_var: 1.0e-4
   range_err: 0.02
   angle_err: 0.05
-  cov_en: true
-  fb_std_pos: 0.001
-  fb_std_ort: 0.0002
-  fb_keep_cov: true
   frame_dt: 0.1
+  map_range: 200.0
 
+gnss:
+  lever_arm: [0.0, 0.0, 0.0]
+  ali_min_travel: 50.0
+  max_gap: 0.1
+  tdcp_enable: true
+  tdcp_std: 0.02
+  tdcp_outlier: 0.5
+  tdcp_chi2: 10.83
+  tdcp_min_sat: 5
+  tdcp_init_weight: 1.0
+  tdcp_init_min_horiz: 0.05
+  tdcp_init_max_std: 0.5
+  std_clk: 10.0
+  std_isb: 0.01
+  std_clk_init: 10.0
+  std_ext_yaw_init: 0.2
+  std_ext_pos_init: 5.0
+
+cam:
+  model: OPENCV_FISHEYE
+  width: 720
+  height: 540
+  params: [351.31400364193297, 351.4911744656785, 367.8522793375995, 253.8402144980996,
+           -0.03696737352869157, -0.008917880497032812, 0.008912969593422046, -0.0037685977496087313]
+  extrin_R_cl: [-0.999926, -0.00670802, 0.0101073,
+                -0.0100912, -0.00242564, -0.999946,
+                0.00673218, -0.999975, 0.00235777]
+  extrin_t_cl: [-0.0549762, 0.0675401, -0.0520599]

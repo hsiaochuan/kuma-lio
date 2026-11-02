@@ -42,13 +42,6 @@ struct LbaParam {
     double pose_var = 1e-4;           ///< [m^2] pose uncertainty added to every map point
     double range_err = 0.02;          ///< [m] LiDAR range error
     double angle_err = 0.05;          ///< [deg] LiDAR beam direction error
-    bool cov_en = true;               ///< per-point residual variance from the plane and the point, else w_pt
-    double r_base = 0.001;            ///< [m^2] added to the per-point residual variance when cov_en
-    double fb_std_pos = 0.01;         ///< [m] noise of that pose measurement
-    double fb_std_ort = 0.002;        ///< [rad]
-    double fb_std_bg = 1e-3;          ///< [rad/s] noise of the BA gyroscope bias fed back with the pose
-    double fb_std_ba = 1e-2;          ///< [m/s^2] noise of the BA accelerometer bias fed back with the pose
-    bool fb_keep_cov = true;          ///< leave the filter covariance alone: the BA reuses the filter's own data
     double frame_dt = 0.1;            ///< [s] frame length
     double map_range = 200.0;         ///< [m] voxels farther than this from the sensor are dropped
     int num_threads = 4;              ///< for refitting the voxels

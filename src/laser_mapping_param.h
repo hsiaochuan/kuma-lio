@@ -11,6 +11,58 @@
 #include "pose3.h"
 #include "local_ba.h"
 using namespace faster_lio;
+/// The `resple:` block: the spline filter of `front_end: resple`, and its feedback from the BA.
+struct RespleParam {
+    int64_t dt_ns;             // 1 / knot_hz [s]
+    double ds_scan_voxel;      // per-scan uniform-sampling leaf [m]
+    double w_pt;               // per-point measurement variance when `cov_en` is off
+    double ppl_thr;            // point-to-plane residual gate [m]
+    double coeff_cov;          // lid_cov < w_pt * coeff_cov gate
+    double plane_thresh;       // dynamic init only: max |point-to-plane| when fitting a plane [m]
+    double imu_acc_outlier;    // |acc - predicted| gate per axis [m/s^2]
+    double imu_gyro_outlier;   // |gyro - predicted| gate per axis [rad/s]
+    double q_std_pos_old;
+    double q_std_ort_old;
+    double q_std_pos_new;
+    double q_std_ort_new;
+    double q_std_bg;
+    double q_std_ba;
+    double cov_P0;
+    Vec3 cov_acc;
+    Vec3 cov_gyro;
+    Vec3 cov_bg;
+    Vec3 cov_ba;
+    bool cov_en;               // per-point residual variance from the plane and the point, else w_pt
+    double r_base;             // [m^2] added to the per-point residual variance when cov_en
+    double fb_std_pos;         // [m] noise of the BA pose fed back to the spline
+    double fb_std_ort;         // [rad]
+    double fb_std_bg;          // [rad/s] noise of the BA gyroscope bias fed back with the pose
+    double fb_std_ba;          // [m/s^2] noise of the BA accelerometer bias fed back with the pose
+    bool fb_keep_cov;          // leave the filter covariance alone: the BA reuses the filter's own data
+};
+
+/// The `fastlio:` block: the FAST-LIO2 style front end, with the noises of Voxel-SLAM.
+struct FastLioParam {
+    std::string frame_source;  // time: a frame every lba.frame_dt; camera: a frame ends at each image
+    double down_size;          // [m] per-frame voxel grid
+    double cov_gyr;            // [(rad/s)^2] per gyroscope sample
+    double cov_acc;            // [(m/s^2)^2] per accelerometer sample
+    double rdw_gyr;            // per sample, as Voxel-SLAM
+    double rdw_acc;
+    double r_base;             // [m^2] added to the per-point residual variance
+};
+
+/// A key every config has: the configs all list the same keys.
+template <typename T>
+T ConfigKey(const YAML::Node& node, const char* key) {
+    const YAML::Node value = node[key];
+    CHECK(value.IsDefined()) << "config key missing: " << key;
+    return value.as<T>();
+}
+inline Vec3 ConfigVec3(const YAML::Node& node, const char* key) {
+    return VecFromArray(ConfigKey<std::vector<double>>(node, key));
+}
+
 class LaserMappingParam {
    public:
     LaserMappingParam() {
@@ -41,180 +93,176 @@ class LaserMappingParam {
     std::string lidar_topic_;
     std::string imu_topic_;
     std::string gnss_topic_;
-    std::string img_topic_;
-    bool gnss_enable_ = false;
-    bool acc_ratio_ = false;
-    double lidar_time_offset_ = 0.;
+    std::string img_topic_;  // empty: no images
+    bool gnss_enable_;
+    bool acc_ratio_;
+    double lidar_time_offset_;
 
+    std::string front_end;  // resple or fastlio
+    int num_threads;
     std::string lidar_type;
-    float det_range_ = 300.0f;
-    double blind = 2.0;
-    int point_filter_num = 1;
+    float det_range_;
+    double blind;
+    int point_filter_num;
 
     Pose3 extrin_il_ = Pose3::Identity();
     Pose3 extrin_ic_ = Pose3::Identity();
     CamModel::Ptr cam_model_ = nullptr;
 
-    double cov_P0 = 0.02;
-    Vec3 cov_ba = Vec3(0.2, 0.2, 0.2);
-    Vec3 cov_bg = Vec3(0.2, 0.2, 0.2);
-    double q_std_pos_old = 0.0316228;
-    double q_std_ort_old = 0.0316228;
-    double q_std_pos_new = 0.1;
-    double q_std_ort_new = 0.1;
-    double q_std_bg = 1e-3;
-    double q_std_ba = 1e-2;
-    Vec3 cov_acc = Vec3(1.0, 1.0, 1.0);
-    Vec3 cov_gyro = Vec3(0.1, 0.1, 0.1);
-    int64_t dt_ns = S_TO_NS(0.01);   // 1 / knot_hz [s]
-    double ds_scan_voxel = 0.5;  // per-scan uniform-sampling leaf [m]
-    double ppl_thr = 0.5;          // point-to-plane residual gate [m]
-    double coeff_cov = 2.0;          // lid_cov < w_pt * coeff_cov gate
-    double w_pt = 0.01;              // per-point measurement variance when `lba.cov_en` is off
-    double plane_thresh = 0.1;       // dynamic init only: max |point-to-plane| when fitting a plane [m]
-    double imu_acc_outlier = 10.0;   // |acc - predicted| gate per axis [m/s^2]
-    double imu_gyro_outlier = 5.0;   // |gyro - predicted| gate per axis [rad/s]
-    int num_threads = 4;
+    bool pcd_save_en_;
+    double pcd_save_interval_;
+    bool bag_save_en_;
 
-    Vec3 level_arm = Vec3(0.0, 0.0, 0.0);
-    double max_gap = 0.1;
-    double ali_min_travel = 50.0;
-    bool tdcp_enable = true;
-    double tdcp_std = 0.02;           // TDCP noise at zenith, scaled by 1/sin(el) [m]
-    double tdcp_outlier = 0.5;        // |residual - epoch median| hard cap [m]
-    double tdcp_chi2 = 10.83;         // chi-square(1) gate on the normalized innovation, 99.9%
-    int tdcp_min_sat = 5;             // skip the epoch below this many TDCP rows
-    double tdcp_init_weight = 1.0;    // 0 disables the factor
-    double tdcp_init_min_horiz = 0.05;  // below this GNSS horizontal step only the up residual is kept [m]
-    double tdcp_init_max_std = 0.5;   // reject the epoch pair when the WLS position std exceeds this [m]
-    double std_clk = 10.0;            // common receiver clock random walk [m/sqrt(s)]
-    double std_isb = 0.01;            // per-system inter-system bias random walk [m/sqrt(s)]
-    double std_clk_init = 10.0;       // receiver clock std at alignment [m]
-    double std_ext_yaw_init = 0.2;    // yaw std of theta at alignment [rad]
-    double std_ext_pos_init = 5.0;    // t_ecef_enu std at alignment [m]
+    RespleParam resple_;
+    FastLioParam fast_lio_;
+    faster_lio::LbaParam lba_;
+
+    Vec3 level_arm;
+    double max_gap;
+    double ali_min_travel;
+    bool tdcp_enable;
+    double tdcp_std;             // TDCP noise at zenith, scaled by 1/sin(el) [m]
+    double tdcp_outlier;         // |residual - epoch median| hard cap [m]
+    double tdcp_chi2;            // chi-square(1) gate on the normalized innovation, 99.9%
+    int tdcp_min_sat;            // skip the epoch below this many TDCP rows
+    double tdcp_init_weight;     // 0 disables the factor
+    double tdcp_init_min_horiz;  // below this GNSS horizontal step only the up residual is kept [m]
+    double tdcp_init_max_std;    // reject the epoch pair when the WLS position std exceeds this [m]
+    double std_clk;              // common receiver clock random walk [m/sqrt(s)]
+    double std_isb;              // per-system inter-system bias random walk [m/sqrt(s)]
+    double std_clk_init;         // receiver clock std at alignment [m]
+    double std_ext_yaw_init;     // yaw std of theta at alignment [rad]
+    double std_ext_pos_init;     // t_ecef_enu std at alignment [m]
     prcopt_t prcopt;
     solopt_t solopt;
 
-    bool pcd_save_en_ = false;
-    double pcd_save_interval_ = 30;
-    bool bag_save_en_ = false;
-
-    faster_lio::LbaParam lba_;
-
     void LoadFromYaml(const std::string& config_fname) {
-        auto yaml = YAML::LoadFile(config_fname);
+        const YAML::Node yaml = YAML::LoadFile(config_fname);
         try {
-            lidar_topic_ = yaml["common"]["lid_topic"].as<std::string>();
-            imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
-            gnss_topic_ = yaml["common"]["gnss_topic"].as<std::string>();
-            if (yaml["common"]["img_topic"]) img_topic_ = yaml["common"]["img_topic"].as<std::string>();
-            gnss_enable_ = yaml["common"]["gnss_enable"].as<bool>();
-            acc_ratio_ = yaml["common"]["acc_ratio"].as<bool>();
-            lidar_time_offset_ = yaml["common"]["lidar_time_offset"].as<double>();
-            blind = yaml["blind"].as<double>();
-            lidar_type = yaml["lidar_type"].as<std::string>();
-            point_filter_num = yaml["point_filter_num"].as<int>();
-            det_range_ = yaml["det_range"].as<float>();
+            const YAML::Node common = yaml["common"];
+            lidar_topic_ = ConfigKey<std::string>(common, "lid_topic");
+            imu_topic_ = ConfigKey<std::string>(common, "imu_topic");
+            gnss_topic_ = ConfigKey<std::string>(common, "gnss_topic");
+            img_topic_ = ConfigKey<std::string>(common, "img_topic");
+            gnss_enable_ = ConfigKey<bool>(common, "gnss_enable");
+            acc_ratio_ = ConfigKey<bool>(common, "acc_ratio");
+            lidar_time_offset_ = ConfigKey<double>(common, "lidar_time_offset");
 
-            extrin_il_.q_ = RotationFromArray(yaml["extrin_R_il"].as<std::vector<double>>());
-            extrin_il_.t_ = VecFromArray(yaml["extrin_t_il"].as<std::vector<double>>());
+            front_end = ConfigKey<std::string>(yaml, "front_end");
+            num_threads = ConfigKey<int>(yaml, "num_threads");
+            lidar_type = ConfigKey<std::string>(yaml, "lidar_type");
+            blind = ConfigKey<double>(yaml, "blind");
+            point_filter_num = ConfigKey<int>(yaml, "point_filter_num");
+            det_range_ = ConfigKey<float>(yaml, "det_range");
+            extrin_il_.q_ = RotationFromArray(ConfigKey<std::vector<double>>(yaml, "extrin_R_il"));
+            extrin_il_.t_ = ConfigVec3(yaml, "extrin_t_il");
+            pcd_save_en_ = ConfigKey<bool>(yaml, "pcd_save_en");
+            pcd_save_interval_ = ConfigKey<int>(yaml, "pcd_save_interval");
+            bag_save_en_ = ConfigKey<bool>(yaml, "bag_save_en");
 
-            ds_scan_voxel = yaml["ds_scan_voxel"].as<double>();
+            const YAML::Node r = yaml["resple"];
+            resple_.dt_ns = S_TO_NS(1.0 / ConfigKey<double>(r, "knot_hz"));
+            resple_.ds_scan_voxel = ConfigKey<double>(r, "ds_scan_voxel");
+            resple_.w_pt = ConfigKey<double>(r, "w_pt");
+            resple_.ppl_thr = ConfigKey<double>(r, "nn_thresh");
+            resple_.coeff_cov = ConfigKey<double>(r, "coeff_cov");
+            resple_.plane_thresh = ConfigKey<double>(r, "plane_thresh");
+            resple_.imu_acc_outlier = ConfigKey<double>(r, "imu_acc_outlier");
+            resple_.imu_gyro_outlier = ConfigKey<double>(r, "imu_gyro_outlier");
+            resple_.q_std_pos_old = ConfigKey<double>(r, "q_std_pos_old");
+            resple_.q_std_ort_old = ConfigKey<double>(r, "q_std_ort_old");
+            resple_.q_std_pos_new = ConfigKey<double>(r, "q_std_pos_new");
+            resple_.q_std_ort_new = ConfigKey<double>(r, "q_std_ort_new");
+            resple_.q_std_bg = ConfigKey<double>(r, "q_std_bg");
+            resple_.q_std_ba = ConfigKey<double>(r, "q_std_ba");
+            resple_.cov_P0 = ConfigKey<double>(r, "cov_P0");
+            resple_.cov_acc = ConfigVec3(r, "cov_acc");
+            resple_.cov_gyro = ConfigVec3(r, "cov_gyro");
+            resple_.cov_bg = ConfigVec3(r, "cov_bg");
+            resple_.cov_ba = ConfigVec3(r, "cov_ba");
+            resple_.cov_en = ConfigKey<bool>(r, "cov_en");
+            resple_.r_base = ConfigKey<double>(r, "r_base");
+            resple_.fb_std_pos = ConfigKey<double>(r, "fb_std_pos");
+            resple_.fb_std_ort = ConfigKey<double>(r, "fb_std_ort");
+            resple_.fb_std_bg = ConfigKey<double>(r, "fb_std_bg");
+            resple_.fb_std_ba = ConfigKey<double>(r, "fb_std_ba");
+            resple_.fb_keep_cov = ConfigKey<bool>(r, "fb_keep_cov");
 
-            dt_ns = S_TO_NS(1.0 / yaml["knot_hz"].as<double>());
-            w_pt = yaml["w_pt"].as<double>();
-            if (yaml["plane_thresh"]) plane_thresh = yaml["plane_thresh"].as<double>();
-            ppl_thr = yaml["nn_thresh"].as<double>();
-            coeff_cov = yaml["coeff_cov"].as<double>();
-            q_std_pos_old = yaml["q_std_pos_old"].as<double>();
-            q_std_ort_old = yaml["q_std_ort_old"].as<double>();
-            q_std_pos_new = yaml["q_std_pos_new"].as<double>();
-            q_std_ort_new = yaml["q_std_ort_new"].as<double>();
-            q_std_bg = yaml["q_std_bg"].as<double>();
-            q_std_ba = yaml["q_std_ba"].as<double>();
-            cov_acc = VecFromArray(yaml["cov_acc"].as<std::vector<double>>());
-            cov_gyro = VecFromArray(yaml["cov_gyro"].as<std::vector<double>>());
-            cov_bg = VecFromArray(yaml["cov_bg"].as<std::vector<double>>());
-            cov_ba = VecFromArray(yaml["cov_ba"].as<std::vector<double>>());
+            const YAML::Node f = yaml["fastlio"];
+            fast_lio_.frame_source = ConfigKey<std::string>(f, "frame_source");
+            fast_lio_.down_size = ConfigKey<double>(f, "down_size");
+            fast_lio_.cov_gyr = ConfigKey<double>(f, "cov_gyr");
+            fast_lio_.cov_acc = ConfigKey<double>(f, "cov_acc");
+            fast_lio_.rdw_gyr = ConfigKey<double>(f, "rdw_gyr");
+            fast_lio_.rdw_acc = ConfigKey<double>(f, "rdw_acc");
+            fast_lio_.r_base = ConfigKey<double>(f, "r_base");
 
-            pcd_save_en_ = yaml["pcd_save_en"].as<bool>();
-            pcd_save_interval_ = yaml["pcd_save_interval"].as<int>();
-            bag_save_en_ = yaml["bag_save_en"].as<bool>();
+            const YAML::Node b = yaml["lba"];
+            lba_.win_size = ConfigKey<int>(b, "win_size");
+            lba_.voxel_size = ConfigKey<double>(b, "voxel_size");
+            lba_.plane_eigen_ratio = ConfigKey<double>(b, "plane_eigen_ratio");
+            lba_.min_plane_size = ConfigKey<double>(b, "min_plane_size");
+            lba_.clutter_points = ConfigKey<int>(b, "clutter_points");
+            lba_.min_points = ConfigKey<int>(b, "min_points");
+            lba_.max_fix_points = ConfigKey<int>(b, "max_fix_points");
+            lba_.max_iter = ConfigKey<int>(b, "max_iter");
+            lba_.imu_coef = ConfigKey<double>(b, "imu_coef");
+            lba_.cov_gyr = ConfigKey<double>(b, "cov_gyr");
+            lba_.cov_acc = ConfigKey<double>(b, "cov_acc");
+            lba_.rdw_gyr = ConfigKey<double>(b, "rdw_gyr");
+            lba_.rdw_acc = ConfigKey<double>(b, "rdw_acc");
+            lba_.sigma_num = ConfigKey<double>(b, "sigma_num");
+            lba_.pose_var = ConfigKey<double>(b, "pose_var");
+            lba_.range_err = ConfigKey<double>(b, "range_err");
+            lba_.angle_err = ConfigKey<double>(b, "angle_err");
+            lba_.frame_dt = ConfigKey<double>(b, "frame_dt");
+            lba_.map_range = ConfigKey<double>(b, "map_range");
 
-            if (yaml["gnss"]) {
-                const YAML::Node gnss = yaml["gnss"];
-                if (gnss["lever_arm"]) level_arm = VecFromArray(gnss["lever_arm"].as<std::vector<double>>());
-                ali_min_travel = gnss["ali_min_travel"].as<double>(ali_min_travel);
-                max_gap = gnss["max_gap"].as<double>(max_gap);
-                tdcp_enable = gnss["tdcp_enable"].as<bool>(tdcp_enable);
-                tdcp_std = gnss["tdcp_std"].as<double>(tdcp_std);
-                tdcp_outlier = gnss["tdcp_outlier"].as<double>(tdcp_outlier);
-                tdcp_chi2 = gnss["tdcp_chi2"].as<double>(tdcp_chi2);
-                tdcp_min_sat = gnss["tdcp_min_sat"].as<int>(tdcp_min_sat);
-                tdcp_init_weight = gnss["tdcp_init_weight"].as<double>(tdcp_init_weight);
-                tdcp_init_min_horiz = gnss["tdcp_init_min_horiz"].as<double>(tdcp_init_min_horiz);
-                tdcp_init_max_std = gnss["tdcp_init_max_std"].as<double>(tdcp_init_max_std);
-                std_clk = gnss["std_clk"].as<double>(std_clk);
-                std_isb = gnss["std_isb"].as<double>(std_isb);
-                std_clk_init = gnss["std_clk_init"].as<double>(std_clk_init);
-                std_ext_yaw_init = gnss["std_ext_yaw_init"].as<double>(std_ext_yaw_init);
-                std_ext_pos_init = gnss["std_ext_pos_init"].as<double>(std_ext_pos_init);
-            }
+            const YAML::Node g = yaml["gnss"];
+            level_arm = ConfigVec3(g, "lever_arm");
+            ali_min_travel = ConfigKey<double>(g, "ali_min_travel");
+            max_gap = ConfigKey<double>(g, "max_gap");
+            tdcp_enable = ConfigKey<bool>(g, "tdcp_enable");
+            tdcp_std = ConfigKey<double>(g, "tdcp_std");
+            tdcp_outlier = ConfigKey<double>(g, "tdcp_outlier");
+            tdcp_chi2 = ConfigKey<double>(g, "tdcp_chi2");
+            tdcp_min_sat = ConfigKey<int>(g, "tdcp_min_sat");
+            tdcp_init_weight = ConfigKey<double>(g, "tdcp_init_weight");
+            tdcp_init_min_horiz = ConfigKey<double>(g, "tdcp_init_min_horiz");
+            tdcp_init_max_std = ConfigKey<double>(g, "tdcp_init_max_std");
+            std_clk = ConfigKey<double>(g, "std_clk");
+            std_isb = ConfigKey<double>(g, "std_isb");
+            std_clk_init = ConfigKey<double>(g, "std_clk_init");
+            std_ext_yaw_init = ConfigKey<double>(g, "std_ext_yaw_init");
+            std_ext_pos_init = ConfigKey<double>(g, "std_ext_pos_init");
 
-            if (yaml["lba"]) {
-                const YAML::Node b = yaml["lba"];
-                lba_.win_size = b["win_size"].as<int>(lba_.win_size);
-                lba_.voxel_size = b["voxel_size"].as<double>(lba_.voxel_size);
-                lba_.plane_eigen_ratio = b["plane_eigen_ratio"].as<double>(lba_.plane_eigen_ratio);
-                lba_.min_plane_size = b["min_plane_size"].as<double>(lba_.min_plane_size);
-                lba_.clutter_points = b["clutter_points"].as<int>(lba_.clutter_points);
-                lba_.min_points = b["min_points"].as<int>(lba_.min_points);
-                lba_.max_fix_points = b["max_fix_points"].as<int>(lba_.max_fix_points);
-                lba_.max_iter = b["max_iter"].as<int>(lba_.max_iter);
-                lba_.imu_coef = b["imu_coef"].as<double>(lba_.imu_coef);
-                lba_.cov_gyr = b["cov_gyr"].as<double>(lba_.cov_gyr);
-                lba_.cov_acc = b["cov_acc"].as<double>(lba_.cov_acc);
-                lba_.rdw_gyr = b["rdw_gyr"].as<double>(lba_.rdw_gyr);
-                lba_.rdw_acc = b["rdw_acc"].as<double>(lba_.rdw_acc);
-                lba_.sigma_num = b["sigma_num"].as<double>(lba_.sigma_num);
-                lba_.pose_var = b["pose_var"].as<double>(lba_.pose_var);
-                lba_.range_err = b["range_err"].as<double>(lba_.range_err);
-                lba_.angle_err = b["angle_err"].as<double>(lba_.angle_err);
-                lba_.cov_en = b["cov_en"].as<bool>(lba_.cov_en);
-                lba_.r_base = b["r_base"].as<double>(lba_.r_base);
-                lba_.fb_std_pos = b["fb_std_pos"].as<double>(lba_.fb_std_pos);
-                lba_.fb_std_ort = b["fb_std_ort"].as<double>(lba_.fb_std_ort);
-                lba_.fb_std_bg = b["fb_std_bg"].as<double>(lba_.fb_std_bg);
-                lba_.fb_std_ba = b["fb_std_ba"].as<double>(lba_.fb_std_ba);
-                lba_.fb_keep_cov = b["fb_keep_cov"].as<bool>(lba_.fb_keep_cov);
-                lba_.frame_dt = b["frame_dt"].as<double>(lba_.frame_dt);
-                lba_.map_range = b["map_range"].as<double>(lba_.map_range);
-            }
-
-            if (yaml["cam"]) {
+            // an empty model means no camera
+            const YAML::Node c = yaml["cam"];
+            const std::string cam_model = ConfigKey<std::string>(c, "model");
+            const int cam_width = ConfigKey<int>(c, "width");
+            const int cam_height = ConfigKey<int>(c, "height");
+            const std::vector<double> cam_params = ConfigKey<std::vector<double>>(c, "params");
+            Pose3 extrin_cl;
+            extrin_cl.q_ = RotationFromArray(ConfigKey<std::vector<double>>(c, "extrin_R_cl"));
+            extrin_cl.t_ = ConfigVec3(c, "extrin_t_cl");
+            if (!cam_model.empty()) {
                 // intrinsics as one COLMAP cameras.txt line: MODEL WIDTH HEIGHT PARAMS[]
-                if (yaml["cam"]["model"].IsDefined()) {
-                    std::ostringstream line;
-                    line << std::setprecision(17) << "0 " << yaml["cam"]["model"].as<std::string>() << " "
-                         << yaml["cam"]["width"].as<int>() << " " << yaml["cam"]["height"].as<int>();
-                    for (double p : yaml["cam"]["params"].as<std::vector<double>>()) line << " " << p;
-                    std::istringstream stream(line.str());
-                    cam_model_ = ReadCameraFromCamerasText(stream);
-                    CHECK(cam_model_) << "cannot build a camera from the `cam:` block: " << line.str();
-                }
-                if (yaml["cam"]["extrin_R_cl"].IsDefined()) {
-                    Pose3 extrin_cl;
-                    extrin_cl.q_ = RotationFromArray(yaml["cam"]["extrin_R_cl"].as<std::vector<double>>());
-                    extrin_cl.t_ = VecFromArray(yaml["cam"]["extrin_t_cl"].as<std::vector<double>>());
-                    extrin_ic_ = extrin_il_ * extrin_cl.GetInverse();
-                } else if (yaml["cam"]["extrin_R_ic"].IsDefined()) {
-                    extrin_ic_.q_ = RotationFromArray(yaml["cam"]["extrin_R_ic"].as<std::vector<double>>());
-                    extrin_ic_.t_ = VecFromArray(yaml["cam"]["extrin_t_ic"].as<std::vector<double>>());
-                }
+                std::ostringstream line;
+                line << std::setprecision(17) << "0 " << cam_model << " " << cam_width << " " << cam_height;
+                for (double p : cam_params) line << " " << p;
+                std::istringstream stream(line.str());
+                cam_model_ = ReadCameraFromCamerasText(stream);
+                CHECK(cam_model_) << "cannot build a camera from the `cam:` block: " << line.str();
+                extrin_ic_ = extrin_il_ * extrin_cl.GetInverse();
             }
-        } catch (...) {
-            throw std::runtime_error("bad conversion");
+        } catch (const YAML::Exception& e) {
+            throw std::runtime_error(config_fname + ": " + e.what());
         }
+        CHECK(front_end == "resple" || front_end == "fastlio") << "unknown front_end: " << front_end;
+        CHECK(fast_lio_.frame_source == "time" || fast_lio_.frame_source == "camera")
+            << "unknown fastlio.frame_source: " << fast_lio_.frame_source;
+        CHECK(front_end != "fastlio" || fast_lio_.frame_source != "camera" || !img_topic_.empty())
+            << "fastlio.frame_source camera needs common.img_topic";
     }
 };
 

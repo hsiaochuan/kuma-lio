@@ -86,6 +86,7 @@ add_library(${PROJECT_NAME}
         src/local_ba.cpp
         src/spline_state.cpp
         src/resple_lio.cpp
+        src/fast_lio.cpp
         src/timer.cpp
         )
 
