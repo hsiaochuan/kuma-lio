@@ -24,12 +24,16 @@ subprocess.run([
     "--scans_dir", scans_dir,
     "--pose_fname", str(out / "pgo" / "traj_pgo.txt"),
     "--out", str(out / "clean"),
-    "--voxel", "0.2",
-    "--margin", "0.4",
+    "--voxel", "0.4",
+    "--margin", "0.8",
     "--max_range", "80",
-    "--min_free", "3",
-    "--ratio", "1.0",
-    "--ground_dist", "0.3",
+    "--min_free", "2",
+    "--ratio", "3",
+    "--min_hits", "6",
+    "--near_range", "8",
+    "--ground_dist", "0.1",
+    "--up_z", "-1",            # building00: the world's z axis points down
+    "--sensor_height", "0.95",
 ], check=True)
 
 # merge the cleaned scans into one map
@@ -38,5 +42,5 @@ subprocess.run([
     "--trajectory", str(out / "pgo" / "traj_pgo.txt"),
     "--pcd_dir", str(out / "clean"),
     "--output", str(out / "map.pcd"),
-    "--voxel_size", "0.1",
+    "--voxel_size", "0.05",
 ], check=True)

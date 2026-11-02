@@ -10,7 +10,9 @@
 // Idea: a ray from the sensor to a hit proves every voxel it crosses is empty at that moment.  A
 // voxel that is empty in some scans and holds a point in another cannot be static, so that point
 // is dynamic.  Pass 1 counts, per voxel, the scans that saw it empty and the scans that hit it;
-// pass 2 drops the points whose voxel was seen empty more often than hit.
+// pass 2 drops the points whose voxel was seen empty more often than hit.  Ground points are found
+// per scan and always kept, because low rays graze the ground and would clear it.  What rays cannot
+// reach, like the spot behind someone following the sensor, goes by being hit in too few scans.
 //
 
 #include <glog/logging.h>
@@ -45,6 +47,10 @@ struct Param {
     int min_free = 3;       ///< scans that must have seen the voxel empty
     double ratio = 1.0;     ///< ... and at least ratio * (scans that hit it)
     double ground_dist = 0.3;  ///< [m] a point this close to its patch's plane is ground and always kept; 0 = off
+    int min_hits = 0;          ///< a point within near_range of the sensor needs its voxel hit by more scans than this
+    double near_range = 8;     ///< [m]
+    double up_z = 1;           ///< +1 if the world's z axis points up, -1 if it points down
+    double sensor_height = 1;  ///< [m] above the ground
 };
 
 struct Count {
@@ -110,12 +116,16 @@ void Traverse(const Eigen::Vector3d& o, const Eigen::Vector3d& e, const Param& p
 /// Ground points of one scan, after Patchwork (Lim et al., RA-L 2021) without its likelihood estimation.
 /// `rel` are the points around the sensor with z up.  Space is cut into concentric zones, rings and
 /// sectors; in each patch a plane is fitted by iterating from the lowest points, and what lies on a
-/// plane that is flat enough is ground.  A scan alone decides, so moving objects cannot disturb it.
-std::vector<char> SegmentGround(const std::vector<Eigen::Vector3d>& rel, double th_dist) {
+/// plane that is flat and low enough is ground.  A scan alone decides, so moving objects cannot
+/// disturb it.  The height test matters near the sensor: a LiDAR that cannot see the ground there
+/// would otherwise take the lowest points of whoever walks by for it.
+std::vector<char> SegmentGround(const std::vector<Eigen::Vector3d>& rel, const Param& prm) {
     constexpr double kBound[5] = {2.7, 12.3625, 22.025, 41.35, 80.0};
     constexpr int kRings[4] = {2, 4, 4, 4}, kSectors[4] = {16, 32, 54, 32};
     constexpr int kNumLpr = 20, kMinPts = 10, kIters = 3;
     constexpr double kSeedHeight = 0.4, kUpright = 0.707;
+    constexpr double kHeightTol = 0.15, kMaxSlope = 0.08;  // [m], [m/m]: the terrain may rise or fall this much
+    const double th_dist = prm.ground_dist;
 
     int offset[5] = {0, 0, 0, 0, 0};
     for (int z = 0; z < 4; ++z) offset[z + 1] = offset[z] + kRings[z] * kSectors[z];
@@ -143,11 +153,11 @@ std::vector<char> SegmentGround(const std::vector<Eigen::Vector3d>& rel, double 
         for (int i : ids)
             if (rel[i].z() < lpr + kSeedHeight) seeds.push_back(i);
 
-        Eigen::Vector3d n = Eigen::Vector3d::UnitZ();
+        Eigen::Vector3d n = Eigen::Vector3d::UnitZ(), mean = Eigen::Vector3d::Zero();
         double d = 0;
         for (int it = 0; it < kIters; ++it) {
             if (int(seeds.size()) < 3) break;
-            Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+            mean.setZero();
             for (int i : seeds) mean += rel[i];
             mean /= seeds.size();
             Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
@@ -161,6 +171,8 @@ std::vector<char> SegmentGround(const std::vector<Eigen::Vector3d>& rel, double 
                 if (std::abs(n.dot(rel[i]) + d) < th_dist) seeds.push_back(i);
         }
         if (n.z() < kUpright) continue;
+        const double tol = kHeightTol + kMaxSlope * mean.head<2>().norm();
+        if (std::abs(mean.z() + prm.sensor_height) > tol) continue;
         for (int i : seeds) ground[i] = 1;
     }
     return ground;
@@ -186,7 +198,11 @@ int main(int argc, char** argv) {
         ("min_free", po::value<int>(&prm.min_free)->default_value(prm.min_free), "scans that must see a voxel empty")
         ("ratio", po::value<double>(&prm.ratio)->default_value(prm.ratio), "empty count needed per hit count")
         ("ground_dist", po::value<double>(&prm.ground_dist)->default_value(prm.ground_dist),
-         "points this close to the ground plane are ground and never removed [m]; 0 = off");
+         "points this close to the ground plane are ground and never removed [m]; 0 = off")
+        ("min_hits", po::value<int>(&prm.min_hits)->default_value(prm.min_hits), "near a point, its voxel must be hit by more scans than this")
+        ("near_range", po::value<double>(&prm.near_range)->default_value(prm.near_range), "what counts as near [m]")
+        ("up_z", po::value<double>(&prm.up_z)->default_value(prm.up_z), "+1 if the world's z axis points up, -1 if down")
+        ("sensor_height", po::value<double>(&prm.sensor_height)->default_value(prm.sensor_height), "sensor above the ground [m]");
     po::positional_options_description pos;
     pos.add("scans_dir", 1).add("pose_fname", 1);
     po::variables_map vm;
@@ -268,12 +284,21 @@ int main(int argc, char** argv) {
             LOG(WARNING) << "no readable scan for " << p.name << ", skipped";
             continue;
         }
+        for (auto pt_it = cloud.begin(); pt_it != cloud.end(); ) {
+            if (pt_it->getVector3fMap().norm() < 2.0)
+                pt_it = cloud.erase(pt_it);
+            else
+                pt_it++;
+        }
         const std::vector<Eigen::Vector3d> world = ToWorld(cloud, p.pose);
         std::vector<char> ground(cloud.size(), 0);
         if (prm.ground_dist > 0) {
             std::vector<Eigen::Vector3d> rel(cloud.size());  // around the sensor, world axes, so z is up
-            for (size_t i = 0; i < cloud.size(); ++i) rel[i] = world[i] - p.pose.translation();
-            ground = SegmentGround(rel, prm.ground_dist);
+            for (size_t i = 0; i < cloud.size(); ++i) {
+                rel[i] = world[i] - p.pose.translation();
+                rel[i].z() *= prm.up_z;  // SegmentGround wants z up
+            }
+            ground = SegmentGround(rel, prm);
         }
         Cloud clean;
         clean.reserve(cloud.size());
@@ -287,7 +312,11 @@ int main(int argc, char** argv) {
             }
             const Count& c = map.at(KeyOf(world[i], inv));
             const int hit_others = c.hit - 1;  // this scan's own hit does not count against the point
-            if (c.free >= prm.min_free && c.free >= prm.ratio * hit_others) {
+            const bool seen_empty = c.free >= prm.min_free && c.free >= prm.ratio * hit_others;
+            // Rays cannot clear what is only ever seen with someone standing in front of it.  But a
+            // real surface this close is hit scan after scan, something walking by is not.
+            const bool fleeting = c.hit <= prm.min_hits && (world[i] - p.pose.translation()).norm() < prm.near_range;
+            if (seen_empty || fleeting) {
                 ++removed;
                 continue;
             }
