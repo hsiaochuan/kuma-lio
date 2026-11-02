@@ -1,0 +1,75 @@
+common:
+  lid_topic: "/hesai/at128/points"
+  imu_topic: "/adi/adis16465/imu"
+  img_topic: "/avt_camera/left/image/compressed"
+  gnss_topic: ""
+  gnss_enable: false
+  acc_ratio: false
+  lidar_time_offset: 0
+
+lidar_type: HESAI
+blind: 2.0
+point_filter_num: 4
+det_range: 100.0
+
+# lidar.at128.T_lidar_imu in i2Nav-Robot/calibration/calibration.yaml; the IMU is the ADIS16465 (front-right-down)
+extrin_t_il: [0.042, -0.018, -0.063]
+extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
+              -0.0077132, -0.99996941, -0.00129509,
+              -0.00801077, 0.00135687, -0.99996699]
+
+ds_scan_voxel: 0.1
+knot_hz: 100
+# The first and last windows of a scan hold a few dozen points in a narrow fan, and the covariance has grown over
+# the 48 ms gap, so they yank the spline and the next window pulls it back: 27% of the windows, 1.2% of the points.
+min_window_points: 1000
+# Off.  Bumps reach 17 m/s^2; the default 10 drops those rows, and in the AT128's 48 ms without points
+# nothing is left to hold the spline's even/odd knot zig-zag, which then grows to meters.
+imu_acc_outlier: 1000000.0
+w_pt: 0.01
+nn_thresh: 0.5
+coeff_cov: 2.0
+# Stiff: each 10 ms window sees a 24 deg fan, so a 0.1 deg tilt error moves z by 2 cm from one fan to the next.
+# A loose spline follows that and z saws at the frame rate; a cart does not move like that.
+q_std_pos_old: 0.00316228
+q_std_ort_old: 0.01
+q_std_pos_new: 0.01
+q_std_ort_new: 0.03
+q_std_bg: 1.0e-3
+q_std_ba: 1.0e-2
+cov_acc: [1.0, 1.0, 1.0]
+cov_gyro: [0.0001, 0.0001, 0.0001]
+cov_bg: [0.000001, 0.000001, 0.000001]
+cov_ba: [0.2, 0.2, 0.2]
+
+pcd_save_en: false
+pcd_save_interval: 30
+bag_save_en: false
+
+lba:
+  win_size: 10
+  voxel_size: 1.0
+  plane_eigen_ratio: 0.1
+  min_plane_size: 0.1
+  clutter_points: 30
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  # ADIS16465: gyro integration alone holds attitude to 0.9 deg over 25 s, so BA must not outvote it.
+  # With the defaults (2.5e-5, 1e-4) BA drove the gyro bias to 0.23 rad/s and fed that to the front end.
+  imu_coef: 0.001
+  rdw_gyr: 0.00000001
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  sigma_num: 3
+  range_err: 0.02
+  angle_err: 0.05
+  cov_en: true
+  r_base: 0.01  # the points of one fan share their error, they are not independent
+  fb_std_pos: 0.003
+  fb_std_ort: 0.0006
+  fb_keep_cov: true
+  frame_dt: 0.1
+  # At rest (no point enters the map): building00 stays within 0.10 m/s^2, 0.005 rad/s; moving is above 0.6, 0.03
+  still_gyr: 0.01
+  still_acc: 0.25

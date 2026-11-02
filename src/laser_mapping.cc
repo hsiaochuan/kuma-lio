@@ -1329,21 +1329,30 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr&
     scan = preprocess_->LivoxHandler(msg, S_TO_NS(timestamp));
     AddScanToBuffer(scan);
 }
-void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr& msg) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-
-    CHECK(!msg->packets.empty()) << "VelodyneScan message is empty!";
-    // the msg->header.stamp is 100 ms later than the msg->packets front
-    double timestamp = msg->packets.front().stamp.toSec();
-
-    // time offset
-    timestamp += param->lidar_time_offset_;
+void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr& msg) {
+    const double timestamp = msg->header.stamp.toSec();
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
-    timestamp = timestamp - global_offset_time;
-    // push to buffer
-    PointCloud::Ptr scan(new PointCloud());
-    scan = preprocess_->VelodyneScanHandler(msg, S_TO_NS(timestamp));
-    AddScanToBuffer(scan);
+    RgbImage image;
+    if (!image.FromRaw(msg->data.data(), msg->width, msg->height, msg->step, msg->encoding)) {
+        LOG(WARNING) << "image skipped, encoding " << msg->encoding;
+        return;
+    }
+    image.time_ns = S_TO_NS(timestamp - global_offset_time);
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    image_buff_.push_back(std::move(image));
+}
+
+void LaserMapping::CompressedImageCallback(const sensor_msgs::CompressedImage::ConstPtr& msg) {
+    const double timestamp = msg->header.stamp.toSec();
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    RgbImage image;
+    if (!image.Decode(msg->data.data(), msg->data.size())) {
+        LOG(WARNING) << "image skipped, format " << msg->format;
+        return;
+    }
+    image.time_ns = S_TO_NS(timestamp - global_offset_time);
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    image_buff_.push_back(std::move(image));
 }
 
 void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr& msg_in) {
@@ -1472,10 +1481,6 @@ void LaserMapping::InitialSubscribers(ros::NodeHandle& nh) {
         sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
             param->lidar_topic_, 200000,
             [this](const livox_ros_driver::CustomMsg::ConstPtr& msg) { LivoxPCLCallBack(msg); });
-    } else if (lidar_type == LidarType::VELODYNE_SCAN) {
-        sub_pcl_ = nh.subscribe<velodyne_msgs::VelodyneScan>(
-            param->lidar_topic_, 200000,
-            [this](const velodyne_msgs::VelodyneScan::ConstPtr& msg) { VelodyneScanCallBack(msg); });
     } else {
         sub_pcl_ = nh.subscribe<sensor_msgs::PointCloud2>(
             param->lidar_topic_, 200000,
@@ -1484,6 +1489,14 @@ void LaserMapping::InitialSubscribers(ros::NodeHandle& nh) {
 
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(param->imu_topic_, 200000,
                                               [this](const sensor_msgs::Imu::ConstPtr& msg) { IMUCallBack(msg); });
+    const std::string& img = param->img_topic_;
+    if (img.size() >= 11 && img.compare(img.size() - 11, 11, "/compressed") == 0) {
+        sub_img_ = nh.subscribe<sensor_msgs::CompressedImage>(
+            img, 100, [this](const sensor_msgs::CompressedImage::ConstPtr& msg) { CompressedImageCallback(msg); });
+    } else if (!img.empty()) {
+        sub_img_ = nh.subscribe<sensor_msgs::Image>(
+            img, 100, [this](const sensor_msgs::Image::ConstPtr& msg) { ImageCallBack(msg); });
+    }
 }
 void LaserMapping::InitialPublishers(ros::NodeHandle& nh) {
     pub_laser_cloud_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
@@ -1647,6 +1660,9 @@ void LaserMapping::Run() {
                     obss_time_buffer_.pop_front();
                     obss_id_buffer_.pop_front();
                 }
+                while (!image_buff_.empty() && image_buff_.front().time_ns < drop_until) {
+                    image_buff_.pop_front();
+                }
                 return;
             }
         }
@@ -1699,6 +1715,9 @@ void LaserMapping::Run() {
         while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < resple_lio_->spl.maxTimeNs()) {
             obss_time_buffer_.pop_front();
             obss_id_buffer_.pop_front();
+        }
+        while (!image_buff_.empty() && image_buff_.front().time_ns < resple_lio_->spl.maxTimeNs()) {
+            image_buff_.pop_front();
         }
 
         if (init_points->size() < 100) {
@@ -1795,6 +1814,12 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
         measures_.obs_time_ns = obss_time_buffer_.front();
         obss_id_buffer_.pop_front();
         obss_time_buffer_.pop_front();
+    }
+    // the latest image up to the window's end; an image can arrive after its window, so its time may be older
+    measures_.rgb_image_ = RgbImage();
+    while (!image_buff_.empty() && image_buff_.front().time_ns < meas_end) {
+        measures_.rgb_image_ = std::move(image_buff_.front());
+        image_buff_.pop_front();
     }
 
     if (measures_.lidar_->empty()) {

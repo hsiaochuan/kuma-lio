@@ -175,12 +175,24 @@ inline Mat3 RotationFromArray(const std::vector<double> &v) {
     return rotation;
 }
 
+struct RgbImage {
+    int64_t time_ns = -1;
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint8_t> data;
+
+    bool Empty() const { return data.empty(); }
+    bool Decode(const std::uint8_t *bytes, std::size_t size);
+    bool FromRaw(const std::uint8_t *pixels, int w, int h, int step, const std::string &encoding);
+    bool Save(const std::string &fname) const;
+};
 
 struct MeasureGroup {
     MeasureGroup() { this->lidar_.reset(new PointCloud()); };
     PointCloud::Ptr lidar_ = nullptr;
     std::deque<Imu> imu_;
-
+    RgbImage rgb_image_;
+    int64_t mea_end_;
     int obs_id = -1;
     int64_t obs_time_ns;
 };

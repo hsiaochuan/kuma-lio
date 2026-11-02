@@ -11,9 +11,6 @@
 #include <glog/logging.h>
 #include "common_lib.h"
 
-#include <velodyne_msgs/VelodyneScan.h>
-#include <velodyne_pointcloud/pointcloudXYZIRT.h>
-#include <velodyne_pointcloud/rawdata.h>
 #include "laser_mapping_param.h"
 namespace velodyne_ros {
 struct EIGEN_ALIGN16 Point {
@@ -91,7 +88,6 @@ enum class LidarType {
     LIVOX = 1,
     OUSTER,
     HESAI,
-    VELODYNE_SCAN,
     VELODYNE_POINTCLOUD2,
 };
 inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
@@ -101,8 +97,6 @@ inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
         return LidarType::OUSTER;
     } else if (lidar_type_str == "HESAI") {
         return LidarType::HESAI;
-    } else if (lidar_type_str == "VELODYNE_SCAN") {
-        return LidarType::VELODYNE_SCAN;
     } else if (lidar_type_str == "VELODYNE_POINTCLOUD2") {
         return LidarType::VELODYNE_POINTCLOUD2;
     }else {
@@ -118,22 +112,13 @@ class PointCloudPreprocess {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    PointCloudPreprocess() {
-        std::string calibration_fname = "/opt/ros/noetic/share/velodyne_pointcloud/params/32db.yaml";
-        // VLP16, 32C, 32E, VLS128, 64E
-        if (raw_data.setupOffline(calibration_fname, "32E", 200.0, 0.0)) {
-            throw std::runtime_error("failed to setup offline raw data");
-        }
-
-    }
+    PointCloudPreprocess() = default;
     ~PointCloudPreprocess() = default;
 
     PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, std::int64_t scan_start);
     PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
     PointCloud::Ptr HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
     PointCloud::Ptr VelodynePointsHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
-    PointCloud::Ptr VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, std::int64_t scan_start);
-    velodyne_rawdata::RawData raw_data;
     std::shared_ptr<LaserMappingParam> param;
 };
 }  // namespace faster_lio

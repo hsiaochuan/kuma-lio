@@ -128,15 +128,18 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        auto vel_msg = m.instantiate<velodyne_msgs::VelodyneScan>();
-        if (m.getTopic() == laser_mapping->param->lidar_topic_ && vel_msg) {
-            laser_mapping->VelodyneScanCallBack(vel_msg);
-            laser_mapping->Run();
-            continue;
-        }
         auto imu_msg = m.instantiate<sensor_msgs::Imu>();
         if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
             laser_mapping->IMUCallBack(imu_msg);
+            continue;
+        }
+
+        if (m.getTopic() == laser_mapping->param->img_topic_) {
+            if (auto compressed = m.instantiate<sensor_msgs::CompressedImage>()) {
+                laser_mapping->CompressedImageCallback(compressed);
+            } else if (auto image = m.instantiate<sensor_msgs::Image>()) {
+                laser_mapping->ImageCallBack(image);
+            }
             continue;
         }
 

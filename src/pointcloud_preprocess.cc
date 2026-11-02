@@ -102,38 +102,4 @@ PointCloud::Ptr PointCloudPreprocess::HesaiHandler(const sensor_msgs::PointCloud
     }
     return cloud_out;
 }
-PointCloud::Ptr PointCloudPreprocess::VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg,
-                                                          std::int64_t scan_start) {
-    raw_data.setParameters(0.0, 200.0, 0.0, 2.0 * M_PI);
-    velodyne_pointcloud::PointcloudXYZIRT container(200.0, 0.0, "", "", raw_data.scansPerPacket());
-    container.setup(msg);
-    for (const auto &pkt : msg->packets) {
-        raw_data.unpack(pkt, container, msg->packets.front().stamp);
-    }
-    const sensor_msgs::PointCloud2 &cloud_msg = container.finishCloud();
-    pcl::PointCloud<velodyne_ros::Point> pl_orig;
-    pcl::fromROSMsg(cloud_msg, pl_orig);
-
-    PointCloud::Ptr cloud_out(new PointCloud);
-    cloud_out->reserve(pl_orig.size());
-    for (int i = 0; i < pl_orig.points.size(); i++) {
-        if (i % param->point_filter_num != 0) continue;
-        double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
-                       pl_orig.points[i].z * pl_orig.points[i].z;
-
-        if (range < (param->blind * param->blind) || range > (param->det_range_ * param->det_range_))
-            continue;
-
-        faster_lio::Point added_pt;
-        added_pt.x = pl_orig.points[i].x;
-        added_pt.y = pl_orig.points[i].y;
-        added_pt.z = pl_orig.points[i].z;
-        added_pt.intensity = pl_orig.points[i].intensity;
-        added_pt.SetTimeNs(S_TO_NS(scan_start + pl_orig.points[i].time));
-        cloud_out->points.push_back(added_pt);
-    }
-    cloud_out->width = cloud_out->points.size();
-    cloud_out->height = 1;
-    return cloud_out;
-}
 }  // namespace faster_lio

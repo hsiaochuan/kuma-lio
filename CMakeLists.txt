@@ -21,8 +21,6 @@ find_package(catkin REQUIRED COMPONENTS
         pcl_ros
         tf
         eigen_conversions
-        velodyne_pointcloud
-        velodyne_msgs
 )
 
 find_package(Eigen3 REQUIRED)
@@ -82,6 +80,7 @@ add_library(${PROJECT_NAME}
         src/laser_mapping.cc
         src/pointcloud_preprocess.cc
         src/pose3.cpp
+        src/rgb_image.cpp
         src/stamp_pose.cpp
         src/voxel_map.cpp
         src/local_ba.cpp
@@ -90,6 +89,7 @@ add_library(${PROJECT_NAME}
         src/timer.cpp
         )
 
+target_include_directories(${PROJECT_NAME} PRIVATE third_party/stb)
 target_link_libraries(${PROJECT_NAME}
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}

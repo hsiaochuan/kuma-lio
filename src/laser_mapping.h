@@ -3,6 +3,8 @@
 #include "laser_mapping_param.h"
 #include "livox_ros_driver/CustomMsg.h"
 #include <ros/ros.h>
+#include <sensor_msgs/CompressedImage.h>
+#include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/NavSatFix.h>
@@ -35,8 +37,9 @@ class LaserMapping {
     // callbacks of lidar and imu
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
-    void VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
+    void ImageCallBack(const sensor_msgs::Image::ConstPtr &msg);
+    void CompressedImageCallback(const sensor_msgs::CompressedImage::ConstPtr &msg);
     void GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg);
     bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
@@ -58,6 +61,7 @@ class LaserMapping {
 
     ros::Subscriber sub_pcl_;
     ros::Subscriber sub_imu_;
+    ros::Subscriber sub_img_;
     ros::Publisher pub_laser_cloud_world_;
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
@@ -69,6 +73,7 @@ class LaserMapping {
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;
     std::deque<Imu> imu_buffer_;
+    std::deque<RgbImage> image_buff_;
     obs_t obss{};
     nav_t nav{};
     std::deque<int64_t> obss_time_buffer_;
