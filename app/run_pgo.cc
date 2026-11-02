@@ -12,6 +12,7 @@
 #include <glog/logging.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
+#include <pcl/io/ply_io.h>
 #include <pcl/point_types.h>
 #include <yaml-cpp/yaml.h>
 #include <boost/program_options.hpp>
@@ -142,10 +143,10 @@ int main(int argc, char** argv) {
     pgo::PgoBackend backend(prm);
     std::vector<const PoseLine*> used;
     for (const PoseLine& p : poses) {
-        const fs::path pcd = dir / (p.name + ".ply");
+        const fs::path scan_file = dir / (p.name + ".ply");
         pcl::PointCloud<pcl::PointXYZ> cloud;
-        if (!fs::exists(pcd) || pcl::io::loadPLYFile(pcd.string(), cloud) < 0) {
-            LOG(WARNING) << "no readable scan " << pcd << ", pose skipped";
+        if (!fs::exists(scan_file) || pcl::io::loadPLYFile(scan_file.string(), cloud) < 0) {
+            LOG(WARNING) << "no readable scan " << scan_file << ", pose skipped";
             continue;
         }
         std::vector<Vec3> pts;
