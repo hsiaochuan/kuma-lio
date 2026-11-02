@@ -133,6 +133,9 @@ target_link_libraries(faster_pgo
 add_executable(run_pgo app/run_pgo.cc)
 target_link_libraries(run_pgo faster_pgo Boost::program_options)
 
+add_executable(run_clean app/run_clean.cc)
+target_link_libraries(run_clean ${PCL_LIBRARIES} ${OpenMP_CXX_LIBRARIES} glog Boost::program_options)
+
 add_executable(points_jet ./src/points_jet.cpp)
 target_link_libraries(points_jet ${PROJECT_NAME})
 

@@ -25,6 +25,7 @@
 #include <iostream>
 
 #include "pgo/pgo_backend.h"
+#include "pose_io.h"
 
 namespace fs = std::filesystem;
 using namespace faster_lio;
@@ -63,40 +64,6 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("prior_var", &p->prior_var);
     get("odom_var_rot", &p->odom_var_rot);
     get("odom_var_trans", &p->odom_var_trans);
-}
-
-struct PoseLine {
-    std::string name;
-    double time;
-    Eigen::Isometry3d pose;
-};
-
-std::vector<PoseLine> LoadPoses(const fs::path& file) {
-    std::ifstream in(file);
-    if (!in) LOG(FATAL) << "cannot open " << file;
-    std::vector<PoseLine> poses;
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        std::istringstream ss(line);
-        PoseLine p;
-        double v[7];
-        if (!(ss >> p.name >> v[0] >> v[1] >> v[2] >> v[3] >> v[4] >> v[5] >> v[6])) {
-            LOG(WARNING) << "skip malformed pose line: " << line;
-            continue;
-        }
-        try {
-            p.time = std::stod(p.name);
-        } catch (const std::exception&) {
-            LOG(WARNING) << "skip pose line, the name is not a number: " << line;
-            continue;
-        }
-        p.pose = Eigen::Isometry3d::Identity();
-        p.pose.linear() = Eigen::Quaterniond(v[6], v[3], v[4], v[5]).normalized().toRotationMatrix();
-        p.pose.translation() = Eigen::Vector3d(v[0], v[1], v[2]);
-        poses.push_back(std::move(p));
-    }
-    return poses;
 }
 
 }  // namespace

@@ -1,0 +1,305 @@
+//
+// Offline removal of dynamic points from LiDAR scans, after DUFOMap (Daniel et al., RA-L 2024).
+//
+//   run_clean <scans_dir> <pose_fname> [--out dir] [--voxel 0.2] ...  (-h for help)
+//
+// <scans_dir>/<name>.ply are the scans in the sensor's own frame and <pose_fname> holds a line
+// "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's traj_pgo.txt.  The output folder
+// gets one <name>.ply per scan with the dynamic points left out.
+//
+// Idea: a ray from the sensor to a hit proves every voxel it crosses is empty at that moment.  A
+// voxel that is empty in some scans and holds a point in another cannot be static, so that point
+// is dynamic.  Pass 1 counts, per voxel, the scans that saw it empty and the scans that hit it;
+// pass 2 drops the points whose voxel was seen empty more often than hit.
+//
+
+#include <glog/logging.h>
+#include <Eigen/Eigenvalues>
+#include <pcl/console/print.h>
+#include <pcl/io/ply_io.h>
+#include <pcl/point_types.h>
+
+#include <boost/program_options.hpp>
+#include <boost/progress.hpp>
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <iostream>
+#include <unordered_map>
+#include <unordered_set>
+
+#include "pose_io.h"
+
+namespace fs = std::filesystem;
+namespace po = boost::program_options;
+
+namespace {
+
+using Cloud = pcl::PointCloud<pcl::PointXYZI>;
+using Key = uint64_t;
+
+struct Param {
+    double voxel = 0.2;     ///< [m]
+    double margin = 0.4;    ///< [m] the last stretch of a ray is not called empty (surface thickness, pose error)
+    double max_range = 80;  ///< [m] rays are not cast beyond it
+    int min_free = 3;       ///< scans that must have seen the voxel empty
+    double ratio = 1.0;     ///< ... and at least ratio * (scans that hit it)
+    double ground_dist = 0.3;  ///< [m] a point this close to its patch's plane is ground and always kept; 0 = off
+};
+
+struct Count {
+    uint16_t free = 0, hit = 0;
+};
+
+inline Key MakeKey(int x, int y, int z) {
+    constexpr int kOff = 1 << 20;
+    return (Key(x + kOff) << 42) | (Key(y + kOff) << 21) | Key(z + kOff);
+}
+
+inline Key KeyOf(const Eigen::Vector3d& p, double inv) {
+    return MakeKey(int(std::floor(p.x() * inv)), int(std::floor(p.y() * inv)), int(std::floor(p.z() * inv)));
+}
+
+bool LoadScan(const fs::path& file, Cloud* cloud) {
+    return fs::exists(file) && pcl::io::loadPLYFile(file.string(), *cloud) >= 0;
+}
+
+/// World-frame points of a scan; invalid ones get NaN so indices stay aligned with the cloud.
+std::vector<Eigen::Vector3d> ToWorld(const Cloud& c, const Eigen::Isometry3d& T) {
+    std::vector<Eigen::Vector3d> w(c.size());
+    for (size_t i = 0; i < c.size(); ++i) {
+        const auto& p = c[i];
+        w[i] = std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)
+                   ? T * Eigen::Vector3d(p.x, p.y, p.z)
+                   : Eigen::Vector3d::Constant(std::nan(""));
+    }
+    return w;
+}
+
+/// Voxels the ray o->e crosses before the last `margin` metres (Amanatides & Woo).
+void Traverse(const Eigen::Vector3d& o, const Eigen::Vector3d& e, const Param& prm, std::vector<Key>* out) {
+    const double inv = 1.0 / prm.voxel;
+    Eigen::Vector3d d = e - o;
+    const double len = d.norm();
+    if (len < 1e-6) return;
+    d /= len;
+    const double reach = std::min(len, prm.max_range) - prm.margin;
+    if (reach <= 0) return;
+    int idx[3], step[3];
+    double t_max[3], t_delta[3];
+    for (int k = 0; k < 3; ++k) {
+        idx[k] = int(std::floor(o[k] * inv));
+        step[k] = d[k] > 0 ? 1 : -1;
+        if (std::abs(d[k]) < 1e-12) {
+            t_max[k] = t_delta[k] = 1e30;
+        } else {
+            const double next = (idx[k] + (d[k] > 0 ? 1 : 0)) * prm.voxel;
+            t_max[k] = (next - o[k]) / d[k];
+            t_delta[k] = prm.voxel / std::abs(d[k]);
+        }
+    }
+    while (true) {
+        const int k = t_max[0] < t_max[1] ? (t_max[0] < t_max[2] ? 0 : 2) : (t_max[1] < t_max[2] ? 1 : 2);
+        if (t_max[k] > reach) break;
+        out->push_back(MakeKey(idx[0], idx[1], idx[2]));
+        idx[k] += step[k];
+        t_max[k] += t_delta[k];
+    }
+}
+
+/// Ground points of one scan, after Patchwork (Lim et al., RA-L 2021) without its likelihood estimation.
+/// `rel` are the points around the sensor with z up.  Space is cut into concentric zones, rings and
+/// sectors; in each patch a plane is fitted by iterating from the lowest points, and what lies on a
+/// plane that is flat enough is ground.  A scan alone decides, so moving objects cannot disturb it.
+std::vector<char> SegmentGround(const std::vector<Eigen::Vector3d>& rel, double th_dist) {
+    constexpr double kBound[5] = {2.7, 12.3625, 22.025, 41.35, 80.0};
+    constexpr int kRings[4] = {2, 4, 4, 4}, kSectors[4] = {16, 32, 54, 32};
+    constexpr int kNumLpr = 20, kMinPts = 10, kIters = 3;
+    constexpr double kSeedHeight = 0.4, kUpright = 0.707;
+
+    int offset[5] = {0, 0, 0, 0, 0};
+    for (int z = 0; z < 4; ++z) offset[z + 1] = offset[z] + kRings[z] * kSectors[z];
+    std::vector<std::vector<int>> patches(offset[4]);
+    for (size_t i = 0; i < rel.size(); ++i) {
+        const double r = rel[i].head<2>().norm();
+        if (!(r >= kBound[0] && r < kBound[4])) continue;
+        int z = 0;
+        while (r >= kBound[z + 1]) ++z;
+        const int ring = std::min(kRings[z] - 1, int((r - kBound[z]) / (kBound[z + 1] - kBound[z]) * kRings[z]));
+        const double a = std::atan2(rel[i].y(), rel[i].x()) + M_PI;
+        const int sector = std::min(kSectors[z] - 1, int(a / (2 * M_PI) * kSectors[z]));
+        patches[offset[z] + ring * kSectors[z] + sector].push_back(int(i));
+    }
+
+    std::vector<char> ground(rel.size(), 0);
+    for (std::vector<int>& ids : patches) {
+        if (int(ids.size()) < kMinPts) continue;
+        std::sort(ids.begin(), ids.end(), [&](int a, int b) { return rel[a].z() < rel[b].z(); });
+        const int n_lpr = std::min<int>(kNumLpr, ids.size());
+        double lpr = 0;
+        for (int k = 0; k < n_lpr; ++k) lpr += rel[ids[k]].z();
+        lpr /= n_lpr;
+        std::vector<int> seeds;
+        for (int i : ids)
+            if (rel[i].z() < lpr + kSeedHeight) seeds.push_back(i);
+
+        Eigen::Vector3d n = Eigen::Vector3d::UnitZ();
+        double d = 0;
+        for (int it = 0; it < kIters; ++it) {
+            if (int(seeds.size()) < 3) break;
+            Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+            for (int i : seeds) mean += rel[i];
+            mean /= seeds.size();
+            Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
+            for (int i : seeds) cov += (rel[i] - mean) * (rel[i] - mean).transpose();
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(cov);
+            n = es.eigenvectors().col(0);  // smallest eigenvalue: the plane's normal
+            if (n.z() < 0) n = -n;
+            d = -n.dot(mean);
+            seeds.clear();
+            for (int i : ids)
+                if (std::abs(n.dot(rel[i]) + d) < th_dist) seeds.push_back(i);
+        }
+        if (n.z() < kUpright) continue;
+        for (int i : seeds) ground[i] = 1;
+    }
+    return ground;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    google::InitGoogleLogging(argv[0]);
+    FLAGS_logtostderr = true;
+    pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
+
+    std::string scans_dir, pose_fname, out_arg;
+    Param prm;
+    po::options_description desc("run_clean <scans_dir> <pose_fname> [options]");
+    desc.add_options()("help,h", "show this help")
+        ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.ply scans")
+        ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
+        ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/clean")
+        ("voxel", po::value<double>(&prm.voxel)->default_value(prm.voxel), "voxel size [m]")
+        ("margin", po::value<double>(&prm.margin)->default_value(prm.margin), "end of each ray not counted as empty [m]")
+        ("max_range", po::value<double>(&prm.max_range)->default_value(prm.max_range), "longest ray cast [m]")
+        ("min_free", po::value<int>(&prm.min_free)->default_value(prm.min_free), "scans that must see a voxel empty")
+        ("ratio", po::value<double>(&prm.ratio)->default_value(prm.ratio), "empty count needed per hit count")
+        ("ground_dist", po::value<double>(&prm.ground_dist)->default_value(prm.ground_dist),
+         "points this close to the ground plane are ground and never removed [m]; 0 = off");
+    po::positional_options_description pos;
+    pos.add("scans_dir", 1).add("pose_fname", 1);
+    po::variables_map vm;
+    try {
+        po::store(po::command_line_parser(argc, argv).options(desc).positional(pos).run(), vm);
+        po::notify(vm);
+    } catch (const po::error& e) {
+        std::cerr << e.what() << "\n" << desc << std::endl;
+        return 1;
+    }
+    if (vm.count("help") || !vm.count("scans_dir") || !vm.count("pose_fname")) {
+        std::cerr << desc << std::endl;
+        return vm.count("help") ? 0 : 1;
+    }
+    const fs::path dir = scans_dir;
+    if (!fs::is_directory(dir)) LOG(FATAL) << "not a folder: " << dir;
+    const fs::path out = out_arg.empty() ? dir / "clean" : fs::path(out_arg);
+    fs::create_directories(out);
+
+    std::vector<PoseLine> poses = LoadPoses(pose_fname);
+    if (poses.empty()) LOG(FATAL) << "no poses in " << pose_fname;
+    const double inv = 1.0 / prm.voxel;
+
+    // pass 1: count how many scans saw each voxel empty, and how many hit it
+    std::unordered_map<Key, Count> map;
+    std::cerr << "pass 1: count empty / hit scans per voxel\n";
+    boost::progress_display bar1(poses.size());
+    for (const PoseLine& p : poses) {
+        ++bar1;
+        Cloud cloud;
+        if (!LoadScan(dir / (p.name + ".ply"), &cloud)) continue;
+        const std::vector<Eigen::Vector3d> world = ToWorld(cloud, p.pose);
+        const Eigen::Vector3d origin = p.pose.translation();
+
+        // one ray per occupied voxel is enough
+        std::unordered_map<Key, int> occupied;
+        for (size_t i = 0; i < world.size(); ++i)
+            if (std::isfinite(world[i].x())) occupied.emplace(KeyOf(world[i], inv), int(i));
+
+        // a voxel next to a hit one is not called empty either: the surface may just have fallen between points
+        std::unordered_set<Key> shield;
+        for (const auto& kv : occupied) {
+            const Eigen::Vector3d& w = world[kv.second];
+            const int cx = int(std::floor(w.x() * inv)), cy = int(std::floor(w.y() * inv)),
+                      cz = int(std::floor(w.z() * inv));
+            for (int dx = -1; dx <= 1; ++dx)
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dz = -1; dz <= 1; ++dz) shield.insert(MakeKey(cx + dx, cy + dy, cz + dz));
+        }
+
+        std::vector<int> ids;
+        ids.reserve(occupied.size());
+        for (const auto& kv : occupied) ids.push_back(kv.second);
+        std::vector<Key> free_keys;
+#pragma omp parallel
+        {
+            std::vector<Key> local;
+#pragma omp for nowait schedule(dynamic, 256)
+            for (size_t i = 0; i < ids.size(); ++i) Traverse(origin, world[ids[i]], prm, &local);
+#pragma omp critical
+            free_keys.insert(free_keys.end(), local.begin(), local.end());
+        }
+        std::sort(free_keys.begin(), free_keys.end());
+        free_keys.erase(std::unique(free_keys.begin(), free_keys.end()), free_keys.end());
+        for (Key k : free_keys)
+            if (!shield.count(k)) ++map[k].free;
+        for (const auto& kv : occupied) ++map[kv.first].hit;
+    }
+    LOG(INFO) << "pass 1 done, " << map.size() << " voxels";
+
+    // pass 2: write each scan without the points sitting in a voxel that was empty more often than hit
+    size_t total = 0, removed = 0, written = 0, kept_ground = 0;
+    std::cerr << "pass 2: write the scans without dynamic points\n";
+    boost::progress_display bar2(poses.size());
+    for (const PoseLine& p : poses) {
+        ++bar2;
+        Cloud cloud;
+        if (!LoadScan(dir / (p.name + ".ply"), &cloud)) {
+            LOG(WARNING) << "no readable scan for " << p.name << ", skipped";
+            continue;
+        }
+        const std::vector<Eigen::Vector3d> world = ToWorld(cloud, p.pose);
+        std::vector<char> ground(cloud.size(), 0);
+        if (prm.ground_dist > 0) {
+            std::vector<Eigen::Vector3d> rel(cloud.size());  // around the sensor, world axes, so z is up
+            for (size_t i = 0; i < cloud.size(); ++i) rel[i] = world[i] - p.pose.translation();
+            ground = SegmentGround(rel, prm.ground_dist);
+        }
+        Cloud clean;
+        clean.reserve(cloud.size());
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            ++total;
+            if (!std::isfinite(world[i].x())) continue;
+            if (ground[i]) {
+                ++kept_ground;
+                clean.push_back(cloud[i]);
+                continue;
+            }
+            const Count& c = map.at(KeyOf(world[i], inv));
+            const int hit_others = c.hit - 1;  // this scan's own hit does not count against the point
+            if (c.free >= prm.min_free && c.free >= prm.ratio * hit_others) {
+                ++removed;
+                continue;
+            }
+            clean.push_back(cloud[i]);
+        }
+        clean.width = clean.size();
+        clean.height = 1;
+        clean.is_dense = true;
+        pcl::io::savePLYFileBinary((out / (p.name + ".ply")).string(), clean);
+        ++written;
+    }
+    LOG(INFO) << "wrote " << written << " scans to " << out << ", removed " << removed << " of " << total
+              << " points, " << kept_ground << " ground points protected (" << 100.0 * removed / std::max<size_t>(total, 1) << " %)";
+    return 0;
+}

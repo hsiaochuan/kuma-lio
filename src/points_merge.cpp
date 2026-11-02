@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
         ("output,o", po::value<std::string>(&output_fname), "Output merged PCD file")
         ("start_idx,s", po::value<int>(&start_idx)->default_value(0), "Start index for merging")
         ("end_idx,e", po::value<int>(&end_idx)->default_value(-1), "End index for merging (exclusive)")
-        ("voxel_size,e", po::value<double>(&voxel_size)->default_value(-1), "Voxel size for downsampling (negative to disable)");
+        ("voxel_size,v", po::value<double>(&voxel_size)->default_value(-1), "Voxel size for downsampling (negative to disable)");
     // clang-format on
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -133,7 +133,6 @@ int main(int argc, char** argv) {
             std::cerr << "Failed to load points from " << points_fname << std::endl;
             continue;
         }
-        pcl::io::loadPCDFile(points_fname, *points);
         pcl::transformPointCloud(*points, *points, pose.matrix());
         *merged_cloud += *points;
     }
@@ -144,6 +143,7 @@ int main(int argc, char** argv) {
         uniform_sampling.setRadiusSearch(voxel_size);
         pcl::PointCloud<PointType>::Ptr downsampled_cloud(new pcl::PointCloud<PointType>);
         uniform_sampling.filter(*downsampled_cloud);
+        merged_cloud = downsampled_cloud;
     }
     std::cout << "Merged " << merged_cloud->points.size() << " points from " << start_idx << " to " << end_idx
               << std::endl;
