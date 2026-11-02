@@ -28,9 +28,9 @@ class PgoBackend {
     /// Solves once more if a loop worth correcting is still waiting behind the cooldown.
     void Finish();
 
-    const ScanNodes& nodes() const { return nodes_; }
+    const ScanNodes& nodes() const { return scan_nodes_; }
     /// The odometry pose each node came in with, before any correction.
-    const Isometries& raw_poses() const { return raw_; }
+    const Isometries& raw_poses() const { return init_poses_; }
     const LoopEdges& loops() const { return loops_; }
     int num_solves() const { return num_solves_; }
 
@@ -45,18 +45,14 @@ class PgoBackend {
     PoseGraph graph_;
     LoopDetector detector_;
 
-    ScanNodes nodes_;
-    Isometries raw_;
+    ScanNodes scan_nodes_;
+    Isometries init_poses_;
     KeyFrames kfs_;
     LoopEdges loops_;
 
-    /// scans waiting to be merged into the next keyframe, with the pose each was taken at
-    struct Staged {
-        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-        Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
-        std::vector<Vec3> pts;
-    };
-    std::deque<Staged, Eigen::aligned_allocator<Staged>> stage_;
+    /// body-frame points of the scans waiting to be merged into the next keyframe; they are the
+    /// newest stage_.size() nodes, whose poses no solve has touched since
+    std::deque<std::vector<Vec3>> buf_scans_;
 
     /// What the last solve did to the newest node.  Every later scan comes in as dx_ * odometry, so
     /// the graph stays one rigid chain instead of a corrected past glued to an uncorrected future.

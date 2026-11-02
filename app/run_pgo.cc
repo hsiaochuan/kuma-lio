@@ -1,16 +1,15 @@
 //
 // Offline pose graph optimization: loop closure over the output of any odometry.
 //
-//   run_pgo <input_dir> [--config pgo.yaml] [--poses file.txt] [--out dir]
+//   run_pgo <scans_dir> <pose_fname> [--config pgo.yaml] [--out dir]  (-c/-o, -h for help)
 //
-// <input_dir> holds the scans as PCD files, each in the sensor's own frame and named by its time in
-// seconds (e.g. 1634567890.123456.pcd; a nanosecond stamp is accepted too), and one TUM-format
-// pose file (t x y z qx qy qz qw, T_world_body).  Each scan is placed with the pose interpolated at
-// its stamp.  The corrected trajectory comes out as <out>/traj_pgo.txt with one pose per input
-// pose, next to the loop diagnostics.
+// <scans_dir> holds the scans as PCD files in the sensor's own frame, <name>.pcd; <pose_fname> is the
+// pose file with a line "<name> x y z qx qy qz qw" (T_world_body) per scan.  <name> is the same string in
+// both and is also the scan's time, in seconds.  The corrected poses come out as <out>/traj_pgo.txt,
+// in the same format, next to the loop diagnostics.
 //
 
-#include <gflags/gflags.h>
+#include <boost/program_options.hpp>
 #include <glog/logging.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
@@ -18,17 +17,17 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <iostream>
 
 #include "pgo/pgo_backend.h"
-#include "stamp_pose.h"
 
 namespace fs = std::filesystem;
 using namespace faster_lio;
 
-DEFINE_string(config, "", "yaml with the pgo parameters (flat keys, see config/pgo.yaml); defaults if empty");
-DEFINE_string(poses, "", "TUM pose file; default is the only .txt/.tum file in the input folder");
-DEFINE_string(out, "", "output folder; default <input_dir>/pgo");
+namespace po = boost::program_options;
 
 namespace {
 
@@ -64,36 +63,38 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("odom_var_trans", &p->odom_var_trans);
 }
 
-struct ScanFile {
+struct PoseLine {
+    std::string name;
     double time;
-    fs::path path;
+    Eigen::Isometry3d pose;
 };
 
-/// Seconds from a file name; a stamp too large to be seconds is read as nanoseconds.
-bool StampOf(const fs::path& p, double* t) {
-    try {
-        size_t used = 0;
-        const std::string stem = p.stem().string();
-        *t = std::stod(stem, &used);
-        if (used != stem.size()) return false;
-    } catch (const std::exception&) {
-        return false;
+std::vector<PoseLine> LoadPoses(const fs::path& file) {
+    std::ifstream in(file);
+    if (!in) LOG(FATAL) << "cannot open " << file;
+    std::vector<PoseLine> poses;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream ss(line);
+        PoseLine p;
+        double v[7];
+        if (!(ss >> p.name >> v[0] >> v[1] >> v[2] >> v[3] >> v[4] >> v[5] >> v[6])) {
+            LOG(WARNING) << "skip malformed pose line: " << line;
+            continue;
+        }
+        try {
+            p.time = std::stod(p.name);
+        } catch (const std::exception&) {
+            LOG(WARNING) << "skip pose line, the name is not a number: " << line;
+            continue;
+        }
+        p.pose = Eigen::Isometry3d::Identity();
+        p.pose.linear() = Eigen::Quaterniond(v[6], v[3], v[4], v[5]).normalized().toRotationMatrix();
+        p.pose.translation() = Eigen::Vector3d(v[0], v[1], v[2]);
+        poses.push_back(std::move(p));
     }
-    if (*t > 1e11) *t *= 1e-9;
-    return true;
-}
-
-fs::path FindPoseFile(const fs::path& dir) {
-    std::vector<fs::path> found;
-    for (const auto& e : fs::directory_iterator(dir)) {
-        const std::string ext = e.path().extension().string();
-        if (e.is_regular_file() && (ext == ".txt" || ext == ".tum")) found.push_back(e.path());
-    }
-    if (found.size() != 1) {
-        LOG(FATAL) << "expected exactly one .txt/.tum pose file in " << dir << ", found " << found.size()
-                   << "; pass --poses";
-    }
-    return found.front();
+    return poses;
 }
 
 }  // namespace
@@ -101,91 +102,74 @@ fs::path FindPoseFile(const fs::path& dir) {
 int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;
-    gflags::SetUsageMessage("run_pgo <input_dir> [--config pgo.yaml] [--poses file.txt] [--out dir]");
-    gflags::ParseCommandLineFlags(&argc, &argv, true);
-    if (argc != 2) {
-        std::cerr << gflags::ProgramUsage() << std::endl;
+
+    std::string scans_dir, pose_fname, config, out_arg;
+    po::options_description desc("run_pgo <scans_dir> <pose_fname> [options]");
+    desc.add_options()("help,h", "show this help")
+        ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.pcd scans")
+        ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
+        ("config,c", po::value<std::string>(&config), "yaml with the pgo parameters (see config/pgo.yaml); defaults if absent")
+        ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/pgo");
+    po::positional_options_description pos;
+    pos.add("scans_dir", 1).add("pose_fname", 1);
+    po::variables_map vm;
+    try {
+        po::store(po::command_line_parser(argc, argv).options(desc).positional(pos).run(), vm);
+        po::notify(vm);
+    } catch (const po::error& e) {
+        std::cerr << e.what() << "\n" << desc << std::endl;
         return 1;
     }
-    const fs::path dir = argv[1];
+    if (vm.count("help") || !vm.count("scans_dir") || !vm.count("pose_fname")) {
+        std::cerr << desc << std::endl;
+        return vm.count("help") ? 0 : 1;
+    }
+    const fs::path dir = scans_dir;
     if (!fs::is_directory(dir)) LOG(FATAL) << "not a folder: " << dir;
-    const fs::path out = FLAGS_out.empty() ? dir / "pgo" : fs::path(FLAGS_out);
+    const fs::path out = out_arg.empty() ? dir / "pgo" : fs::path(out_arg);
     fs::create_directories(out);
 
     pgo::PgoParam prm;
-    if (!FLAGS_config.empty()) LoadParam(FLAGS_config, &prm);
+    if (!config.empty()) LoadParam(config, &prm);
 
-    const fs::path pose_file = FLAGS_poses.empty() ? FindPoseFile(dir) : fs::path(FLAGS_poses);
-    Trajectory traj = TrajectoryGenerator::load_from_tumtxt(pose_file.string());
-    if (traj.size() < 2) LOG(FATAL) << "need at least two poses in " << pose_file;
-    std::sort(traj.begin(), traj.end(), [](const StampedPose& a, const StampedPose& b) { return a.time < b.time; });
-    const TrajectoryInterpolator interp(traj);
-    LOG(INFO) << "poses: " << traj.size() << " from " << pose_file << ", " << interp.t_start() << " .. "
-              << interp.t_end() << " s";
-
-    std::vector<ScanFile> scans;
-    for (const auto& e : fs::directory_iterator(dir)) {
-        if (!e.is_regular_file() || e.path().extension() != ".pcd") continue;
-        ScanFile s;
-        if (!StampOf(e.path(), &s.time)) {
-            LOG(WARNING) << "skip " << e.path().filename() << ": the name is not a time stamp";
-            continue;
-        }
-        s.path = e.path();
-        scans.push_back(s);
-    }
-    std::sort(scans.begin(), scans.end(), [](const ScanFile& a, const ScanFile& b) { return a.time < b.time; });
-    if (scans.empty()) LOG(FATAL) << "no <time>.pcd scans in " << dir;
+    const fs::path pose_file = pose_fname;
+    std::vector<PoseLine> poses = LoadPoses(pose_file);
+    if (poses.empty()) LOG(FATAL) << "no poses in " << pose_file;
+    std::sort(poses.begin(), poses.end(), [](const PoseLine& a, const PoseLine& b) { return a.time < b.time; });
+    LOG(INFO) << "poses: " << poses.size() << " from " << pose_file;
 
     pgo::PgoBackend backend(prm);
-    int used = 0, outside = 0;
-    for (const ScanFile& s : scans) {
-        if (s.time < interp.t_start() || s.time > interp.t_end()) {
-            ++outside;
-            continue;
-        }
+    std::vector<const PoseLine*> used;
+    for (const PoseLine& p : poses) {
+        const fs::path pcd = dir / (p.name + ".pcd");
         pcl::PointCloud<pcl::PointXYZ> cloud;
-        if (pcl::io::loadPCDFile(s.path.string(), cloud) < 0) {
-            LOG(WARNING) << "cannot read " << s.path;
+        if (!fs::exists(pcd) || pcl::io::loadPCDFile(pcd.string(), cloud) < 0) {
+            LOG(WARNING) << "no readable scan " << pcd << ", pose skipped";
             continue;
         }
         std::vector<Vec3> pts;
         pts.reserve(cloud.size());
-        for (const auto& p : cloud.points) {
-            if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) pts.emplace_back(p.x, p.y, p.z);
+        for (const auto& q : cloud.points) {
+            if (std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z)) pts.emplace_back(q.x, q.y, q.z);
         }
-        backend.AddScan(s.time, interp.query(s.time), pts);
-        ++used;
+        backend.AddScan(p.time, p.pose, pts);
+        used.push_back(&p);
     }
-    if (outside) LOG(WARNING) << outside << " scans lie outside the pose file's time span and were skipped";
-    if (used == 0) LOG(FATAL) << "no scan overlaps the pose file";
+    if (used.empty()) LOG(FATAL) << "no pose has a scan";
     backend.Finish();
-    LOG(INFO) << "scans used: " << used;
 
-    // The correction is known at the nodes only: between two of them take the interpolated one,
-    // beyond the ends the nearest one.
+    // node i is used[i]; its corrected pose is what the graph ended with
     const pgo::ScanNodes& nodes = backend.nodes();
-    pgo::Isometries delta(nodes.size());
-    for (size_t i = 0; i < nodes.size(); ++i) delta[i] = nodes[i].pose * backend.raw_poses()[i].inverse();
-    Trajectory corrected;
-    corrected.reserve(traj.size());
-    size_t k = 0;
-    for (const StampedPose& sp : traj) {
-        while (k + 1 < nodes.size() && nodes[k + 1].time <= sp.time) ++k;
-        Eigen::Isometry3d d;
-        if (sp.time <= nodes.front().time) {
-            d = delta.front();
-        } else if (k + 1 >= nodes.size()) {
-            d = delta.back();
-        } else {
-            const double a = (sp.time - nodes[k].time) / std::max(1e-9, nodes[k + 1].time - nodes[k].time);
-            d = interpolate_pose(delta[k], delta[k + 1], a);
-        }
-        corrected.emplace_back(sp.time, d * sp.pose);
+    std::ofstream traj((out / "traj_pgo.txt").string());
+    traj << std::setprecision(9);
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const Eigen::Vector3d t = nodes[i].pose.translation();
+        const Eigen::Quaterniond q(nodes[i].pose.rotation());
+        traj << used[i]->name << ' ' << t.x() << ' ' << t.y() << ' ' << t.z() << ' ' << q.x() << ' ' << q.y()
+             << ' ' << q.z() << ' ' << q.w() << '\n';
     }
-    TrajectoryGenerator::save_to_tumtxt(corrected, (out / "traj_pgo.txt").string());
     backend.SaveDebug(out.string());
-    LOG(INFO) << "wrote " << (out / "traj_pgo.txt") << ": " << corrected.size() << " poses, "
+    LOG(INFO) << "wrote " << (out / "traj_pgo.txt") << ": " << nodes.size() << " poses, "
               << backend.loops().size() << " loops, " << backend.num_solves() << " solves";
     return 0;
 }

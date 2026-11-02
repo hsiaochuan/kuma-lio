@@ -29,6 +29,7 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
 add_definitions(-DPCL_NO_PRECOMPILE)
 find_package(yaml-cpp REQUIRED)
+find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(Ceres REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(OpenMP REQUIRED)
@@ -130,7 +131,7 @@ target_link_libraries(faster_pgo
         )
 
 add_executable(run_pgo app/run_pgo.cc)
-target_link_libraries(run_pgo faster_pgo)
+target_link_libraries(run_pgo faster_pgo Boost::program_options)
 
 add_executable(points_jet ./src/points_jet.cpp)
 target_link_libraries(points_jet ${PROJECT_NAME})

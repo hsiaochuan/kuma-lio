@@ -17,25 +17,22 @@ PgoBackend::PgoBackend(const PgoParam& prm) : prm_(prm), graph_(prm), detector_(
 
 void PgoBackend::AddScan(double time, const Eigen::Isometry3d& raw_pose, const std::vector<Vec3>& body_pts) {
     const Eigen::Isometry3d pose = dx_ * raw_pose;
-    const bool first = nodes_.empty();
-    const Eigen::Isometry3d prev_pose = first ? pose : nodes_.back().pose;
+    const bool first = scan_nodes_.empty();
+    const Eigen::Isometry3d prev_pose = first ? pose : scan_nodes_.back().pose;
     if (!first) jour_ += (pose.translation() - prev_pose.translation()).norm();
 
     ScanNode node;
     node.time = time;
     node.pose = pose;
-    nodes_.push_back(node);
-    raw_.push_back(raw_pose);
+    scan_nodes_.push_back(node);
+    init_poses_.push_back(raw_pose);
     Vec6 v6;
     v6 << Vec3::Constant(prm_.odom_var_rot), Vec3::Constant(prm_.odom_var_trans);
-    graph_.AddNode(static_cast<int>(nodes_.size()) - 1, pose, prev_pose, v6);
+    graph_.AddNode(static_cast<int>(scan_nodes_.size()) - 1, pose, prev_pose, v6);
 
-    Staged staged;
-    staged.pose = pose;
-    staged.pts = body_pts;
-    stage_.push_back(std::move(staged));
+    buf_scans_.push_back(body_pts);
 
-    if (static_cast<int>(stage_.size()) < prm_.kf_scans) return;
+    if (static_cast<int>(buf_scans_.size()) < prm_.kf_scans) return;
     SealKeyframe(pose);
 }
 
@@ -46,26 +43,27 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
         const double len = d.translation().norm();
         if (ang < prm_.kf_min_angle && len < prm_.kf_min_dist) {
             // standing still: let the window slide on rather than pile up near-identical keyframes
-            stage_.pop_front();
+            buf_scans_.pop_front();
             return;
         }
     }
 
     std::vector<Vec3> merged;
     const double r2 = prm_.kf_max_range * prm_.kf_max_range;
-    for (const Staged& s : stage_) {
-        const Eigen::Isometry3d d = anchor_pose.inverse() * s.pose;
-        for (const Vec3& p : s.pts) {
+    const size_t first_node = scan_nodes_.size() - buf_scans_.size();
+    for (size_t i = 0; i < buf_scans_.size(); ++i) {
+        const Eigen::Isometry3d d = anchor_pose.inverse() * scan_nodes_[first_node + i].pose;
+        for (const Vec3& p : buf_scans_[i]) {
             const Vec3 q = d * p;
             if (prm_.kf_max_range > 0.0 && q.squaredNorm() > r2) continue;
             merged.push_back(q);
         }
     }
-    stage_.clear();
+    buf_scans_.clear();
 
     KeyFrame kf;
     kf.id = static_cast<int>(kfs_.size());
-    kf.anchor = static_cast<int>(nodes_.size()) - 1;
+    kf.anchor = static_cast<int>(scan_nodes_.size()) - 1;
     kf.jour = jour_;
     kf.pose = anchor_pose;
     kf.cloud = DownSample(merged, prm_.kf_ds_voxel);
@@ -93,21 +91,21 @@ void PgoBackend::Finish() {
 
 void PgoBackend::Solve() {
     Timer timer;
-    Isometries poses(nodes_.size());
-    for (size_t i = 0; i < nodes_.size(); ++i) poses[i] = nodes_[i].pose;
-    const Eigen::Isometry3d old_last = nodes_.back().pose;
+    Isometries poses(scan_nodes_.size());
+    for (size_t i = 0; i < scan_nodes_.size(); ++i) poses[i] = scan_nodes_[i].pose;
+    const Eigen::Isometry3d old_last = scan_nodes_.back().pose;
 
     if (!graph_.Solve(&poses)) return;
 
-    for (size_t i = 0; i < nodes_.size(); ++i) nodes_[i].pose = poses[i];
-    dx_ = nodes_.back().pose * raw_.back().inverse();
-    for (KeyFrame& kf : kfs_) kf.pose = nodes_[kf.anchor].pose;
+    for (size_t i = 0; i < scan_nodes_.size(); ++i) scan_nodes_[i].pose = poses[i];
+    dx_ = scan_nodes_.back().pose * init_poses_.back().inverse();
+    for (KeyFrame& kf : kfs_) kf.pose = scan_nodes_[kf.anchor].pose;
 
     kf_since_opt_ = 0;
     unsolved_drift_ = 0.0;
     ++num_solves_;
-    const Eigen::Isometry3d step = nodes_.back().pose * old_last.inverse();
-    LOG(INFO) << "PGO: solved " << nodes_.size() << " nodes, " << graph_.num_loops() << " loops, dx t "
+    const Eigen::Isometry3d step = scan_nodes_.back().pose * old_last.inverse();
+    LOG(INFO) << "PGO: solved " << scan_nodes_.size() << " nodes, " << graph_.num_loops() << " loops, dx t "
               << step.translation().norm() << " m r "
               << LogMat(Mat3(step.linear())).norm() * 57.2957795 << " deg in " << timer.ElapsedMiniSeconds()
               << " ms";
@@ -120,7 +118,7 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
         for (const KeyFrame& kf : kfs_) {
             const Eigen::Quaterniond q(kf.pose.linear());
             f << kf.id << " " << kf.anchor << " " << kf.jour << " " << std::fixed << std::setprecision(9)
-              << nodes_[kf.anchor].time << " " << kf.pose.translation().transpose() << " " << q.x() << " "
+              << scan_nodes_[kf.anchor].time << " " << kf.pose.translation().transpose() << " " << q.x() << " "
               << q.y() << " " << q.z() << " " << q.w() << " " << kf.cloud.size() << " " << kf.planes.size()
               << "\n";
             f << std::defaultfloat;
@@ -143,7 +141,7 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
               << r.seed_t << "\n";
         }
     }
-    LOG(INFO) << "PGO: " << nodes_.size() << " nodes, " << kfs_.size() << " keyframes, " << loops_.size()
+    LOG(INFO) << "PGO: " << scan_nodes_.size() << " nodes, " << kfs_.size() << " keyframes, " << loops_.size()
               << " loops, " << detector_.rejections().size() << " rejected candidates, " << num_solves_
               << " solves";
 }
