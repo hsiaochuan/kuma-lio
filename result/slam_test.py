@@ -49,6 +49,7 @@ class RunTask:
     is_localization: bool = False
     gnss_obs_fname: str = ""
     gnss_nav_fname: str = ""
+    clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments
     @property
     def localization_args(self) -> List[str]:
         if not self.is_localization:
@@ -72,14 +73,16 @@ class DatasetConfig:
     ground_truth_dir: str = ""
     gnss_dir: str = ""
     is_localization: bool = False
+    clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments, they depend on the platform
 
 @dataclass
 class TestResult:
     bag_name: str
     bag_file: str
     points_count: int = 0
-    duration_sec: float = 0.0
+    duration_sec: float = 0.0  # SLAM only
     ate: float = 0.0
+    ate_pgo: float = 0.0
 
 @dataclass
 class SuiteResult:
@@ -93,32 +96,6 @@ class SuiteResult:
 # ──────────────────────────────────────────────
 # Utility Functions
 # ──────────────────────────────────────────────
-
-
-def pcd_points_count(pcd_fname: str) -> int:
-    """Read PCD file header, return point count; return -1 on failure"""
-    try:
-        with open(pcd_fname, 'r', errors='ignore') as f:
-            for line in f:
-                if line.startswith('POINTS'):
-                    return int(line.split()[1])
-                if line.startswith('DATA'):
-                    break
-        return 0
-    except Exception as e:
-        return -1
-
-
-def count_points_in_dir(maps_dir: str) -> int:
-    """Count total points in all PCD files in the directory"""
-    total = 0
-    if not os.path.isdir(maps_dir):
-        return 0
-    for fname in os.listdir(maps_dir):
-        if fname.endswith('.pcd'):
-            total += max(0, pcd_points_count(os.path.join(maps_dir, fname)))
-    return total
-
 
 def get_git_info() -> Tuple[str, str]:
     """Return (branch, commit_id); return empty strings on failure"""
@@ -150,12 +127,19 @@ class SLAMTestRunner:
             offline_app: str = "../build/run_mapping_offline",
             online_app: str = "../build/run_mapping_online",
             points_post_app: str = "../build/points_jet",
+            pgo_app: str = "../build/run_pgo",
+            clean_app: str = "../build/run_clean",
+            merge_app: str = "../build/points_merge",
+            pgo_config: str = "../config/pgo.yaml",
 
             build_dir: str = "../build",
             output_root: str = "./test_results",
 
             if_delete_result_dir: bool = False,
             if_slam: bool = True,
+            if_pgo: bool = False,
+            if_clean: bool = False,
+            if_merge: bool = False,
             if_postprocess: bool = False,
     ):
         self.git_branch = get_git_info()[0]
@@ -163,6 +147,10 @@ class SLAMTestRunner:
         self.offline_app = offline_app
         self.online_app = online_app
         self.points_post_app = points_post_app
+        self.pgo_app = pgo_app
+        self.clean_app = clean_app
+        self.merge_app = merge_app
+        self.pgo_config = pgo_config
 
         self.build_dir = build_dir
         self.output_root = output_root
@@ -171,6 +159,9 @@ class SLAMTestRunner:
 
         self.if_delete_result_dir = if_delete_result_dir
         self.if_slam = if_slam
+        self.if_pgo = if_pgo
+        self.if_clean = if_clean
+        self.if_merge = if_merge
         self.if_postprocess = if_postprocess
 
     # ── Build ──────────────────────────────────
@@ -183,7 +174,10 @@ class SLAMTestRunner:
                 ["make",
                  "-C", self.build_dir,
                  "run_mapping_offline",
-                 # "run_mapping_online",
+                 "run_pgo",
+                 "run_clean",
+                 "points_merge",
+                 "points_jet",
                  "-j", str(jobs)],
                 check=True,
                 stdout=subprocess.PIPE,
@@ -217,55 +211,73 @@ class SLAMTestRunner:
             print(f"  run_mapping_offline exited with code {e.returncode}")
             return False
 
-    def run_post_process(self, output_dir: str):
-        subprocess.run([
-            self.points_post_app,
-            '--input', os.path.join(output_dir, "final.pcd"),
-            '--output', os.path.join(output_dir, "final_post.pcd"),
-        ], check=True)
-
-    def run_online(self, task: RunTask) -> bool:
-        roscore = rviz = online_proc = None
+    def run_step(self, name: str, command: List[str]) -> bool:
+        print(f"  {name}")
         try:
-            roscore = subprocess.Popen(
-                ["roscore"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            rviz = subprocess.Popen(
-                ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-
-            time.sleep(5)
-
-            online_proc = subprocess.Popen(
-                [self.online_app,
-                 "--output_dir", task.output_dir,
-                 "--config_fname", task.config] + task.localization_args,
-            )
-
-            if task.is_localization:
-                time.sleep(30)
-            bag_play_command = [
-                "rosbag", "play",
-                "--start", str(task.start),
-                task.bag_file,
-            ]
-            if task.duration > 0:
-                bag_play_command += ["--duration", str(task.duration)]
-            subprocess.run(
-                bag_play_command,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                check=True,
-            )
+            subprocess.run(command, check=True)
             return True
-        except Exception as e:
-            print(f"  Online mode exception: {e}")
+        except (subprocess.CalledProcessError, OSError) as e:
+            print(f"  {name} failed: {e}")
             return False
-        finally:
-            for proc in [online_proc, rviz, roscore]:
-                if proc:
-                    proc.terminate()
+
+    def run_mapping(self, task: RunTask):
+        """SLAM scans -> loop closure -> dynamic point removal -> merged map -> smoothed map.
+
+        Every step takes what the steps before it produced: without --if_pgo the scans are placed by
+        traj_log.txt, without --if_clean the merged map has the dynamic points.
+        """
+        output_dir = task.output_dir
+        scans_dir = os.path.join(output_dir, "scans")
+        poses = os.path.join(output_dir, "traj_log.txt")  # its first column is the file stem of each scan
+        map_fname = os.path.join(output_dir, "map.pcd")
+        if not (self.if_pgo or self.if_clean or self.if_merge or self.if_postprocess):
+            return
+        if not os.path.isdir(scans_dir):
+            print(f"  no {scans_dir}, mapping steps skipped: they need front_end: fastlio and pcd_save_en: true")
+            return
+
+        if self.if_pgo:
+            pgo_dir = os.path.join(output_dir, "pgo")
+            if not self.run_step("run_pgo", [
+                self.pgo_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--config", self.pgo_config,
+                "--out", pgo_dir,
+            ]):
+                return
+            poses = os.path.join(pgo_dir, "traj_pgo.txt")
+
+        if self.if_clean:
+            clean_dir = os.path.join(output_dir, "clean")
+            if not self.run_step("run_clean", [
+                self.clean_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--out", clean_dir,
+            ] + task.clean_args):
+                return
+            scans_dir = clean_dir
+
+        if self.if_merge:
+            if not self.run_step("points_merge", [
+                self.merge_app,
+                "--trajectory", poses,
+                "--pcd_dir", scans_dir,
+                "--output", map_fname,
+                "--voxel_size", "0.05",
+            ]):
+                return
+
+        if self.if_postprocess:
+            if not os.path.exists(map_fname):
+                print(f"  no {map_fname}, points_jet skipped: it needs --if_merge")
+                return
+            self.run_step("points_jet", [
+                self.points_post_app,
+                "--input", map_fname,
+                "--output", os.path.join(output_dir, "map_post.pcd"),
+            ])
 
     def run_single(self, task: RunTask) -> TestResult:
         output_dir = task.output_dir
@@ -282,24 +294,26 @@ class SLAMTestRunner:
         start_time = time.time()
         if self.if_slam:
             self.run_offline(task)
-
-        if self.if_postprocess:
-            self.run_post_process(output_dir)
-
         end_time = time.time()
+
+        self.run_mapping(task)
 
         result.duration_sec = round(end_time - start_time, 1)
         # result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
         if os.path.exists(task.ground_truth_fname):
-            result.ate = self.evaluate_ate(task.ground_truth_fname, output_dir)
+            result.ate = self.evaluate_ate(task.ground_truth_fname, os.path.join(output_dir, "traj_log.txt"))
             print("ATE RMSE: {}".format(result.ate))
+            traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
+            if self.if_pgo and os.path.exists(traj_pgo):
+                result.ate_pgo = self.evaluate_ate(task.ground_truth_fname, traj_pgo)
+                print("ATE RMSE after PGO: {}".format(result.ate_pgo))
         else:
             print("Fail to evaluate the ATE RMSE")
         return result
 
-    def evaluate_ate(self, ground_truth_fname: str, output_dir: str) -> float:
+    def evaluate_ate(self, ground_truth_fname: str, traj_fname: str) -> float:
         traj_ref = file_interface.read_tum_trajectory_file(ground_truth_fname)
-        traj_est = file_interface.read_tum_trajectory_file(os.path.join(output_dir, "traj_log.txt"))
+        traj_est = file_interface.read_tum_trajectory_file(traj_fname)
         traj_ref, traj_est = sync.associate_trajectories(traj_ref, traj_est, max_diff=0.05)
         result = main_ape.ape(traj_ref, traj_est, metrics.PoseRelation.translation_part, align=True)
         return result.stats["rmse"]
@@ -353,6 +367,7 @@ class SLAMTestRunner:
                 is_localization=dataset.is_localization,
                 gnss_obs_fname=os.path.join(dataset.gnss_dir, name + ".o"),
                 gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
+                clean_args=dataset.clean_args,
             )
             test_result = self.run_single(task)
             suite.test_results.append(test_result)
@@ -369,7 +384,8 @@ class SLAMTestRunner:
             f.write("-" * 65 + "\n")
             for suite_result in suite_results:
                 for test_result in suite_result.test_results:
-                    f.write("{},\t{},\t{}、n\n".format(test_result.bag_name, test_result.duration_sec, test_result.ate))
+                    f.write("{},\t{},\t{},\t{}\n".format(test_result.bag_name, test_result.duration_sec,
+                                                         test_result.ate, test_result.ate_pgo))
             f.write("-" * 65 + "\n")
 
 
@@ -542,7 +558,26 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/groundtruth",
     )
-    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr]
+    i2nav_robot = DatasetConfig(
+        name="i2nav_robot",
+        config={".":"../config/i2nav_robot.yaml"},
+        bag_files=[
+            f"/media/hsiaochuan/hsiaochuan-data/inav-robot/{seq}.bag"
+            for seq in ["building00",
+                        # "building01",
+                        # "parking00",
+                        # "parking01",
+                        ]
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/inav-robot/groundtruth",
+        # the sensor is the ADIS16465, 0.852 m above the floor (calibration.yaml odo_lever); z is up in the
+        # gravity-aligned world.  min_hits counts scans: 6 at 0.4 s per scan is 24 at the 0.1 s of the local BA.
+        clean_args=["--voxel", "0.4", "--margin", "0.8", "--max_range", "80", "--min_free", "2", "--ratio", "3",
+                    "--min_hits", "24", "--near_range", "8", "--ground_dist", "0.1",
+                    "--up_z", "1", "--sensor_height", "0.852"],
+    )
+    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
@@ -553,13 +588,16 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral"],
+                        default=["i2nav_robot"],
                         help="Run only specified datasets (by name)")
     parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
-    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
-    parser.add_argument("--if_rviz", action="store_true", default=False, help="Run rviz")
-    parser.add_argument("--start", type=float, default=0.0, help="Start time (sec) for offline mode")
+    parser.add_argument("--if_pgo", action="store_true", default=False, help="Run run_pgo on the SLAM scans")
+    parser.add_argument("--if_clean", action="store_true", default=False, help="Run run_clean, dynamic point removal")
+    parser.add_argument("--if_merge", action="store_true", default=False, help="Run points_merge, writes map.pcd")
+    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points_jet on map.pcd")
+    parser.add_argument("--if_rviz", action="store_true", default=True, help="Run rviz")
+    parser.add_argument("--start", type=float, default=5, help="Start time (sec) for offline mode")
     parser.add_argument("--duration", type=float, default=-1.0,
                         help="Duration (sec) for offline mode, -1 for full length")
     args = parser.parse_args()
@@ -582,6 +620,9 @@ def main():
     runner = SLAMTestRunner()
     runner.if_delete_result_dir = args.if_delete_result_dir
     runner.if_slam = args.if_slam
+    runner.if_pgo = args.if_pgo
+    runner.if_clean = args.if_clean
+    runner.if_merge = args.if_merge
     runner.if_postprocess = args.if_postprocess
     runner.run_all(datasets)
 
