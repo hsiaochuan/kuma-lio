@@ -42,8 +42,25 @@ struct RespleParam {
 };
 
 /// The `fastlio:` block: the FAST-LIO2 style front end, with the noises of Voxel-SLAM.
+enum class FastLioMode {
+    LIO = 1,
+    LIVO,
+    LIGO,
+};
+inline FastLioMode FastLioModeFromString(const std::string &fast_lio_mode_str) {
+    if (fast_lio_mode_str == "LIO") {
+        return FastLioMode::LIO;
+    } else if (fast_lio_mode_str == "LIVO") {
+        return FastLioMode::LIVO;
+    } else if (fast_lio_mode_str == "LIGO") {
+        return FastLioMode::LIGO;
+    } else {
+        throw std::runtime_error("unknown fast-lio mode: " + fast_lio_mode_str);
+    }
+}
+
 struct FastLioParam {
-    std::string frame_source;  // time: a frame every lba.frame_dt; camera: a frame ends at each image
+    FastLioMode mode;
     double down_size;          // [m] per-frame voxel grid
     double cov_gyr;            // [(rad/s)^2] per gyroscope sample
     double cov_acc;            // [(m/s^2)^2] per accelerometer sample
@@ -111,6 +128,7 @@ class LaserMappingParam {
 
     bool pcd_save_en_;
     bool bag_save_en_;
+    bool image_save_en_;
 
     RespleParam resple_;
     FastLioParam fast_lio_;
@@ -156,6 +174,7 @@ class LaserMappingParam {
             extrin_il_.q_ = RotationFromArray(ConfigKey<std::vector<double>>(yaml, "extrin_R_il"));
             extrin_il_.t_ = ConfigVec3(yaml, "extrin_t_il");
             pcd_save_en_ = ConfigKey<bool>(yaml, "pcd_save_en");
+            image_save_en_ = ConfigKey<bool>(yaml, "image_save_en");
             bag_save_en_ = ConfigKey<bool>(yaml, "bag_save_en");
 
             const YAML::Node r = yaml["resple"];
@@ -187,7 +206,7 @@ class LaserMappingParam {
             resple_.fb_keep_cov = ConfigKey<bool>(r, "fb_keep_cov");
 
             const YAML::Node f = yaml["fastlio"];
-            fast_lio_.frame_source = ConfigKey<std::string>(f, "frame_source");
+            fast_lio_.mode = FastLioModeFromString(ConfigKey<std::string>(f, "mode"));
             fast_lio_.down_size = ConfigKey<double>(f, "down_size");
             fast_lio_.cov_gyr = ConfigKey<double>(f, "cov_gyr");
             fast_lio_.cov_acc = ConfigKey<double>(f, "cov_acc");
@@ -256,11 +275,9 @@ class LaserMappingParam {
         } catch (const YAML::Exception& e) {
             throw std::runtime_error(config_fname + ": " + e.what());
         }
-        CHECK(front_end == "resple" || front_end == "fastlio") << "unknown front_end: " << front_end;
-        CHECK(fast_lio_.frame_source == "time" || fast_lio_.frame_source == "camera")
-            << "unknown fastlio.frame_source: " << fast_lio_.frame_source;
-        CHECK(front_end != "fastlio" || fast_lio_.frame_source != "camera" || !img_topic_.empty())
-            << "fastlio.frame_source camera needs common.img_topic";
+
+        if (fast_lio_.mode == FastLioMode::LIVO)
+            CHECK(!img_topic_.empty());
     }
 };
 

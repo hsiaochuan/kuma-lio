@@ -20,7 +20,7 @@ extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
               -0.00801077, 0.00135687, -0.99996699]
 pcd_save_en: true
 bag_save_en: false
-
+image_save_en: false
 resple:
   knot_hz: 100
   ds_scan_voxel: 0.1
@@ -54,7 +54,7 @@ resple:
   fb_keep_cov: true
 
 fastlio:
-  frame_source: time
+  mode: LIO
   down_size: 0.25
   cov_gyr: 0.01
   cov_acc: 1.0

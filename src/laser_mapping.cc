@@ -1668,8 +1668,7 @@ void LaserMapping::RunFastLio() {
         fast_lio_->lba->InitMap(init_ps, param->lba_.range_err * param->lba_.range_err + param->lba_.pose_var);
         fast_lio_->Start(state, R0 * gravity_body, end_time_ns, last_imu);
         if_localmap_initialized = true;
-        LOG(INFO) << "localmap initialized with " << init_points_world->size() << " points, frames from "
-                  << param->fast_lio_.frame_source;
+        LOG(INFO) << "localmap initialized with " << init_points_world->size() << " points";
         return;
     }
 
@@ -1841,11 +1840,23 @@ void LaserMapping::PostUpdateFastLio() {
             save_points->push_back(point);
         }
 
-        double time_s = global_offset_time + save_points->front().GetTimeSec();
+        double time_s = global_offset_time + time_ns * 1e-9;
         std::stringstream stamp_string;
         stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".ply";
         pcl::io::savePLYFileBinary((fs::path(output_dir) / "scans" / stamp_string.str()).string(),
                                    *save_points);
+    }
+
+    if (param->image_save_en_ && !measures_.rgb_image_.Empty()) {
+        static int call_once = [&]() {
+            fs::create_directories(fs::path(output_dir) / "images");
+            return 0;
+        }();
+        double time_s = global_offset_time + time_ns * 1e-9;
+        std::stringstream stamp_string;
+        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".png";
+        if (!measures_.rgb_image_.Save((fs::path(output_dir) / "images" / stamp_string.str()).string()))
+            LOG(INFO) << "failed to save image at " << time_s;
     }
 }
 
@@ -1888,7 +1899,7 @@ void LaserMapping::PublishROSMsgFastLio() {
 }
 bool LaserMapping::CollectMeasuresFastLio() {
     std::int64_t meas_end;
-    if (param->fast_lio_.frame_source == "camera") {
+    if (param->fast_lio_.mode == FastLioMode::LIVO) {
         while (!image_buff_.empty() && image_buff_.front().time_ns <= fast_lio_->last_end_ns) {
             image_buff_.pop_front();
         }
