@@ -18,7 +18,6 @@ extrin_R_il: [1, 0, 0,
               0, 1, 0,
               0, 0, 1]
 pcd_save_en: true
-pcd_save_interval: 30
 bag_save_en: false
 
 resple:

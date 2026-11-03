@@ -7,7 +7,7 @@ BIN = os.path.join(ROOT, "build")
 CONFIG = os.path.join(ROOT, "config", "pgo.yaml")
 
 datas_dir = [
-    "/home/hsiaochuan/slam/openMVG/data/building00",
+    "/home/hsiaochuan/slam/openMVG/data/building00_at128",
 ]
 for data_dir in datas_dir:
     scans_dir = os.path.join(data_dir, "pcd")

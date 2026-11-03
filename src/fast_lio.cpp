@@ -248,10 +248,10 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     odom.v = x.v;
     odom.bg = x.bg;
     odom.ba = x.ba;
-    std::vector<LbaPoint> frame;
-    frame.reserve(points.size());
-    for (const FastLioPoint& pt : points) frame.push_back(LbaPoint{pt.body, pt.var});
-    if (lba->AddFrame(measures.mea_end_, odom, frame, gravity)) {
+    std::vector<LbaPoint> frame_points;
+    frame_points.reserve(points.size());
+    for (const FastLioPoint& pt : points) frame_points.push_back(LbaPoint{pt.body, pt.var});
+    if (lba->AddFrame(measures.mea_end_, odom, frame_points, gravity)) {
         x.R = lba->Newest().R;
         x.p = lba->Newest().p;
     }

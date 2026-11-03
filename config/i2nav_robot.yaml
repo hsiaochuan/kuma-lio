@@ -7,7 +7,7 @@ common:
   acc_ratio: false
   lidar_time_offset: 0
 
-front_end: resple
+front_end: fastlio
 num_threads: 4
 lidar_type: HESAI
 blind: 2.0
@@ -18,8 +18,7 @@ extrin_t_il: [0.042, -0.018, -0.063]
 extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
               -0.0077132, -0.99996941, -0.00129509,
               -0.00801077, 0.00135687, -0.99996699]
-pcd_save_en: false
-pcd_save_interval: 30
+pcd_save_en: true
 bag_save_en: false
 
 resple:

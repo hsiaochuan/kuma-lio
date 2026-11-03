@@ -87,7 +87,6 @@ class LaserMapping {
     std::deque<int> obss_id_buffer_;
 
     MeasureGroup measures_;
-    PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
 
     std::shared_ptr<LaserMappingParam> param;

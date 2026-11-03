@@ -10,6 +10,9 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <boost/filesystem.hpp>
 #include "laser_mapping.h"
+
+#include <pcl/io/ply_io.h>
+
 #include "rtklib_.h"
 #include "rtklib_func.h"
 namespace fs = boost::filesystem;
@@ -1819,37 +1822,6 @@ void LaserMapping::PostUpdate() {
     int64_t interp_time_ns = resple_lio_->spl.maxTimeNs() - param->resple_.dt_ns;
     Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(interp_time_ns);
     trajectory_.emplace_back(global_offset_time + interp_time_ns * 1e-9, body_pose);
-
-    if (param->pcd_save_en_) {
-        static int call_once = [&]() {
-            fs::create_directories(fs::path(output_dir) / "map");
-            return 0;
-        }();
-        wait_save_points_->reserve(wait_save_points_->size() + resple_lio_->pt_meas.size());
-        for (int i = 0; i < resple_lio_->pt_meas.size(); ++i) {
-            Point point{};
-            point.getVector3fMap() = resple_lio_->pt_meas[i].point_world.cast<float>();
-            point.intensity = resple_lio_->pt_meas[i].point.intensity;
-            point.SetTimeNs(resple_lio_->pt_meas[i].time_ns);
-            wait_save_points_->push_back(point);
-        }
-
-        if (wait_save_points_->size() >= 2 &&
-            wait_save_points_->back().GetTimeNs() - wait_save_points_->front().GetTimeNs() >
-                S_TO_NS(param->pcd_save_interval_)) {
-            double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
-            std::stringstream stamp_string;
-            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
-
-            pcl::UniformSampling<Point> sampler;
-            sampler.setInputCloud(wait_save_points_);
-            sampler.setRadiusSearch(param->resple_.ds_scan_voxel);
-            sampler.filter(*wait_save_points_);
-            pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(),
-                                       *wait_save_points_);
-            wait_save_points_->clear();
-        }
-    }
 }
 void LaserMapping::PostUpdateFastLio() {
     const std::int64_t time_ns = measures_.mea_end_;
@@ -1857,32 +1829,23 @@ void LaserMapping::PostUpdateFastLio() {
 
     if (param->pcd_save_en_) {
         static int call_once = [&]() {
-            fs::create_directories(fs::path(output_dir) / "map");
+            fs::create_directories(fs::path(output_dir) / "scans");
             return 0;
         }();
-        wait_save_points_->reserve(wait_save_points_->size() + fast_lio_->points.size());
+        PointCloud::Ptr save_points{new PointCloud()};
+        save_points->reserve(fast_lio_->points.size());
         for (const FastLioPoint& pt : fast_lio_->points) {
             Point point{};
             point.getVector3fMap() = pt.world.cast<float>();
             point.SetTimeNs(time_ns);
-            wait_save_points_->push_back(point);
+            save_points->push_back(point);
         }
 
-        if (wait_save_points_->size() >= 2 &&
-            wait_save_points_->back().GetTimeNs() - wait_save_points_->front().GetTimeNs() >
-                S_TO_NS(param->pcd_save_interval_)) {
-            double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
-            std::stringstream stamp_string;
-            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
-
-            pcl::UniformSampling<Point> sampler;
-            sampler.setInputCloud(wait_save_points_);
-            sampler.setRadiusSearch(param->fast_lio_.down_size);
-            sampler.filter(*wait_save_points_);
-            pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(),
-                                       *wait_save_points_);
-            wait_save_points_->clear();
-        }
+        double time_s = global_offset_time + save_points->front().GetTimeSec();
+        std::stringstream stamp_string;
+        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".ply";
+        pcl::io::savePLYFileBinary((fs::path(output_dir) / "scans" / stamp_string.str()).string(),
+                                   *save_points);
     }
 }
 
@@ -2154,17 +2117,5 @@ void LaserMapping::Savetrajectory() {
 
 void LaserMapping::Finish() {
     bag_.close();
-    if (param->pcd_save_en_ && !wait_save_points_->empty()) {
-        double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
-        std::stringstream stamp_string;
-        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
-
-        pcl::UniformSampling<Point> sampler;
-        sampler.setInputCloud(wait_save_points_);
-        sampler.setRadiusSearch(fast_lio_ ? param->fast_lio_.down_size : param->resple_.ds_scan_voxel);
-        sampler.filter(*wait_save_points_);
-        fs::create_directories(fs::path(output_dir) / "map");
-        pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(), *wait_save_points_);
-    }
 }
 }  // namespace faster_lio
