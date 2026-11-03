@@ -73,13 +73,13 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
 int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;
-
-    std::string scans_dir, pose_fname, config, out_arg;
+    pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
+    std::string scans_dir, pose_fname, config_fname, out_arg;
     po::options_description desc("run_pgo <scans_dir> <pose_fname> [options]");
     desc.add_options()("help,h", "show this help")
         ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.pcd scans")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
-        ("config,c", po::value<std::string>(&config), "yaml with the pgo parameters (see config/pgo.yaml); defaults if absent")
+        ("config,c", po::value<std::string>(&config_fname), "yaml with the pgo parameters (see config/pgo.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/pgo");
     po::positional_options_description pos;
     pos.add("scans_dir", 1).add("pose_fname", 1);
@@ -100,19 +100,20 @@ int main(int argc, char** argv) {
     const fs::path out = out_arg.empty() ? dir / "pgo" : fs::path(out_arg);
     fs::create_directories(out);
 
-    pgo::PgoParam prm;
-    if (!config.empty()) LoadParam(config, &prm);
+    pgo::PgoParam pgo_prm;
+    if (!config_fname.empty())
+        LoadParam(config_fname, &pgo_prm);
 
     const fs::path pose_file = pose_fname;
-    std::vector<PoseLine> poses = LoadPoses(pose_file);
-    if (poses.empty()) LOG(FATAL) << "no poses in " << pose_file;
-    std::sort(poses.begin(), poses.end(), [](const PoseLine& a, const PoseLine& b) { return a.time < b.time; });
-    LOG(INFO) << "poses: " << poses.size() << " from " << pose_file;
+    std::vector<PoseLine> pose_lines = LoadPoses(pose_file);
+    if (pose_lines.empty()) LOG(FATAL) << "no poses in " << pose_file;
+    std::sort(pose_lines.begin(), pose_lines.end(), [](const PoseLine& a, const PoseLine& b) { return a.time < b.time; });
+    LOG(INFO) << "poses: " << pose_lines.size() << " from " << pose_file;
 
-    pgo::PgoBackend backend(prm);
-    std::vector<const PoseLine*> used;
-    for (const PoseLine& p : poses) {
-        const fs::path scan_file = dir / (p.name + ".ply");
+    pgo::PgoBackend pgo(pgo_prm);
+    std::vector<const PoseLine*> matched_lines;
+    for (const PoseLine& line : pose_lines) {
+        const fs::path scan_file = dir / (line.name + ".ply");
         pcl::PointCloud<pcl::PointXYZ> cloud;
         if (!fs::exists(scan_file) || pcl::io::loadPLYFile(scan_file.string(), cloud) < 0) {
             LOG(WARNING) << "no readable scan " << scan_file << ", pose skipped";
@@ -123,24 +124,25 @@ int main(int argc, char** argv) {
         for (const auto& q : cloud.points) {
             if (std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z)) pts.emplace_back(q.x, q.y, q.z);
         }
-        backend.AddScan(p.time, p.pose, pts);
-        used.push_back(&p);
+        pgo.AddScan(line.time, line.pose, pts);
+        matched_lines.push_back(&line);
     }
-    if (used.empty()) LOG(FATAL) << "no pose has a scan";
-    backend.Finish();
+    if (matched_lines.empty()) LOG(FATAL) << "no pose has a scan";
+    LOG(INFO) << matched_lines.size() << " poses match scans";
+    pgo.Finish();
 
     // node i is used[i]; its corrected pose is what the graph ended with
-    const pgo::ScanNodes& nodes = backend.nodes();
-    std::ofstream traj((out / "traj_pgo.txt").string());
-    traj << std::setprecision(9);
+    const pgo::ScanNodes& nodes = pgo.nodes();
+    std::ofstream out_fname((out / "traj_pgo.txt").string());
+    out_fname << std::setprecision(9);
     for (size_t i = 0; i < nodes.size(); ++i) {
         const Eigen::Vector3d t = nodes[i].pose.translation();
         const Eigen::Quaterniond q(nodes[i].pose.rotation());
-        traj << used[i]->name << ' ' << t.x() << ' ' << t.y() << ' ' << t.z() << ' ' << q.x() << ' ' << q.y()
+        out_fname << matched_lines[i]->name << ' ' << t.x() << ' ' << t.y() << ' ' << t.z() << ' ' << q.x() << ' ' << q.y()
              << ' ' << q.z() << ' ' << q.w() << '\n';
     }
-    backend.SaveDebug(out.string());
+    pgo.SaveDebug(out.string());
     LOG(INFO) << "wrote " << (out / "traj_pgo.txt") << ": " << nodes.size() << " poses, "
-              << backend.loops().size() << " loops, " << backend.num_solves() << " solves";
+              << pgo.loops().size() << " loops, " << pgo.num_solves() << " solves";
     return 0;
 }

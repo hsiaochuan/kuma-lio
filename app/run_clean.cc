@@ -222,20 +222,20 @@ int main(int argc, char** argv) {
     const fs::path out = out_arg.empty() ? dir / "clean" : fs::path(out_arg);
     fs::create_directories(out);
 
-    std::vector<PoseLine> poses = LoadPoses(pose_fname);
-    if (poses.empty()) LOG(FATAL) << "no poses in " << pose_fname;
+    std::vector<PoseLine> pose_lines = LoadPoses(pose_fname);
+    if (pose_lines.empty()) LOG(FATAL) << "no poses in " << pose_fname;
     const double inv = 1.0 / prm.voxel;
 
     // pass 1: count how many scans saw each voxel empty, and how many hit it
     std::unordered_map<Key, Count> map;
     std::cerr << "pass 1: count empty / hit scans per voxel\n";
-    boost::progress_display bar1(poses.size());
-    for (const PoseLine& p : poses) {
+    boost::progress_display bar1(pose_lines.size());
+    for (const PoseLine& line : pose_lines) {
         ++bar1;
         Cloud cloud;
-        if (!LoadScan(dir / (p.name + ".ply"), &cloud)) continue;
-        const std::vector<Eigen::Vector3d> world = ToWorld(cloud, p.pose);
-        const Eigen::Vector3d origin = p.pose.translation();
+        if (!LoadScan(dir / (line.name + ".ply"), &cloud)) continue;
+        const std::vector<Eigen::Vector3d> world = ToWorld(cloud, line.pose);
+        const Eigen::Vector3d origin = line.pose.translation();
 
         // one ray per occupied voxel is enough
         std::unordered_map<Key, int> occupied;
@@ -276,12 +276,12 @@ int main(int argc, char** argv) {
     // pass 2: write each scan without the points sitting in a voxel that was empty more often than hit
     size_t total = 0, removed = 0, written = 0, kept_ground = 0;
     std::cerr << "pass 2: write the scans without dynamic points\n";
-    boost::progress_display bar2(poses.size());
-    for (const PoseLine& p : poses) {
+    boost::progress_display bar2(pose_lines.size());
+    for (const PoseLine& line : pose_lines) {
         ++bar2;
         Cloud cloud;
-        if (!LoadScan(dir / (p.name + ".ply"), &cloud)) {
-            LOG(WARNING) << "no readable scan for " << p.name << ", skipped";
+        if (!LoadScan(dir / (line.name + ".ply"), &cloud)) {
+            LOG(WARNING) << "no readable scan for " << line.name << ", skipped";
             continue;
         }
         for (auto pt_it = cloud.begin(); pt_it != cloud.end(); ) {
@@ -290,12 +290,12 @@ int main(int argc, char** argv) {
             else
                 pt_it++;
         }
-        const std::vector<Eigen::Vector3d> world = ToWorld(cloud, p.pose);
+        const std::vector<Eigen::Vector3d> world = ToWorld(cloud, line.pose);
         std::vector<char> ground(cloud.size(), 0);
         if (prm.ground_dist > 0) {
             std::vector<Eigen::Vector3d> rel(cloud.size());  // around the sensor, world axes, so z is up
             for (size_t i = 0; i < cloud.size(); ++i) {
-                rel[i] = world[i] - p.pose.translation();
+                rel[i] = world[i] - line.pose.translation();
                 rel[i].z() *= prm.up_z;  // SegmentGround wants z up
             }
             ground = SegmentGround(rel, prm);
@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
             const bool seen_empty = c.free >= prm.min_free && c.free >= prm.ratio * hit_others;
             // Rays cannot clear what is only ever seen with someone standing in front of it.  But a
             // real surface this close is hit scan after scan, something walking by is not.
-            const bool fleeting = c.hit <= prm.min_hits && (world[i] - p.pose.translation()).norm() < prm.near_range;
+            const bool fleeting = c.hit <= prm.min_hits && (world[i] - line.pose.translation()).norm() < prm.near_range;
             if (seen_empty || fleeting) {
                 ++removed;
                 continue;
@@ -325,7 +325,7 @@ int main(int argc, char** argv) {
         clean.width = clean.size();
         clean.height = 1;
         clean.is_dense = true;
-        pcl::io::savePLYFileBinary((out / (p.name + ".ply")).string(), clean);
+        pcl::io::savePLYFileBinary((out / (line.name + ".ply")).string(), clean);
         ++written;
     }
     LOG(INFO) << "wrote " << written << " scans to " << out << ", removed " << removed << " of " << total

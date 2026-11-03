@@ -44,6 +44,7 @@ bool LoadPoints(const std::string& points_fname, pcl::PointCloud<PointType>& poi
     return true;
 }
 int main(int argc, char** argv) {
+    pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
     std::string trajectory_fname;
     std::string pcd_dir;
     std::string output_fname;

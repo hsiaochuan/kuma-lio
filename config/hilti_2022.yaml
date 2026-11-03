@@ -16,6 +16,7 @@ det_range: 100.0
 extrin_t_il: [-0.001, -0.00855, 0.055]
 extrin_R_il: [0.7071068, -0.7071068, 0, 0]
 pcd_save_en: true
+pcd_save_interval: 1.0
 bag_save_en: false
 image_save_en: false
 image_save_interval: 1.5

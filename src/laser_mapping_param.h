@@ -127,6 +127,7 @@ class LaserMappingParam {
     CamModel::Ptr cam_model_ = nullptr;
 
     bool pcd_save_en_;
+    double pcd_save_interval_;
     bool bag_save_en_;
     bool image_save_en_;
     double image_save_interval_;
@@ -177,6 +178,7 @@ class LaserMappingParam {
             pcd_save_en_ = ConfigKey<bool>(yaml, "pcd_save_en");
             image_save_en_ = ConfigKey<bool>(yaml, "image_save_en");
             image_save_interval_ = ConfigKey<double>(yaml, "image_save_interval");
+            pcd_save_interval_ = ConfigKey<double>(yaml, "pcd_save_interval");
             bag_save_en_ = ConfigKey<bool>(yaml, "bag_save_en");
 
             const YAML::Node r = yaml["resple"];

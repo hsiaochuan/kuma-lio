@@ -15,8 +15,8 @@ loop_max_dz: 4.0         # [m]
 loop_min_kf_gap: 30      # 关键帧数
 loop_min_travel: 30.0    # [m] 两端之间的路程
 loop_max_candidates: 3
-loop_max_yaw_diff: 90.0  # [deg] 朝向差超过此值的候选直接跳过，窄视场下永远匹配不上
-loop_submap_kf: 0        # 回环 ICP 两端各拼接的相邻关键帧数，旧端 [i-K, i+K]，当前端 [cur-K, cur]；0 为单关键帧
+loop_max_yaw_diff: 180.0  # [deg] 有了 loop_submap_kf 反向重访也能对上，不再按朝向过滤
+loop_submap_kf: 3       # AT128 前向 120 度视场，单个关键帧在反向重访时与旧关键帧没有重叠；building00 ATE 1.11 -> 0.18 m
 # icp_normal
 icp_max_iter: 20
 icp_eigval: 3.0          # sum(n n^T) 的最小特征值，论文附录 B；实测 10 在走廊类重访过严
@@ -26,7 +26,7 @@ ratio_drift: 0.01        # 漂移 / 路程，论文：<= 1%
 opt_halt_kf: 10          # 两次求解之间的关键帧冷却
 opt_min_drift: 0.5       # [m] 低于此值只记录不求解；要高过平面 ICP 自身的噪声水平
 isam_extra_iter: 5
-opt_final_all: false     # 结束时只要还有未求解的回环就再解一次，不管它的漂移是否超过 opt_min_drift
+opt_final_all: true      # 尾部未达 opt_min_drift 的回环也参与最后一次求解
 # 噪声，按 gtsam::Pose3 的 [rot, trans] 给方差
 loop_var: 1.0e-4
 prior_var: 1.0e-9

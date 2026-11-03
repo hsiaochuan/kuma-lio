@@ -1831,20 +1831,24 @@ void LaserMapping::PostUpdateFastLio() {
             fs::create_directories(fs::path(output_dir) / "scans");
             return 0;
         }();
-        PointCloud::Ptr save_points{new PointCloud()};
-        save_points->reserve(fast_lio_->points.size());
-        for (const FastLioPoint& pt : fast_lio_->points) {
-            Point point{};
-            point.getVector3fMap() = pt.body.cast<float>();  // with traj_log.txt, what run_pgo and run_clean read
-            point.SetTimeNs(time_ns);
-            save_points->push_back(point);
-        }
+        static Vec3 last_save_pos = Vec3::Zero();
+        if (last_save_pos == Vec3::Zero() || (last_save_pos - fast_lio_->x.p).norm() > param->pcd_save_interval_) {
+            last_save_pos = fast_lio_->x.p;
+            PointCloud::Ptr save_points{new PointCloud()};
+            save_points->reserve(fast_lio_->points.size());
+            for (const FastLioPoint& pt : fast_lio_->points) {
+                Point point{};
+                point.getVector3fMap() = pt.body.cast<float>();  // with traj_log.txt, what run_pgo and run_clean read
+                point.SetTimeNs(time_ns);
+                save_points->push_back(point);
+            }
 
-        double time_s = global_offset_time + time_ns * 1e-9;
-        std::stringstream stamp_string;
-        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".ply";
-        pcl::io::savePLYFileBinary((fs::path(output_dir) / "scans" / stamp_string.str()).string(),
-                                   *save_points);
+            double time_s = global_offset_time + time_ns * 1e-9;
+            std::stringstream stamp_string;
+            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".ply";
+            pcl::io::savePLYFileBinary((fs::path(output_dir) / "scans" / stamp_string.str()).string(),
+                                       *save_points);
+        }
     }
 
     if (param->image_save_en_ && !measures_.rgb_image_.Empty()) {
