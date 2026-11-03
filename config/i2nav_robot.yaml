@@ -19,7 +19,7 @@ extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
               -0.0077132, -0.99996941, -0.00129509,
               -0.00801077, 0.00135687, -0.99996699]
 pcd_save_en: true
-pcd_save_interval: 0.4
+pcd_save_interval: 0.0
 bag_save_en: false
 image_save_en: true
 image_save_interval: 1.5
@@ -56,7 +56,7 @@ resple:
   fb_keep_cov: true
 
 fastlio:
-  mode: LIO
+  mode: LIVO
   down_size: 0.1
   cov_gyr: 0.01
   cov_acc: 1.0
