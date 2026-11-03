@@ -1835,7 +1835,7 @@ void LaserMapping::PostUpdateFastLio() {
         save_points->reserve(fast_lio_->points.size());
         for (const FastLioPoint& pt : fast_lio_->points) {
             Point point{};
-            point.getVector3fMap() = pt.world.cast<float>();
+            point.getVector3fMap() = pt.body.cast<float>();  // with traj_log.txt, what run_pgo and run_clean read
             point.SetTimeNs(time_ns);
             save_points->push_back(point);
         }
