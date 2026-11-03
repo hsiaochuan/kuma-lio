@@ -105,7 +105,7 @@ class FastLio {
 
     /// Voxel-SLAM IMUEKF::motion_blur: x to `end_ns`, and the frame's points to that instant, LiDAR frame.
     void Propagate(const MeasureGroup& measures, int64_t end_ns, std::vector<Vec3>* scan);
-    std::vector<Vec3> Downsample(const std::vector<Vec3>& scan, double size) const;
+    std::vector<Vec3> UniformSample(const std::vector<Vec3>& scan, double size) const;
     void SetPoints(const std::vector<Vec3>& scan);
     int Match();
     /// Voxel-SLAM lio_state_estimation; false when the matched planes leave a direction unobserved.

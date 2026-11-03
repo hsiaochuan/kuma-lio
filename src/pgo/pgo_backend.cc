@@ -69,7 +69,7 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
     kf.anchor = static_cast<int>(scan_nodes_.size()) - 1;
     kf.jour = jour_;
     kf.pose = anchor_pose;
-    kf.cloud = DownSample(merged, prm_.kf_ds_voxel);
+    kf.cloud = UniformSample(merged, prm_.kf_ds_voxel);
     kf.planes = ExtractPlanes(kf.cloud, prm_);
     kfs_.push_back(kf);
     ++kf_since_opt_;

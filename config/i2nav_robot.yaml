@@ -1,6 +1,6 @@
 common:
-  lid_topic: "/hesai/at128/points"
-#  lid_topic: "/livox/mid360/points"
+#  lid_topic: "/hesai/at128/points"
+  lid_topic: "/livox/mid360/points"
   imu_topic: "/adi/adis16465/imu"
   gnss_topic: ""
   img_topic: "/avt_camera/left/image/compressed"
@@ -10,20 +10,20 @@ common:
 
 front_end: fastlio
 num_threads: 8
-lidar_type: HESAI
+lidar_type: LIVOX
 blind: 2.0
 point_filter_num: 1
-det_range: 100.0
+det_range: 50.0
 # HESAI lidar
-extrin_t_il: [0.042, -0.018, -0.063]
-extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
-              -0.0077132, -0.99996941, -0.00129509,
-              -0.00801077, 0.00135687, -0.99996699]
+#extrin_t_il: [0.042, -0.018, -0.063]
+#extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
+#              -0.0077132, -0.99996941, -0.00129509,
+#              -0.00801077, 0.00135687, -0.99996699]
 # MID360 lidar
-#extrin_t_il: [0.0, 0.0, -0.159]
-#extrin_R_il: [0.99997669, 0.00548118, -0.00407184,
-#              0.00549873, -0.99997558, 0.00431282,
-#              -0.0040481, -0.00433511, -0.99998241]
+extrin_t_il: [0.0, 0.0, -0.159]
+extrin_R_il: [0.99997669, 0.00548118, -0.00407184,
+              0.00549873, -0.99997558, 0.00431282,
+              -0.0040481, -0.00433511, -0.99998241]
 pcd_save_en: true
 pcd_save_interval: 0.0
 bag_save_en: false
@@ -63,7 +63,7 @@ resple:
 
 fastlio:
   mode: LIVO
-  down_size: 0.3
+  down_size: 0.2
   cov_gyr: 0.01
   cov_acc: 1.0
   rdw_gyr: 1.0e-4

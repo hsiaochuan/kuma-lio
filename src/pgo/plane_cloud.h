@@ -17,8 +17,7 @@ namespace pgo {
 /// Hash `cloud` into `plane_voxel` cells and emit one centre + normal per cell that is flat.
 std::vector<PlanePoint> ExtractPlanes(const std::vector<Vec3>& cloud, const PgoParam& prm);
 
-/// Voxel-grid centroid downsampling, used for the stored keyframe cloud.
-std::vector<Vec3> DownSample(const std::vector<Vec3>& cloud, double leaf);
+std::vector<Vec3> UniformSample(const std::vector<Vec3>& cloud, double leaf);
 
 }  // namespace pgo
 }  // namespace faster_lio

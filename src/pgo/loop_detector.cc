@@ -49,7 +49,7 @@ std::vector<PlanePoint> LoopDetector::SubmapPlanes(const KeyFrames& kfs, int cen
         const Eigen::Isometry3d d = inv * kfs[k].pose;
         for (const Vec3& p : kfs[k].cloud) merged.push_back(d * p);
     }
-    return ExtractPlanes(DownSample(merged, prm_.kf_ds_voxel), prm_);
+    return ExtractPlanes(UniformSample(merged, prm_.kf_ds_voxel), prm_);
 }
 
 bool LoopDetector::Detect(const KeyFrames& kfs, int cur, LoopEdge* out) {

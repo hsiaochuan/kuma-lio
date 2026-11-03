@@ -8,24 +8,30 @@
 namespace faster_lio {
 namespace pgo {
 
-std::vector<Vec3> DownSample(const std::vector<Vec3>& cloud, double leaf) {
-    // Eigen's fixed-size default constructor leaves the coefficients uninitialized, so an
-    // accumulator reached through operator[] would start from garbage.  Seed it explicitly.
-    struct Sum {
-        Vec3 p = Vec3::Zero();
-        int n = 0;
+std::vector<Vec3> UniformSample(const std::vector<Vec3>& cloud, double leaf) {
+    struct Best {
+        size_t idx;
+        double d2;
     };
-    std::unordered_map<VOXEL_LOCATION, Sum> cells;
-    cells.reserve(cloud.size());
-    for (const Vec3& p : cloud) {
+    std::unordered_map<VOXEL_LOCATION, size_t> slot;  // voxel -> index in `best`
+    slot.reserve(cloud.size());
+    std::vector<Best> best;
+    for (size_t i = 0; i < cloud.size(); ++i) {
+        const Vec3& p = cloud[i];
         if (!p.allFinite()) continue;
-        Sum& cell = cells[VOXEL_LOCATION(p, leaf)];
-        cell.p += p;
-        cell.n++;
+        const VOXEL_LOCATION loc(p, leaf);
+        const Vec3 center = (Vec3(loc.x, loc.y, loc.z) + Vec3::Constant(0.5)) * leaf;
+        const double d2 = (p - center).squaredNorm();
+        const auto ins = slot.emplace(loc, best.size());
+        if (ins.second) {
+            best.push_back({i, d2});
+        } else if (d2 < best[ins.first->second].d2) {
+            best[ins.first->second] = {i, d2};
+        }
     }
     std::vector<Vec3> out;
-    out.reserve(cells.size());
-    for (const auto& kv : cells) out.push_back(kv.second.p / kv.second.n);
+    out.reserve(best.size());
+    for (const Best& b : best) out.push_back(cloud[b.idx]);
     return out;
 }
 

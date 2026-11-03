@@ -123,17 +123,29 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
     }
 }
 
-std::vector<Vec3> FastLio::Downsample(const std::vector<Vec3>& scan, double size) const {
-    std::unordered_map<VOXEL_LOCATION, std::pair<Vec3, int>> voxels;
-    voxels.reserve(scan.size());
-    for (const Vec3& p : scan) {
-        auto it = voxels.emplace(VOXEL_LOCATION(p, size), std::make_pair(Vec3::Zero().eval(), 0)).first;
-        it->second.first += p;
-        it->second.second++;
+std::vector<Vec3> FastLio::UniformSample(const std::vector<Vec3>& scan, double size) const {
+    struct Best {
+        size_t idx;
+        double d2;
+    };
+    std::unordered_map<VOXEL_LOCATION, size_t> slot;  // voxel -> index in `best`
+    slot.reserve(scan.size());
+    std::vector<Best> best;
+    for (size_t i = 0; i < scan.size(); ++i) {
+        const Vec3& p = scan[i];
+        const VOXEL_LOCATION loc(p, size);
+        const Vec3 center = (Vec3(loc.x, loc.y, loc.z) + Vec3::Constant(0.5)) * size;
+        const double d2 = (p - center).squaredNorm();
+        const auto ins = slot.emplace(loc, best.size());
+        if (ins.second) {
+            best.push_back({i, d2});
+        } else if (d2 < best[ins.first->second].d2) {
+            best[ins.first->second] = {i, d2};
+        }
     }
     std::vector<Vec3> out;
-    out.reserve(voxels.size());
-    for (const auto& v : voxels) out.push_back(v.second.first / v.second.second);
+    out.reserve(best.size());
+    for (const Best& b : best) out.push_back(scan[b.idx]);
     return out;
 }
 
@@ -229,8 +241,8 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     Propagate(measures, measures.mea_end_, &scan);
 
     const double down_size = param->fast_lio_.down_size;
-    std::vector<Vec3> down = Downsample(scan, down_size);
-    if (static_cast<int>(down.size()) < kMinScanPoints) down = Downsample(scan, down_size / 2);
+    std::vector<Vec3> down = UniformSample(scan, down_size);
+    if (static_cast<int>(down.size()) < kMinScanPoints) down = UniformSample(scan, down_size / 2);
     SetPoints(down);
 
     if (!points.empty()) {
