@@ -24,6 +24,8 @@ if _EVO_DIR not in sys.path:
 from evo.core import metrics, sync
 from evo import main_ape
 from evo.tools import file_interface
+
+
 # ──────────────────────────────────────────────
 # Data Structures
 # ──────────────────────────────────────────────
@@ -51,6 +53,7 @@ class RunTask:
     gnss_nav_fname: str = ""
     clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments
     pgo_config: str = "../config/pgo.yaml"
+
     @property
     def localization_args(self) -> List[str]:
         if not self.is_localization:
@@ -65,7 +68,7 @@ class DatasetConfig:
     """Dataset configuration"""
     name: str
     bag_files: List[str]
-    config: Dict[str,str] = field(default_factory=dict)
+    config: Dict[str, str] = field(default_factory=dict)
     start: float = 0.0
     duration: float = -1.0
     run_mode: RunMode = RunMode.OFFLINE
@@ -77,6 +80,7 @@ class DatasetConfig:
     clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments, they depend on the platform
     pgo_config: str = "../config/pgo.yaml"  # run_pgo parameters, they depend on the sensor's field of view
 
+
 @dataclass
 class TestResult:
     bag_name: str
@@ -85,6 +89,7 @@ class TestResult:
     duration_sec: float = 0.0  # SLAM only
     ate: float = 0.0
     ate_pgo: float = 0.0
+
 
 @dataclass
 class SuiteResult:
@@ -127,7 +132,6 @@ class SLAMTestRunner:
     def __init__(
             self,
             offline_app: str = "../build/run_mapping_offline",
-            online_app: str = "../build/run_mapping_online",
             points_post_app: str = "../build/points_jet",
             pgo_app: str = "../build/run_pgo",
             clean_app: str = "../build/run_clean",
@@ -146,7 +150,6 @@ class SLAMTestRunner:
         self.git_branch = get_git_info()[0]
         self.git_commit = get_git_info()[1]
         self.offline_app = offline_app
-        self.online_app = online_app
         self.points_post_app = points_post_app
         self.pgo_app = pgo_app
         self.clean_app = clean_app
@@ -251,11 +254,11 @@ class SLAMTestRunner:
         if self.if_clean:
             clean_dir = os.path.join(output_dir, "clean")
             if not self.run_step("run_clean", [
-                self.clean_app,
-                "--scans_dir", scans_dir,
-                "--pose_fname", poses,
-                "--out", clean_dir,
-            ] + task.clean_args):
+                                                  self.clean_app,
+                                                  "--scans_dir", scans_dir,
+                                                  "--pose_fname", poses,
+                                                  "--out", clean_dir,
+                                              ] + task.clean_args):
                 return
             scans_dir = clean_dir
 
@@ -363,7 +366,7 @@ class SLAMTestRunner:
                 duration=dataset.duration,
                 prior_map_fname=prior_map_fname,
                 prior_init_pose=prior_init_pose,
-                ground_truth_fname= os.path.join(dataset.ground_truth_dir, name + ".txt"),
+                ground_truth_fname=os.path.join(dataset.ground_truth_dir, name + ".txt"),
                 is_localization=dataset.is_localization,
                 gnss_obs_fname=os.path.join(dataset.gnss_dir, name + ".o"),
                 gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
@@ -389,7 +392,6 @@ class SLAMTestRunner:
                                                          test_result.ate, test_result.ate_pgo))
             f.write("-" * 65 + "\n")
 
-
     # ── Main entry ────────────────────────────────
 
     def run_all(self, datasets: List[DatasetConfig]) -> List[SuiteResult]:
@@ -412,7 +414,6 @@ class SLAMTestRunner:
 # CLI
 # ──────────────────────────────────────────────
 def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
-
     mcd_viral = DatasetConfig(
         name="mcd_viral",
         config={
@@ -462,17 +463,16 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     mcd_viral_ouster = DatasetConfig(
         name="mcd_viral_ouster",
-        config={".":"../config/mcd_viral_ouster.yaml"},
+        config={".": "../config/mcd_viral_ouster.yaml"},
         bag_files=[
             "/media/hsiaochuan/hsiaochuan-data/MCD_VIRAL/raw/ouster/ntu_day_02_os1_128.bag",
         ],
         run_mode=RunMode.OFFLINE,
     )
 
-
     hilti_2022 = DatasetConfig(
         name="hilti_2022",
-        config={".":"../config/hilti_2022.yaml"},
+        config={".": "../config/hilti_2022.yaml"},
         bag_files=[
             "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp01_construction_ground_level.bag",
             "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp03_construction_stairs.bag",
@@ -518,7 +518,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     ntu_viral = DatasetConfig(
         name="ntu_viral",
-        config={".":"../config/ntu_viral.yaml"},
+        config={".": "../config/ntu_viral.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/ntu_viral/eee_03/eee_03.bag",
         ],
@@ -526,7 +526,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     )
     mars_lvig = DatasetConfig(
         name="mars_lvig",
-        config={".":"../config/mars_lvig.yaml"},
+        config={".": "../config/mars_lvig.yaml"},
         bag_files=[
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS01.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS02.bag",
@@ -541,7 +541,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     )
     m3dgr = DatasetConfig(
         name="m3dgr",
-        config={".":"../config/m3dgr.yaml"},
+        config={".": "../config/m3dgr.yaml"},
         bag_files=[
             f"/media/hsiaochuan/hsiaochuan-data/M3DGR/{seq}.bag"
             for seq in ["Dark01",
@@ -561,14 +561,15 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     )
     i2nav_robot = DatasetConfig(
         name="i2nav_robot",
-        config={".":"../config/i2nav_robot.yaml"},
+        config={".": "../config/i2nav_robot.yaml"},
         bag_files=[
             f"/media/hsiaochuan/hsiaochuan-data/inav-robot/{seq}.bag"
-            for seq in ["building00",
-                        # "building01",
-                        # "parking00",
-                        # "parking01",
-                        ]
+            for seq in [
+                "building00",
+                "building01",
+                "parking00",
+                "parking01",
+            ]
         ],
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/inav-robot/groundtruth",
@@ -577,7 +578,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         clean_args=["--voxel", "0.4", "--margin", "0.8", "--max_range", "80", "--min_free", "2", "--ratio", "3",
                     "--min_hits", "24", "--near_range", "8", "--ground_dist", "0.1",
                     "--up_z", "1", "--sensor_height", "0.852"],
-        pgo_config="../config/pgo_i2nav_robot.yaml",
+        pgo_config="../config/pgo.yaml",
     )
     all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot]
     run_datasets = []
