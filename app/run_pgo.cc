@@ -6,7 +6,7 @@
 // <scans_dir> holds the scans as PCD files in the sensor's own frame, <name>.pcd; <pose_fname> is the
 // pose file with a line "<name> x y z qx qy qz qw" (T_world_body) per scan.  <name> is the same string in
 // both and is also the scan's time, in seconds.  The corrected poses come out as <out>/traj_pgo.txt,
-// in the same format, next to the loop diagnostics.
+// in the same format, next to the loop diagnostics and <out>/pgo_graph.ply (nodes white, loops red).
 //
 
 #include <glog/logging.h>
@@ -53,6 +53,7 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("loop_min_travel", &p->loop_min_travel);
     get("loop_max_candidates", &p->loop_max_candidates);
     get("loop_max_yaw_diff", &p->loop_max_yaw_diff);
+    get("loop_submap_kf", &p->loop_submap_kf);
     get("icp_max_iter", &p->icp_max_iter);
     get("icp_eigval", &p->icp_eigval);
     get("icp_min_match", &p->icp_min_match);
@@ -60,6 +61,7 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("opt_halt_kf", &p->opt_halt_kf);
     get("opt_min_drift", &p->opt_min_drift);
     get("isam_extra_iter", &p->isam_extra_iter);
+    get("opt_final_all", &p->opt_final_all);
     get("loop_var", &p->loop_var);
     get("prior_var", &p->prior_var);
     get("odom_var_rot", &p->odom_var_rot);

@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "pgo/icp_normal.h"
+#include "pgo/plane_cloud.h"
 
 namespace faster_lio {
 namespace pgo {
@@ -40,6 +41,17 @@ void LoopDetector::Reject(int from, int to, const char* reason, double value, co
     rejections_.push_back(r);
 }
 
+std::vector<PlanePoint> LoopDetector::SubmapPlanes(const KeyFrames& kfs, int center, int lo, int hi) const {
+    if (lo == center && hi == center) return kfs[center].planes;
+    const Eigen::Isometry3d inv = kfs[center].pose.inverse();
+    std::vector<Vec3> merged;
+    for (int k = lo; k <= hi; ++k) {
+        const Eigen::Isometry3d d = inv * kfs[k].pose;
+        for (const Vec3& p : kfs[k].cloud) merged.push_back(d * p);
+    }
+    return ExtractPlanes(DownSample(merged, prm_.kf_ds_voxel), prm_);
+}
+
 bool LoopDetector::Detect(const KeyFrames& kfs, int cur, LoopEdge* out) {
     if (cur < prm_.loop_min_kf_gap) return false;
     const KeyFrame& kc = kfs[cur];
@@ -62,13 +74,18 @@ bool LoopDetector::Detect(const KeyFrames& kfs, int cur, LoopEdge* out) {
 
     std::sort(cands.begin(), cands.end());
     const int n = std::min<int>(cands.size(), prm_.loop_max_candidates);
+    const int K = std::max(0, prm_.loop_submap_kf);
+    const std::vector<PlanePoint> src = SubmapPlanes(kfs, cur, std::max(0, cur - K), cur);
     for (int k = 0; k < n; ++k) {
         const int id = cands[k].second;
         const KeyFrame& ki = kfs[id];
 
         // seed with what the odometry currently believes the relative pose is
         Eigen::Isometry3d T_from_to = ki.pose.inverse() * kc.pose;
-        const IcpResult icp = IcpNormal(kc.planes, ki.planes, prm_, &T_from_to);
+        // the old end may not reach into the stretch the current end's submap covers
+        const int hi = std::min(id + K, std::max(id, cur - K - 1));
+        const std::vector<PlanePoint> tar = SubmapPlanes(kfs, id, std::max(0, id - K), hi);
+        const IcpResult icp = IcpNormal(src, tar, prm_, &T_from_to);
         if (!icp.ok) {
             // Three quite different failures, kept apart because they call for different fixes:
             // starved means the seed pose was too far off for the gates to find anything,

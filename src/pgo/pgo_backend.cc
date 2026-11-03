@@ -1,8 +1,11 @@
 #include "pgo/pgo_backend.h"
 
 #include <glog/logging.h>
+#include <pcl/io/ply_io.h>
+#include <pcl/point_types.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 
@@ -81,12 +84,13 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
 
     // the paper only pays for a solve and a map rebuild once the drift is worth it
     unsolved_drift_ = std::max(unsolved_drift_, edge.drift);
+    ++unsolved_loops_;
     if (kf_since_opt_ > prm_.opt_halt_kf && edge.drift > prm_.opt_min_drift)
         Solve();
 }
 
 void PgoBackend::Finish() {
-    if (unsolved_drift_ > prm_.opt_min_drift) Solve();
+    if (unsolved_drift_ > prm_.opt_min_drift || (prm_.opt_final_all && unsolved_loops_ > 0)) Solve();
 }
 
 void PgoBackend::Solve() {
@@ -103,6 +107,7 @@ void PgoBackend::Solve() {
 
     kf_since_opt_ = 0;
     unsolved_drift_ = 0.0;
+    unsolved_loops_ = 0;
     ++num_solves_;
     const Eigen::Isometry3d step = scan_nodes_.back().pose * old_last.inverse();
     LOG(INFO) << "PGO: solved " << scan_nodes_.size() << " nodes, " << graph_.num_loops() << " loops, dx t "
@@ -126,10 +131,12 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
     }
     {
         std::ofstream f(output_dir + "/pgo_loops.txt");
-        f << "# from to drift span ratio lambda_min\n";
+        f << "# from to drift span ratio lambda_min tx ty tz qx qy qz qw (T_from_to)\n";
         for (const LoopEdge& e : loops_) {
+            const Eigen::Quaterniond q(e.T_from_to.linear());
             f << e.from << " " << e.to << " " << e.drift << " " << e.span << " " << e.drift / e.span << " "
-              << e.eigval << "\n";
+              << e.eigval << " " << e.T_from_to.translation().transpose() << " " << q.x() << " " << q.y() << " "
+              << q.z() << " " << q.w() << "\n";
         }
     }
     {
@@ -140,6 +147,27 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
               << r.iters << " " << r.step << " " << r.nn_median << " " << r.src_n << " " << r.tar_n << " "
               << r.seed_t << "\n";
         }
+    }
+    {
+        // the optimized graph as a point cloud: every node a white point, every loop a red line between
+        // its two anchors, sampled as points because viewers do not draw PLY edges
+        constexpr double kLineStep = 0.02;  // [m]
+        pcl::PointCloud<pcl::PointXYZRGB> cloud;
+        auto add = [&cloud](const Eigen::Vector3d& p, uint8_t r, uint8_t g, uint8_t b) {
+            pcl::PointXYZRGB q(r, g, b);
+            q.x = p.x();
+            q.y = p.y();
+            q.z = p.z();
+            cloud.push_back(q);
+        };
+        for (const ScanNode& n : scan_nodes_) add(n.pose.translation(), 255, 255, 255);
+        for (const LoopEdge& e : loops_) {
+            const Eigen::Vector3d a = scan_nodes_[kfs_[e.from].anchor].pose.translation();
+            const Eigen::Vector3d b = scan_nodes_[kfs_[e.to].anchor].pose.translation();
+            const int n = std::max(1, static_cast<int>(std::ceil((b - a).norm() / kLineStep)));
+            for (int k = 1; k < n; ++k) add(a + (b - a) * (static_cast<double>(k) / n), 255, 0, 0);
+        }
+        pcl::io::savePLYFileBinary(output_dir + "/pgo_graph.ply", cloud);
     }
     LOG(INFO) << "PGO: " << scan_nodes_.size() << " nodes, " << kfs_.size() << " keyframes, " << loops_.size()
               << " loops, " << detector_.rejections().size() << " rejected candidates, " << num_solves_

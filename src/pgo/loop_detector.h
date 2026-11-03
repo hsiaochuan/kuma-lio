@@ -26,6 +26,9 @@ class LoopDetector {
 
    private:
     void Reject(int from, int to, const char* reason, double value, const IcpResult* icp = nullptr);
+    /// Planes of keyframes [lo, hi] merged into keyframe `center`'s frame; just its own planes when
+    /// the range is that keyframe alone.
+    std::vector<PlanePoint> SubmapPlanes(const KeyFrames& kfs, int center, int lo, int hi) const;
 
     PgoParam prm_;
     std::vector<LoopRejection> rejections_;

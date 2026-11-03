@@ -61,6 +61,7 @@ class PgoBackend {
     int kf_since_opt_ = 0;  ///< keyframes since the last solve, the cooldown of Voxel-SLAM
     int num_solves_ = 0;
     double unsolved_drift_ = 0.0;  ///< largest drift among loops added since the last solve
+    int unsolved_loops_ = 0;       ///< loops added since the last solve
 };
 
 }  // namespace pgo

@@ -47,6 +47,13 @@ struct PgoParam {
     /// only ever starve the ICP -- but ranked by distance alone it is usually the NEAREST one and
     /// crowds the genuinely matchable candidates out of the shortlist.
     double loop_max_yaw_diff = 90.0;
+    /// Keyframes merged around each end of a candidate before the ICP: the old end takes
+    /// [from - K, from + K], the current end [cur - K, cur], each placed by the current keyframe
+    /// poses into its anchor's frame.  0 matches single keyframes.  One keyframe is a second of a
+    /// forward-looking scan, so on a heading-reversed revisit (i2Nav AT128, 120 deg FOV) the two
+    /// ends see opposite sides of the place and the ICP starves; the neighbours on each side are
+    /// what saw the shared stretch.  With it the yaw gate above can open to 180.
+    int loop_submap_kf = 0;
 
     // ---- icp_normal ----
     int icp_max_iter = 20;
@@ -68,6 +75,10 @@ struct PgoParam {
     /// never exceeds 0.32 m and only got worse for being corrected.
     double opt_min_drift = 0.5;
     int isam_extra_iter = 5;
+    /// Solve at the end whenever a loop is still waiting, however small its drift.  Off, the loops
+    /// that never cleared opt_min_drift since the last solve stay out of the result.  On building00
+    /// that tail decided between 0.19 and 0.41 m ATE with otherwise equal loop sets.
+    bool opt_final_all = false;
 
     // ---- noise, as VARIANCES in the gtsam::Pose3 order [rot, trans] ----
     double loop_var = 1e-4;

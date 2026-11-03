@@ -50,6 +50,7 @@ class RunTask:
     gnss_obs_fname: str = ""
     gnss_nav_fname: str = ""
     clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments
+    pgo_config: str = "../config/pgo.yaml"
     @property
     def localization_args(self) -> List[str]:
         if not self.is_localization:
@@ -74,6 +75,7 @@ class DatasetConfig:
     gnss_dir: str = ""
     is_localization: bool = False
     clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments, they depend on the platform
+    pgo_config: str = "../config/pgo.yaml"  # run_pgo parameters, they depend on the sensor's field of view
 
 @dataclass
 class TestResult:
@@ -130,7 +132,6 @@ class SLAMTestRunner:
             pgo_app: str = "../build/run_pgo",
             clean_app: str = "../build/run_clean",
             merge_app: str = "../build/points_merge",
-            pgo_config: str = "../config/pgo.yaml",
 
             build_dir: str = "../build",
             output_root: str = "./test_results",
@@ -150,7 +151,6 @@ class SLAMTestRunner:
         self.pgo_app = pgo_app
         self.clean_app = clean_app
         self.merge_app = merge_app
-        self.pgo_config = pgo_config
 
         self.build_dir = build_dir
         self.output_root = output_root
@@ -242,7 +242,7 @@ class SLAMTestRunner:
                 self.pgo_app,
                 "--scans_dir", scans_dir,
                 "--pose_fname", poses,
-                "--config", self.pgo_config,
+                "--config", task.pgo_config,
                 "--out", pgo_dir,
             ]):
                 return
@@ -368,6 +368,7 @@ class SLAMTestRunner:
                 gnss_obs_fname=os.path.join(dataset.gnss_dir, name + ".o"),
                 gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
                 clean_args=dataset.clean_args,
+                pgo_config=dataset.pgo_config,
             )
             test_result = self.run_single(task)
             suite.test_results.append(test_result)
@@ -576,6 +577,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         clean_args=["--voxel", "0.4", "--margin", "0.8", "--max_range", "80", "--min_free", "2", "--ratio", "3",
                     "--min_hits", "24", "--near_range", "8", "--ground_dist", "0.1",
                     "--up_z", "1", "--sensor_height", "0.852"],
+        pgo_config="../config/pgo_i2nav_robot.yaml",
     )
     all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot]
     run_datasets = []
