@@ -129,6 +129,7 @@ class LaserMappingParam {
     bool pcd_save_en_;
     bool bag_save_en_;
     bool image_save_en_;
+    double image_save_interval_;
 
     RespleParam resple_;
     FastLioParam fast_lio_;
@@ -175,6 +176,7 @@ class LaserMappingParam {
             extrin_il_.t_ = ConfigVec3(yaml, "extrin_t_il");
             pcd_save_en_ = ConfigKey<bool>(yaml, "pcd_save_en");
             image_save_en_ = ConfigKey<bool>(yaml, "image_save_en");
+            image_save_interval_ = ConfigKey<double>(yaml, "image_save_interval");
             bag_save_en_ = ConfigKey<bool>(yaml, "bag_save_en");
 
             const YAML::Node r = yaml["resple"];

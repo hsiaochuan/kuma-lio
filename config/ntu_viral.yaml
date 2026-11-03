@@ -20,6 +20,7 @@ extrin_R_il: [1, 0, 0,
 pcd_save_en: true
 bag_save_en: false
 image_save_en: false
+image_save_interval: 1.5
 resple:
   knot_hz: 100
   ds_scan_voxel: 0.5

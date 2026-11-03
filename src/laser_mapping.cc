@@ -1852,11 +1852,15 @@ void LaserMapping::PostUpdateFastLio() {
             fs::create_directories(fs::path(output_dir) / "images");
             return 0;
         }();
-        double time_s = global_offset_time + time_ns * 1e-9;
-        std::stringstream stamp_string;
-        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".png";
-        if (!measures_.rgb_image_.Save((fs::path(output_dir) / "images" / stamp_string.str()).string()))
-            LOG(INFO) << "failed to save image at " << time_s;
+        static Vec3 last_save_pos = Vec3::Zero();
+        if (last_save_pos == Vec3::Zero() || (last_save_pos - fast_lio_->x.p).norm() > param->image_save_interval_) {
+            last_save_pos = fast_lio_->x.p;
+            double time_s = global_offset_time + time_ns * 1e-9;
+            std::stringstream stamp_string;
+            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".png";
+            if (!measures_.rgb_image_.Save((fs::path(output_dir) / "images" / stamp_string.str()).string()))
+                LOG(INFO) << "failed to save image at " << time_s;
+        }
     }
 }
 
