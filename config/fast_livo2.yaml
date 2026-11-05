@@ -10,6 +10,8 @@ common:
 front_end: resple
 num_threads: 4
 lidar_type: LIVOX
+# Livox points are dropped when any bit of this mask is set in their tag: 32 drops return numbers 2 and 3 only (FAST-LIO's rule); unused for other lidars
+livox_tag_mask: 32
 blind: 1.0
 point_filter_num: 2
 det_range: 100.0

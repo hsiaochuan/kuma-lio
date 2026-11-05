@@ -121,6 +121,7 @@ class LaserMappingParam {
     float det_range_;
     double blind;
     int point_filter_num;
+    int livox_tag_mask = 0x3F;
 
     Pose3 extrin_il_ = Pose3::Identity();
     Pose3 extrin_ic_ = Pose3::Identity();
@@ -173,6 +174,7 @@ class LaserMappingParam {
             blind = ConfigKey<double>(yaml, "blind");
             point_filter_num = ConfigKey<int>(yaml, "point_filter_num");
             det_range_ = ConfigKey<float>(yaml, "det_range");
+            livox_tag_mask = yaml["livox_tag_mask"].as<int>();
             extrin_il_.q_ = RotationFromArray(ConfigKey<std::vector<double>>(yaml, "extrin_R_il"));
             extrin_il_.t_ = ConfigVec3(yaml, "extrin_t_il");
             pcd_save_en_ = ConfigKey<bool>(yaml, "pcd_save_en");

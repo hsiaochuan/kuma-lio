@@ -11,6 +11,8 @@ common:
 front_end: fastlio
 num_threads: 8
 lidar_type: LIVOX
+# Livox points are dropped when any bit of this mask is set in their tag: 63 keeps only tag 0 (the Mid360's good returns)
+livox_tag_mask: 63
 blind: 2.0
 point_filter_num: 1
 det_range: 50.0

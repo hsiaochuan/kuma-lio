@@ -9,8 +9,7 @@ PointCloud::Ptr PointCloudPreprocess::LivoxHandler(const livox_ros_driver::Custo
     PointCloud::Ptr cloud_out(new PointCloud);
     cloud_out->reserve(msg->point_num);
     for (int i = 0; i < msg->point_num; i++) {
-        if ((msg->points[i].tag & 0x3F) != 0)
-            continue;
+        if ((msg->points[i].tag & param->livox_tag_mask) != 0) continue;
 
         if (i % param->point_filter_num != 0) continue;
         double range = msg->points[i].x * msg->points[i].x + msg->points[i].y * msg->points[i].y +
