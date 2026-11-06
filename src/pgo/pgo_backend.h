@@ -23,7 +23,7 @@ class PgoBackend {
 
     /// One scan, `body_pts` in its own frame and `pose` the odometry's T_world_body for it.  Scans
     /// must arrive in time order.  Cheap unless it seals a keyframe.
-    void AddScan(double time, const Eigen::Isometry3d& pose, const std::vector<Vec3>& body_pts);
+    void AddScan(double time, const Eigen::Isometry3d& pose, const std::vector<Vec3>& scan_points);
 
     /// Solves once more if a loop worth correcting is still waiting behind the cooldown.
     void Finish();
@@ -40,7 +40,7 @@ class PgoBackend {
    private:
     /// Merges the buffered scans into a keyframe anchored at `anchor_pose` and appends it; `merged`
     /// and `cells` come back in its body frame for the loop search.
-    void SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* merged, PlaneCells* cells);
+    void SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* kf_points, PlaneCells* cells);
     void Solve();
 
     PgoParam prm_;

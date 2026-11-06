@@ -93,29 +93,29 @@ RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
 
 /// Paper IV-B3/4: the height-encoded image of `cloud` on one reference plane, and its keypoints,
 /// the strongest pixel of each 5x5 block that is bright enough and not on a line.
-void ImageKeypoints(const std::vector<Vec3>& cloud, const RefPlane& ref, const PgoParam& prm, Keypoints* out) {
+void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, const PgoParam& prm, Keypoints* out_kps) {
     const int layers = static_cast<int>(std::lround((prm.btc_height_max - prm.btc_height_min) / prm.btc_layer_height));
     CHECK(layers > 0 && layers <= 64) << "btc height band must be 1-64 layers, got " << layers;
     const Vec3 ax = ref.n.unitOrthogonal();
     const Vec3 ay = ref.n.cross(ax);
 
-    struct Proj {
+    struct ProjPoint {
         double u, v;
         int layer;
     };
-    std::vector<Proj> proj;
+    std::vector<ProjPoint> proj_points;
     double umin = 1e18, vmin = 1e18, umax = -1e18, vmax = -1e18;
-    for (const Vec3& p : cloud) {
+    for (const Vec3& p : kf_points) {
         const Vec3 d = p - ref.c;
         const double h = ref.n.dot(d);
         if (h < prm.btc_height_min || h >= prm.btc_height_max) continue;
         const int layer = std::min(layers - 1, static_cast<int>((h - prm.btc_height_min) / prm.btc_layer_height));
-        const Proj q{ax.dot(d), ay.dot(d), layer};
-        umin = std::min(umin, q.u), umax = std::max(umax, q.u);
-        vmin = std::min(vmin, q.v), vmax = std::max(vmax, q.v);
-        proj.push_back(q);
+        const ProjPoint pj{ax.dot(d), ay.dot(d), layer};
+        umin = std::min(umin, pj.u), umax = std::max(umax, pj.u);
+        vmin = std::min(vmin, pj.v), vmax = std::max(vmax, pj.v);
+        proj_points.push_back(pj);
     }
-    if (proj.size() <= 5) return;
+    if (proj_points.size() <= 5) return;
 
     constexpr int kBlock = 5;
     const double res = prm.btc_pixel;
@@ -126,14 +126,14 @@ void ImageKeypoints(const std::vector<Vec3>& cloud, const RefPlane& ref, const P
     std::vector<int> cnt(bits.size(), 0);
     std::vector<double> su(bits.size(), 0.0), sv(bits.size(), 0.0);
     auto at = [H](int x, int y) { return static_cast<size_t>(x) * H + y; };
-    for (const Proj& q : proj) {
-        const int x = std::min(W - 1, static_cast<int>((q.u - umin) / res));
-        const int y = std::min(H - 1, static_cast<int>((q.v - vmin) / res));
+    for (const ProjPoint& pj : proj_points) {
+        const int x = std::min(W - 1, static_cast<int>((pj.u - umin) / res));
+        const int y = std::min(H - 1, static_cast<int>((pj.v - vmin) / res));
         const size_t k = at(x, y);
-        bits[k] |= uint64_t(1) << q.layer;
+        bits[k] |= uint64_t(1) << pj.layer;
         ++cnt[k];
-        su[k] += q.u;
-        sv[k] += q.v;
+        su[k] += pj.u;
+        sv[k] += pj.v;
     }
     auto intensity = [&](int x, int y) { return __builtin_popcountll(bits[at(x, y)]); };
 
@@ -167,7 +167,7 @@ void ImageKeypoints(const std::vector<Vec3>& cloud, const RefPlane& ref, const P
             kp.p = ref.c + (su[k] / cnt[k]) * ax + (sv[k] / cnt[k]) * ay;
             kp.bits = bits[k];
             kp.count = best;
-            out->push_back(kp);
+            out_kps->push_back(kp);
         }
     }
 }
@@ -201,47 +201,51 @@ Keypoints SuppressNonMaxima(const Keypoints& kps, const PgoParam& prm) {
 /// Paper IV-C2/3: a triangle from every keypoint and two of its K nearest, sides within
 /// [btc_side_min, btc_side_max], not degenerate, each vertex set once.
 std::vector<BtcTriangle> MakeTriangles(const Keypoints& kps, const PgoParam& prm) {
-    std::vector<BtcTriangle> out;
-    const int n = static_cast<int>(kps.size());
-    if (n < 3) return out;
+    std::vector<BtcTriangle> out_triangles;
+    const int Nkp = static_cast<int>(kps.size());
+    if (Nkp < 3) return out_triangles;
     std::vector<Vec3> pts;
     for (const BtcKeypoint& k : kps) pts.push_back(k.p);
     pcl::KdTreeFLANN<pcl::PointXYZ> tree;
     MakeTree(pts, &tree);
     std::unordered_set<uint64_t> seen;
-    std::vector<int> idx;
-    std::vector<float> d2;
-    for (int i = 0; i < n; ++i) {
-        tree.nearestKSearch(pcl::PointXYZ(pts[i].x(), pts[i].y(), pts[i].z()), std::min(prm.btc_near_num, n), idx, d2);
-        std::vector<int> nb;
-        for (int j : idx) {
-            if (j != i) nb.push_back(j);
+    std::vector<int> nn_ids;
+    std::vector<float> nn_d2;
+    for (int i = 0; i < Nkp; ++i) {
+        tree.nearestKSearch(pcl::PointXYZ(pts[i].x(), pts[i].y(), pts[i].z()), std::min(prm.btc_near_num, Nkp), nn_ids, nn_d2);
+        std::vector<int> nb_ids;
+        for (int j : nn_ids) {
+            if (j != i)
+                nb_ids.push_back(j);
         }
-        for (size_t a = 0; a < nb.size(); ++a) {
-            for (size_t b = a + 1; b < nb.size(); ++b) {
-                std::array<int, 3> v{{i, nb[a], nb[b]}};
+        for (size_t ni = 0; ni < nb_ids.size(); ++ni) {
+            for (size_t nj = ni + 1; nj < nb_ids.size(); ++nj) {
+                std::array<int, 3> vs{{i, nb_ids[ni], nb_ids[nj]}};
                 // side k is the one opposite vertex k
-                std::array<std::pair<double, int>, 3> s{{{(pts[v[1]] - pts[v[2]]).norm(), v[0]},
-                                                         {(pts[v[0]] - pts[v[2]]).norm(), v[1]},
-                                                         {(pts[v[0]] - pts[v[1]]).norm(), v[2]}}};
+                std::array<std::pair<double, int>, 3> sl_vs{{{(pts[vs[1]] - pts[vs[2]]).norm(), vs[0]},
+                                                         {(pts[vs[0]] - pts[vs[2]]).norm(), vs[1]},
+                                                         {(pts[vs[0]] - pts[vs[1]]).norm(), vs[2]}}};
                 bool ok = true;
-                for (const auto& e : s) ok &= e.first >= prm.btc_side_min && e.first <= prm.btc_side_max;
+                for (const auto& sl_v : sl_vs)
+                    ok &= sl_v.first >= prm.btc_side_min && sl_v.first <= prm.btc_side_max;
                 if (!ok) continue;
-                std::sort(s.begin(), s.end());
-                if (std::abs(s[2].first - (s[0].first + s[1].first)) < 0.2) continue;  // nearly collinear
+                std::sort(sl_vs.begin(), sl_vs.end());
+                if (std::abs(sl_vs[2].first - (sl_vs[0].first + sl_vs[1].first)) < 0.2)
+                    continue;  // nearly collinear
 
-                std::array<int, 3> key = v;
-                std::sort(key.begin(), key.end());
-                if (!seen.insert((uint64_t(key[0]) * n + key[1]) * n + key[2]).second) continue;
+                std::array<int, 3> sorted_vs = vs;
+                std::sort(sorted_vs.begin(), sorted_vs.end());
+                if (!seen.insert((uint64_t(sorted_vs[0]) * Nkp + sorted_vs[1]) * Nkp + sorted_vs[2]).second)
+                    continue;
 
-                BtcTriangle t;
-                t.side = Eigen::Vector3f(s[0].first, s[1].first, s[2].first);
-                t.v = {{s[2].second, s[1].second, s[0].second}};
-                out.push_back(t);
-            }
-        }
-    }
-    return out;
+                BtcTriangle tri;
+                tri.side_len = Eigen::Vector3f(sl_vs[0].first, sl_vs[1].first, sl_vs[2].first);
+                tri.v = {{sl_vs[2].second, sl_vs[1].second, sl_vs[0].second}};
+                out_triangles.push_back(tri);
+            } // for nb
+        } // for nb
+    } // for key points
+    return out_triangles;
 }
 
 /// Paper eq. 6, one vertex.
@@ -270,9 +274,10 @@ Eigen::Isometry3d Kabsch(const std::vector<Vec3>& src, const std::vector<Vec3>& 
 
 }  // namespace
 
-BtcFrame BuildBtcFrame(const std::vector<Vec3>& cloud, const PlaneCells& cells, const PgoParam& prm) {
+BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cells, const PgoParam& prm) {
     Keypoints kps;
-    for (const RefPlane& r : ReferencePlanes(cells, prm)) ImageKeypoints(cloud, r, prm, &kps);
+    for (const RefPlane& ref_plane : ReferencePlanes(cells, prm))
+        ExtractKeypoints(kf_points, ref_plane, prm, &kps);
     kps = SuppressNonMaxima(kps, prm);
     std::stable_sort(kps.begin(), kps.end(), [](const BtcKeypoint& a, const BtcKeypoint& b) { return a.count > b.count; });
     if (static_cast<int>(kps.size()) > prm.btc_max_keypoints) kps.resize(prm.btc_max_keypoints);
@@ -309,11 +314,11 @@ VOXEL_LOCATION SideKey(const Eigen::Vector3f& side, double res) {
 }
 }  // namespace
 
-void BtcDatabase::Add(BtcFrame f) {
-    const int id = size();
-    for (size_t t = 0; t < f.triangles.size(); ++t)
-        table_[SideKey(f.triangles[t].side, prm_.btc_side_res)].push_back({id, static_cast<int>(t)});
-    btc_frames_.push_back(std::move(f));
+void BtcDatabase::Add(BtcFrame btc_f) {
+    const int frame_id = size();
+    for (size_t ti = 0; ti < btc_f.triangles.size(); ++ti)
+        table_[SideKey(btc_f.triangles[ti].side_len, prm_.btc_side_res)].push_back({frame_id, static_cast<int>(ti)});
+    btc_frames_.push_back(std::move(btc_f));
 }
 
 std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Query(
@@ -324,8 +329,8 @@ std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Q
     std::unordered_map<int, std::vector<std::pair<int, int>>> pairs;  // frame -> (query tri, its tri)
     for (size_t qt = 0; qt < q.triangles.size(); ++qt) {
         const BtcTriangle& tq = q.triangles[qt];
-        const VOXEL_LOCATION key = SideKey(tq.side, prm_.btc_side_res);
-        const double tol = tq.side.norm() * prm_.btc_side_tol;
+        const VOXEL_LOCATION key = SideKey(tq.side_len, prm_.btc_side_res);
+        const double tol = tq.side_len.norm() * prm_.btc_side_tol;
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
                 for (int dz = -1; dz <= 1; ++dz) {
@@ -335,7 +340,7 @@ std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Q
                         if (!ok[e.frame]) continue;
                         const BtcFrame& f = btc_frames_[e.frame];
                         const BtcTriangle& tc = f.triangles[e.tri];
-                        if ((tc.side - tq.side).norm() >= tol) continue;
+                        if ((tc.side_len - tq.side_len).norm() >= tol) continue;
                         double sim = 0.0;
                         for (int k = 0; k < 3; ++k) sim += BitSimilarity(q.keypoints[tq.v[k]], f.keypoints[tc.v[k]]);
                         if (sim / 3.0 <= prm_.btc_similarity) continue;

@@ -20,7 +20,7 @@ double YawDiffDeg(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) {
 
 }  // namespace
 
-LoopDetector::LoopDetector(const PgoParam& prm) : prm_(prm), btc_db_(prm) {}
+LoopDetector::LoopDetector(const PgoParam& prm) : pgo_param_(prm), btc_db_(prm) {}
 
 void LoopDetector::Reject(int from, int to, const char* reason, double value, const IcpResult* icp) {
     // keep the dump bounded on a long sequence; the early rejections are the informative ones
@@ -43,14 +43,14 @@ void LoopDetector::Reject(int from, int to, const char* reason, double value, co
 }
 
 bool LoopDetector::Eligible(const KeyFrames& kfs, int from, int to) const {
-    return from + prm_.loop_min_kf_gap <= to && kfs[to].jour - kfs[from].jour >= prm_.loop_min_travel;
+    return from + pgo_param_.loop_min_kf_gap <= to && kfs[to].jour - kfs[from].jour >= pgo_param_.loop_min_travel;
 }
 
-LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& cloud,
+LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
                                                      const PlaneCells& cells) {
     const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
     CHECK_EQ(btc_db_.size(), cur_kf_id) << "Detect must see every keyframe once, in order";
-    BtcFrame btc_frame = BuildBtcFrame(cloud, cells, prm_);
+    BtcFrame btc_frame = BuildBtcFrame(kf_points, cells, pgo_param_);
     const auto btc_cands = btc_db_.Query(btc_frame, [&](int id) {
         return Eligible(kfs, id, cur_kf_id);
     });
@@ -60,11 +60,11 @@ LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const
     int best = -1;
     double best_overlap = 0.0;
     for (size_t i = 0; i < btc_cands.size(); ++i) {
-        const double overlap = PlaneOverlap(kfs[cur_kf_id].planes, kfs[btc_cands[i].frame_id].planes, btc_cands[i].T, prm_);
+        const double overlap = PlaneOverlap(kfs[cur_kf_id].planes, kfs[btc_cands[i].frame_id].planes, btc_cands[i].T, pgo_param_);
         if (overlap > best_overlap) best_overlap = overlap, best = static_cast<int>(i);
     }
     if (best < 0) return {};
-    if (best_overlap <= prm_.btc_min_overlap) {
+    if (best_overlap <= pgo_param_.btc_min_overlap) {
         Reject(btc_cands[best].frame_id, cur_kf_id, "btc_overlap", best_overlap);
         return {};
     }
@@ -81,14 +81,14 @@ LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) co
     for (int i = 0; i < cur; ++i) {
         if (!Eligible(kfs, i, cur)) continue;
         const Vec3 d = kc.pose.translation() - kfs[i].pose.translation();
-        if (std::abs(d.z()) > prm_.loop_max_dz) continue;
+        if (std::abs(d.z()) > pgo_param_.loop_max_dz) continue;
         const double r = d.norm();
-        if (r > prm_.loop_radius) continue;
-        if (YawDiffDeg(kfs[i].pose, kc.pose) > prm_.loop_max_yaw_diff) continue;
+        if (r > pgo_param_.loop_radius) continue;
+        if (YawDiffDeg(kfs[i].pose, kc.pose) > pgo_param_.loop_max_yaw_diff) continue;
         near.emplace_back(r, i);
     }
     std::sort(near.begin(), near.end());
-    if (static_cast<int>(near.size()) > prm_.loop_max_candidates) near.resize(prm_.loop_max_candidates);
+    if (static_cast<int>(near.size()) > pgo_param_.loop_max_candidates) near.resize(pgo_param_.loop_max_candidates);
 
     Candidates out;
     // seeded with what the odometry currently believes the relative pose is
@@ -96,16 +96,16 @@ LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) co
     return out;
 }
 
-bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& cloud, const PlaneCells& cells,
+bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells,
                           LoopEdge* loop) {
     const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
     const KeyFrame& cur_kf = kfs[cur_kf_id];
-    const Candidates cands = prm_.loop_search == LoopSearch::kBtc ? BtcCandidates(kfs, cloud, cells) : RadiusCandidates(kfs);
+    const Candidates cands = pgo_param_.loop_search == LoopSearch::kBtc ? BtcCandidates(kfs, kf_points, cells) : RadiusCandidates(kfs);
 
     for (const Candidate& cand : cands) {
         const KeyFrame& ki = kfs[cand.id];
         Eigen::Isometry3d T_from_to = cand.T_from_to;
-        const IcpResult icp = IcpNormal(cur_kf.planes, ki.planes, prm_, &T_from_to);
+        const IcpResult icp = IcpNormal(cur_kf.planes, ki.planes, pgo_param_, &T_from_to);
         if (!icp.ok) {
             // Three quite different failures, kept apart because they call for different fixes:
             // starved means the seed pose was too far off for the gates to find anything,
@@ -115,7 +115,7 @@ bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& cloud, 
                 Reject(cand.id, cur_kf_id, "icp_starved", icp.matches, &icp);
             } else if (!icp.converged) {
                 Reject(cand.id, cur_kf_id, "icp_unsettled", icp.step, &icp);
-            } else if (icp.matches < prm_.icp_min_match) {
+            } else if (icp.matches < pgo_param_.icp_min_match) {
                 Reject(cand.id, cur_kf_id, "icp_matches", icp.matches, &icp);
             } else {
                 Reject(cand.id, cur_kf_id, "icp_eigval", icp.eigval, &icp);
@@ -127,7 +127,7 @@ bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& cloud, 
         const Vec3 p_loop = ki.pose * T_from_to.translation();
         const double drift = (p_loop - cur_kf.pose.translation()).norm();
         const double span = cur_kf.jour - ki.jour;
-        if (drift / span >= prm_.ratio_drift) {
+        if (drift / span >= pgo_param_.ratio_drift) {
             Reject(cand.id, cur_kf_id, "ratio_drift", drift / span);
             continue;
         }

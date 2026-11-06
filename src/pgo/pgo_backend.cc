@@ -18,8 +18,8 @@ namespace pgo {
 
 PgoBackend::PgoBackend(const PgoParam& prm) : prm_(prm), graph_(prm), detector_(prm) {}
 
-void PgoBackend::AddScan(double time, const Eigen::Isometry3d& raw_pose, const std::vector<Vec3>& body_pts) {
-    const Eigen::Isometry3d pose = dx_ * raw_pose;
+void PgoBackend::AddScan(double time, const Eigen::Isometry3d& init_pose, const std::vector<Vec3>& scan_points) {
+    const Eigen::Isometry3d pose = dx_ * init_pose;
     const bool first = scan_nodes_.empty();
     const Eigen::Isometry3d prev_pose = first ? pose : scan_nodes_.back().pose;
     if (!first) jour_ += (pose.translation() - prev_pose.translation()).norm();
@@ -28,12 +28,12 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& raw_pose, const s
     scan_node.time = time;
     scan_node.pose = pose;
     scan_nodes_.push_back(scan_node);
-    init_poses_.push_back(raw_pose);
+    init_poses_.push_back(init_pose);
     Vec6 v6;
     v6 << Vec3::Constant(prm_.odom_var_rot), Vec3::Constant(prm_.odom_var_trans);
     graph_.AddNode(static_cast<int>(scan_nodes_.size()) - 1, pose, prev_pose, v6);
 
-    buf_scans_.push_back(body_pts);
+    buf_scans_.push_back(scan_points);
 
     if (static_cast<int>(buf_scans_.size()) < prm_.kf_scans) return;
     if (!kfs_.empty()) {
@@ -47,14 +47,15 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& raw_pose, const s
         }
     }
 
-    std::vector<Vec3> merged;
+    std::vector<Vec3> kf_points;
     PlaneCells cells;
-    SealKeyframe(pose, &merged, &cells);
+    SealKeyframe(pose, &kf_points, &cells);
     ++kf_since_opt_;
 
     LoopEdge loop;
-    if (!detector_.Detect(kfs_, merged, cells, &loop)) return;
-    graph_.AddLoop(kfs_[loop.from].anchor, kfs_[loop.to].anchor, loop.T_from_to);
+    if (!detector_.Detect(kfs_, kf_points, cells, &loop))
+        return;
+    graph_.AddLoop(kfs_[loop.from].anc_scan_id, kfs_[loop.to].anc_scan_id, loop.T_from_to);
     loops_.push_back(loop);
     LOG(INFO) << "PGO: loop kf " << loop.from << " -> " << loop.to << " drift " << loop.drift
               << " m over " << loop.span << " m, lambda_min " << loop.eigval;
@@ -65,7 +66,7 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& raw_pose, const s
     if (kf_since_opt_ > prm_.opt_halt_kf && loop.drift > prm_.opt_min_drift) Solve();
 }
 
-void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* merged, PlaneCells* cells) {
+void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* kf_points, PlaneCells* cells) {
     const double r2 = prm_.kf_max_range * prm_.kf_max_range;
     const size_t first_node = scan_nodes_.size() - buf_scans_.size();
     for (size_t i = 0; i < buf_scans_.size(); ++i) {
@@ -73,17 +74,17 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<
         for (const Vec3& p : buf_scans_[i]) {
             const Vec3 q = d * p;
             if (prm_.kf_max_range > 0.0 && q.squaredNorm() > r2) continue;
-            merged->push_back(q);
+            kf_points->push_back(q);
         }
     }
     buf_scans_.clear();
 
     KeyFrame kf;
     kf.id = static_cast<int>(kfs_.size());
-    kf.anchor = static_cast<int>(scan_nodes_.size()) - 1;
+    kf.anc_scan_id = static_cast<int>(scan_nodes_.size()) - 1;
     kf.jour = jour_;
     kf.pose = anchor_pose;
-    const std::vector<Vec3> cloud = UniformSample(*merged, prm_.kf_ds_voxel);
+    const std::vector<Vec3> cloud = UniformSample(*kf_points, prm_.kf_ds_voxel);
     *cells = ExtractPlaneCells(cloud, prm_);
     kf.points = static_cast<int>(cloud.size());
     kf.planes = PlanePoints(*cells);
@@ -104,7 +105,7 @@ void PgoBackend::Solve() {
 
     for (size_t i = 0; i < scan_nodes_.size(); ++i) scan_nodes_[i].pose = poses[i];
     dx_ = scan_nodes_.back().pose * init_poses_.back().inverse();
-    for (KeyFrame& kf : kfs_) kf.pose = scan_nodes_[kf.anchor].pose;
+    for (KeyFrame& kf : kfs_) kf.pose = scan_nodes_[kf.anc_scan_id].pose;
 
     kf_since_opt_ = 0;
     unsolved_drift_ = 0.0;
@@ -124,8 +125,8 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
         for (const KeyFrame& kf : kfs_) {
             const Eigen::Quaterniond q(kf.pose.linear());
             const BtcFrame* btc = detector_.btc_frame(kf.id);
-            f << kf.id << " " << kf.anchor << " " << kf.jour << " " << std::fixed << std::setprecision(9)
-              << scan_nodes_[kf.anchor].time << " " << kf.pose.translation().transpose() << " " << q.x() << " "
+            f << kf.id << " " << kf.anc_scan_id << " " << kf.jour << " " << std::fixed << std::setprecision(9)
+              << scan_nodes_[kf.anc_scan_id].time << " " << kf.pose.translation().transpose() << " " << q.x() << " "
               << q.y() << " " << q.z() << " " << q.w() << " " << kf.points << " " << kf.planes.size() << " "
               << (btc ? btc->keypoints.size() : 0) << " " << (btc ? btc->triangles.size() : 0) << "\n";
             f << std::defaultfloat;
@@ -164,8 +165,8 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
         };
         for (const ScanNode& n : scan_nodes_) add(n.pose.translation(), 255, 255, 255);
         for (const LoopEdge& e : loops_) {
-            const Eigen::Vector3d a = scan_nodes_[kfs_[e.from].anchor].pose.translation();
-            const Eigen::Vector3d b = scan_nodes_[kfs_[e.to].anchor].pose.translation();
+            const Eigen::Vector3d a = scan_nodes_[kfs_[e.from].anc_scan_id].pose.translation();
+            const Eigen::Vector3d b = scan_nodes_[kfs_[e.to].anc_scan_id].pose.translation();
             const int n = std::max(1, static_cast<int>(std::ceil((b - a).norm() / kLineStep)));
             for (int k = 1; k < n; ++k) add(a + (b - a) * (static_cast<double>(k) / n), 255, 0, 0);
         }

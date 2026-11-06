@@ -141,7 +141,7 @@ struct ScanNode {
 struct KeyFrame {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     int id = 0;
-    int anchor = 0;    ///< index of the ScanNode this keyframe rides on
+    int anc_scan_id = 0;    ///< index of the ScanNode this keyframe rides on
     double jour = 0.0;  ///< travelled distance at this keyframe [m]
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     int points = 0;                  ///< in the downsampled cloud the planes came from

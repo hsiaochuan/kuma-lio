@@ -47,7 +47,7 @@ struct BtcKeypoint {
 /// Three keypoints, sides sorted l1 <= l2 <= l3; v[k] is the vertex opposite side 2-k, so the
 /// vertices of two triangles with the same sides correspond index by index.
 struct BtcTriangle {
-    Eigen::Vector3f side = Eigen::Vector3f::Zero();  ///< [m]
+    Eigen::Vector3f side_len = Eigen::Vector3f::Zero();  ///< [m]
     std::array<int, 3> v{{0, 0, 0}};                 ///< indices into the frame's keypoints
 };
 
@@ -57,7 +57,7 @@ struct BtcFrame {
 };
 
 /// Builds the descriptors of one keyframe from its merged cloud and the plane cells of that cloud.
-BtcFrame BuildBtcFrame(const std::vector<Vec3>& cloud, const PlaneCells& cells, const PgoParam& prm);
+BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cells, const PgoParam& prm);
 
 /// Fraction of `src` planes that, moved by T_tar_src, land on a `tar` plane (paper eq. 8-9).
 double PlaneOverlap(const std::vector<PlanePoint>& src, const std::vector<PlanePoint>& tar,
@@ -80,7 +80,7 @@ class BtcDatabase {
         const BtcFrame& q, const std::function<bool(int)>& eligible) const;
 
     /// Appends frame number size(); call it after querying with the same frame.
-    void Add(BtcFrame f);
+    void Add(BtcFrame btc_f);
 
     int size() const { return static_cast<int>(btc_frames_.size()); }
     const BtcFrame& frame(int id) const { return btc_frames_[id]; }
