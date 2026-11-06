@@ -39,17 +39,46 @@ struct Scan {
 /// All the laser frames, indexed by scan id
 using Scans = std::map<IndexT, std::shared_ptr<Scan>>;
 
+/// One image; only its file is known, its pose is BaData::poses[id_pose] * BaData::extrin.
 struct RgbImage {
     std::string path;
     IndexT id_pose = kUndefinedIndex;
 };
 using RgbImages = std::map<IndexT, std::shared_ptr<RgbImage>>;
+
 struct BaData {
     Poses poses;
     Scans scans;
     RgbImages rgb_images;
 
-    Eigen::Isometry3d extrin;
+    /// T_body_cam, the camera in the body frame of the poses: P_body = R P_cam + t
+    Eigen::Isometry3d extrin = Eigen::Isometry3d::Identity();
+
+    /// Write the images as COLMAP's images.txt, for the --input_path folder of `colmap point_triangulator` (with a
+    /// cameras.txt holding camera 1 and an empty points3D.txt next to it): every image uses camera 1, is named by
+    /// its file name (the name the database has under --image_path) and has cam_from_world = (pose * extrin)^-1,
+    /// with no 2D point.  False if the file cannot be written.
+    bool SaveCOLMAP(const std::string& file) const {
+        std::ofstream images(file);
+        if (!images) return false;
+        images << std::setprecision(17);
+        images << "# Image list with two lines of data per image:\n"
+               << "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n"
+               << "#   POINTS2D[] as (X, Y, POINT3D_ID)\n"
+               << "# Number of images: " << rgb_images.size() << ", mean observations per image: 0\n";
+        for (const auto& image_it : rgb_images) {
+            const RgbImage& image = *image_it.second;
+            const Eigen::Isometry3d cam_from_world = (poses.at(image.id_pose) * extrin).inverse();
+            const Eigen::Quaterniond q(cam_from_world.rotation());
+            const Eigen::Vector3d t = cam_from_world.translation();
+            // COLMAP ids start at 1; the empty second line is the image's (absent) 2D points, and is required
+            images << image_it.first + 1 << ' ' << q.w() << ' ' << q.x() << ' ' << q.y() << ' ' << q.z() << ' '
+                   << t.x() << ' ' << t.y() << ' ' << t.z() << ' ' << 1 << ' '
+                   << std::filesystem::path(image.path).filename().string() << "\n\n";
+        }
+        return images.good();
+    }
+
     bool SaveTumPoses(const std::string& file) const {
         std::ofstream out(file);
         if (!out) return false;

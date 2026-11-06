@@ -76,6 +76,30 @@ bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     return true;
 }
 
+/// ba_data.extrin from a yaml with extrin_R (3x3, row major, 9 values) and extrin_t (3 values).
+Eigen::Isometry3d LoadExtrin(const std::string& file) {
+    YAML::Node y;
+    try {
+        y = YAML::LoadFile(file);
+    } catch (const YAML::Exception& e) {
+        LOG(FATAL) << "cannot read " << file << ": " << e.what();
+    }
+    if (!y["extrin_R"] || !y["extrin_t"]) LOG(FATAL) << file << " needs extrin_R and extrin_t";
+    const std::vector<double> r = y["extrin_R"].as<std::vector<double>>();
+    const std::vector<double> t = y["extrin_t"].as<std::vector<double>>();
+    if (r.size() != 9) LOG(FATAL) << "extrin_R must have 9 values (row major), got " << r.size() << " in " << file;
+    if (t.size() != 3) LOG(FATAL) << "extrin_t must have 3 values, got " << t.size() << " in " << file;
+    const Mat3 M = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(r.data());
+    // a calibration printed with a few digits is not exactly orthonormal: take the nearest rotation
+    const Eigen::JacobiSVD<Mat3> svd(M, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    const Mat3 R = svd.matrixU() * svd.matrixV().transpose();
+    if (R.determinant() < 0.0 || (R - M).norm() > 1e-3) LOG(FATAL) << "extrin_R is not a rotation in " << file;
+    Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
+    T.linear() = R;
+    T.translation() = Vec3(t[0], t[1], t[2]);
+    return T;
+}
+
 /// A file whose extension (any case) is one of the common image formats.
 bool IsImageFile(const fs::path& file) {
     std::string ext = file.extension().string();
@@ -139,7 +163,7 @@ int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
-    std::string scans_dir, images_dir, pose_fname, config_fname, out_dir;
+    std::string scans_dir, images_dir, pose_fname, config_fname, extrin_fname, out_dir;
     po::options_description desc("run_ba --scans_dir <dir> --pose_fname <file> [options]");
     // clang-format off
     desc.add_options()
@@ -147,6 +171,7 @@ int main(int argc, char** argv) {
         ("scans_dir", po::value<std::string>(&scans_dir),"folder with the <name>.ply scans")
         ("images_dir", po::value<std::string>(&images_dir), "folder with the <name>.<png|jpg|...> images (optional)")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
+        ("extrin_fname", po::value<std::string>(&extrin_fname), "yaml with extrin_R (9 values, row major) and extrin_t (3 values), T_body_cam; identity if absent")
         ("config,c", po::value<std::string>(&config_fname),"yaml with the BA parameters (see config/ba.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_dir), "output folder; default <scans_dir>/ba");
     // clang-format on
@@ -184,6 +209,10 @@ int main(int argc, char** argv) {
         if (!name_id_map.emplace(named_poses[i].name, static_cast<ba::IndexT>(i)).second)
             LOG(FATAL) << "duplicated pose name in the pose file: " << named_poses[i].name;
     ba::BaData ba_data;
+    ba_data.extrin = extrin_fname.empty() ? Eigen::Isometry3d::Identity() : LoadExtrin(extrin_fname);
+    const Eigen::IOFormat one_line(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "; ", "", "", "[", "]");
+    LOG(INFO) << "extrin: R " << ba_data.extrin.linear().format(one_line) << ", t "
+              << ba_data.extrin.translation().transpose().format(one_line);
     // The id of the pose with this name (kUndefinedIndex if none), registered in sfm_data.poses.
     auto FindPoseId = [&](const std::string& name) -> ba::IndexT {
         const auto it = name_id_map.find(name);
@@ -259,5 +288,12 @@ int main(int argc, char** argv) {
     const fs::path traj = out / "traj_ba.txt";
     if (!ba_data.SaveTumPoses(traj.string())) LOG(FATAL) << "cannot write " << traj;
     LOG(INFO) << "wrote " << traj << ": " << ba_data.scans.size() << " poses";
+
+    // The images at the refined poses, for colmap point_triangulator
+    if (!ba_data.rgb_images.empty()) {
+        const fs::path images_txt = out / "images.txt";
+        if (!ba_data.SaveCOLMAP(images_txt.string())) LOG(FATAL) << "cannot write " << images_txt;
+        LOG(INFO) << "wrote " << images_txt << ": " << ba_data.rgb_images.size() << " images";
+    }
     return 0;
 }
