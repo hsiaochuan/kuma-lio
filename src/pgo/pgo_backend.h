@@ -38,7 +38,9 @@ class PgoBackend {
     void SaveDebug(const std::string& output_dir) const;
 
    private:
-    void SealKeyframe(const Eigen::Isometry3d& anchor_pose);
+    /// Merges the buffered scans into a keyframe anchored at `anchor_pose` and appends it; `merged`
+    /// and `cells` come back in its body frame for the loop search.
+    void SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* merged, PlaneCells* cells);
     void Solve();
 
     PgoParam prm_;

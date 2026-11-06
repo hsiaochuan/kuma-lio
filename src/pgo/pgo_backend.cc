@@ -36,12 +36,8 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& raw_pose, const s
     buf_scans_.push_back(body_pts);
 
     if (static_cast<int>(buf_scans_.size()) < prm_.kf_scans) return;
-    SealKeyframe(pose);
-}
-
-void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
     if (!kfs_.empty()) {
-        const Eigen::Isometry3d d = kfs_.back().pose.inverse() * anchor_pose;
+        const Eigen::Isometry3d d = kfs_.back().pose.inverse() * pose;
         const double ang = LogMat(Mat3(d.linear())).norm() * 57.2957795;
         const double len = d.translation().norm();
         if (ang < prm_.kf_min_angle && len < prm_.kf_min_dist) {
@@ -52,6 +48,24 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
     }
 
     std::vector<Vec3> merged;
+    PlaneCells cells;
+    SealKeyframe(pose, &merged, &cells);
+    ++kf_since_opt_;
+
+    LoopEdge loop;
+    if (!detector_.Detect(kfs_, merged, cells, &loop)) return;
+    graph_.AddLoop(kfs_[loop.from].anchor, kfs_[loop.to].anchor, loop.T_from_to);
+    loops_.push_back(loop);
+    LOG(INFO) << "PGO: loop kf " << loop.from << " -> " << loop.to << " drift " << loop.drift
+              << " m over " << loop.span << " m, lambda_min " << loop.eigval;
+
+    // the paper only pays for a solve and a map rebuild once the drift is worth it
+    unsolved_drift_ = std::max(unsolved_drift_, loop.drift);
+    ++unsolved_loops_;
+    if (kf_since_opt_ > prm_.opt_halt_kf && loop.drift > prm_.opt_min_drift) Solve();
+}
+
+void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* merged, PlaneCells* cells) {
     const double r2 = prm_.kf_max_range * prm_.kf_max_range;
     const size_t first_node = scan_nodes_.size() - buf_scans_.size();
     for (size_t i = 0; i < buf_scans_.size(); ++i) {
@@ -59,7 +73,7 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
         for (const Vec3& p : buf_scans_[i]) {
             const Vec3 q = d * p;
             if (prm_.kf_max_range > 0.0 && q.squaredNorm() > r2) continue;
-            merged.push_back(q);
+            merged->push_back(q);
         }
     }
     buf_scans_.clear();
@@ -69,26 +83,11 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& anchor_pose) {
     kf.anchor = static_cast<int>(scan_nodes_.size()) - 1;
     kf.jour = jour_;
     kf.pose = anchor_pose;
-    const std::vector<Vec3> cloud = UniformSample(merged, prm_.kf_ds_voxel);
-    const PlaneCells cells = ExtractPlaneCells(cloud, prm_);
+    const std::vector<Vec3> cloud = UniformSample(*merged, prm_.kf_ds_voxel);
+    *cells = ExtractPlaneCells(cloud, prm_);
     kf.points = static_cast<int>(cloud.size());
-    kf.planes = PlanePoints(cells);
+    kf.planes = PlanePoints(*cells);
     kfs_.push_back(kf);
-    ++kf_since_opt_;
-
-    LoopEdge loop;
-    if (!detector_.Detect(kfs_, merged, cells, &loop)) return;
-
-    graph_.AddLoop(kfs_[loop.from].anchor, kfs_[loop.to].anchor, loop.T_from_to);
-    loops_.push_back(loop);
-    LOG(INFO) << "PGO: loop kf " << loop.from << " -> " << loop.to << " drift " << loop.drift
-              << " m over " << loop.span << " m, lambda_min " << loop.eigval;
-
-    // the paper only pays for a solve and a map rebuild once the drift is worth it
-    unsolved_drift_ = std::max(unsolved_drift_, loop.drift);
-    ++unsolved_loops_;
-    if (kf_since_opt_ > prm_.opt_halt_kf && loop.drift > prm_.opt_min_drift)
-        Solve();
 }
 
 void PgoBackend::Finish() {
