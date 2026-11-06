@@ -1,10 +1,9 @@
 #include "pgo/loop_detector.h"
 
+#include <glog/logging.h>
+
 #include <algorithm>
 #include <cmath>
-
-#include "pgo/icp_normal.h"
-#include "pgo/plane_cloud.h"
 
 namespace faster_lio {
 namespace pgo {
@@ -20,6 +19,8 @@ double YawDiffDeg(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) {
 }
 
 }  // namespace
+
+LoopDetector::LoopDetector(const PgoParam& prm) : prm_(prm), btc_db_(prm) {}
 
 void LoopDetector::Reject(int from, int to, const char* reason, double value, const IcpResult* icp) {
     // keep the dump bounded on a long sequence; the early rejections are the informative ones
@@ -41,83 +42,102 @@ void LoopDetector::Reject(int from, int to, const char* reason, double value, co
     rejections_.push_back(r);
 }
 
-std::vector<PlanePoint> LoopDetector::SubmapPlanes(const KeyFrames& kfs, int center, int lo, int hi) const {
-    if (lo == center && hi == center) return kfs[center].planes;
-    const Eigen::Isometry3d inv = kfs[center].pose.inverse();
-    std::vector<Vec3> merged;
-    for (int k = lo; k <= hi; ++k) {
-        const Eigen::Isometry3d d = inv * kfs[k].pose;
-        for (const Vec3& p : kfs[k].cloud) merged.push_back(d * p);
-    }
-    return ExtractPlanes(UniformSample(merged, prm_.kf_ds_voxel), prm_);
+bool LoopDetector::Eligible(const KeyFrames& kfs, int from, int to) const {
+    return from + prm_.loop_min_kf_gap <= to && kfs[to].jour - kfs[from].jour >= prm_.loop_min_travel;
 }
 
-bool LoopDetector::Detect(const KeyFrames& kfs, int cur, LoopEdge* out) {
-    if (cur < prm_.loop_min_kf_gap) return false;
-    const KeyFrame& kc = kfs[cur];
+LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& cloud,
+                                                     const PlaneCells& cells) {
+    const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
+    CHECK_EQ(btc_db_.size(), cur_kf_id) << "Detect must see every keyframe once, in order";
+    BtcFrame btc_frame = BuildBtcFrame(cloud, cells, prm_);
+    const auto btc_cands = btc_db_.Query(btc_frame, [&](int id) {
+        return Eligible(kfs, id, cur_kf_id);
+    });
+    btc_db_.Add(std::move(btc_frame));  // after the query, so a keyframe never finds itself
 
+    // paper VI-B: of the candidates RANSAC accepted, the one whose planes overlap best
+    int best = -1;
+    double best_overlap = 0.0;
+    for (size_t i = 0; i < btc_cands.size(); ++i) {
+        const double overlap = PlaneOverlap(kfs[cur_kf_id].planes, kfs[btc_cands[i].frame_id].planes, btc_cands[i].T, prm_);
+        if (overlap > best_overlap) best_overlap = overlap, best = static_cast<int>(i);
+    }
+    if (best < 0) return {};
+    if (best_overlap <= prm_.btc_min_overlap) {
+        Reject(btc_cands[best].frame_id, cur_kf_id, "btc_overlap", best_overlap);
+        return {};
+    }
+    return {{btc_cands[best].frame_id, btc_cands[best].T}};
+}
+
+LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) const {
+    const int cur = static_cast<int>(kfs.size()) - 1;
+    const KeyFrame& kc = kfs[cur];
     // A brute-force scan is cheaper here than a kd-tree: the candidate set is already cut down by
     // the index and travel gates, and rebuilding a tree on every keyframe costs more than the
     // few thousand distance tests it would save.
-    std::vector<std::pair<double, int>> cands;
-    for (int i = 0; i + prm_.loop_min_kf_gap <= cur; ++i) {
-        const KeyFrame& ki = kfs[i];
-        if (kc.jour - ki.jour < prm_.loop_min_travel) continue;
-        const Vec3 d = kc.pose.translation() - ki.pose.translation();
+    std::vector<std::pair<double, int>> near;
+    for (int i = 0; i < cur; ++i) {
+        if (!Eligible(kfs, i, cur)) continue;
+        const Vec3 d = kc.pose.translation() - kfs[i].pose.translation();
         if (std::abs(d.z()) > prm_.loop_max_dz) continue;
         const double r = d.norm();
         if (r > prm_.loop_radius) continue;
-        if (YawDiffDeg(ki.pose, kc.pose) > prm_.loop_max_yaw_diff) continue;
-        cands.emplace_back(r, i);
+        if (YawDiffDeg(kfs[i].pose, kc.pose) > prm_.loop_max_yaw_diff) continue;
+        near.emplace_back(r, i);
     }
-    if (cands.empty()) return false;
+    std::sort(near.begin(), near.end());
+    if (static_cast<int>(near.size()) > prm_.loop_max_candidates) near.resize(prm_.loop_max_candidates);
 
-    std::sort(cands.begin(), cands.end());
-    const int n = std::min<int>(cands.size(), prm_.loop_max_candidates);
-    const int K = std::max(0, prm_.loop_submap_kf);
-    const std::vector<PlanePoint> src = SubmapPlanes(kfs, cur, std::max(0, cur - K), cur);
-    for (int k = 0; k < n; ++k) {
-        const int id = cands[k].second;
-        const KeyFrame& ki = kfs[id];
+    Candidates out;
+    // seeded with what the odometry currently believes the relative pose is
+    for (const auto& n : near) out.push_back({n.second, kfs[n.second].pose.inverse() * kc.pose});
+    return out;
+}
 
-        // seed with what the odometry currently believes the relative pose is
-        Eigen::Isometry3d T_from_to = ki.pose.inverse() * kc.pose;
-        // the old end may not reach into the stretch the current end's submap covers
-        const int hi = std::min(id + K, std::max(id, cur - K - 1));
-        const std::vector<PlanePoint> tar = SubmapPlanes(kfs, id, std::max(0, id - K), hi);
-        const IcpResult icp = IcpNormal(src, tar, prm_, &T_from_to);
+bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& cloud, const PlaneCells& cells,
+                          LoopEdge* loop) {
+    const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
+    const KeyFrame& cur_kf = kfs[cur_kf_id];
+    const Candidates cands = prm_.loop_search == LoopSearch::kBtc ? BtcCandidates(kfs, cloud, cells) : RadiusCandidates(kfs);
+
+    for (const Candidate& cand : cands) {
+        const KeyFrame& ki = kfs[cand.id];
+        Eigen::Isometry3d T_from_to = cand.T_from_to;
+        const IcpResult icp = IcpNormal(cur_kf.planes, ki.planes, prm_, &T_from_to);
         if (!icp.ok) {
             // Three quite different failures, kept apart because they call for different fixes:
             // starved means the seed pose was too far off for the gates to find anything,
             // unsettled means the Gauss-Newton never took a small enough step, and the last two
             // mean it aligned but the result is not trustworthy.
             if (icp.starved) {
-                Reject(id, cur, "icp_starved", icp.matches, &icp);
+                Reject(cand.id, cur_kf_id, "icp_starved", icp.matches, &icp);
             } else if (!icp.converged) {
-                Reject(id, cur, "icp_unsettled", icp.step, &icp);
+                Reject(cand.id, cur_kf_id, "icp_unsettled", icp.step, &icp);
             } else if (icp.matches < prm_.icp_min_match) {
-                Reject(id, cur, "icp_matches", icp.matches, &icp);
+                Reject(cand.id, cur_kf_id, "icp_matches", icp.matches, &icp);
             } else {
-                Reject(id, cur, "icp_eigval", icp.eigval, &icp);
+                Reject(cand.id, cur_kf_id, "icp_eigval", icp.eigval, &icp);
             }
             continue;
         }
 
         // how far the loop would move the current pose, against how far we drove to get here
         const Vec3 p_loop = ki.pose * T_from_to.translation();
-        const double drift = (p_loop - kc.pose.translation()).norm();
-        const double span = kc.jour - ki.jour;
+        const double drift = (p_loop - cur_kf.pose.translation()).norm();
+        const double span = cur_kf.jour - ki.jour;
         if (drift / span >= prm_.ratio_drift) {
-            Reject(id, cur, "ratio_drift", drift / span);
+            Reject(cand.id, cur_kf_id, "ratio_drift", drift / span);
             continue;
         }
 
-        out->from = id;
-        out->to = cur;
-        out->T_from_to = T_from_to;
-        out->drift = drift;
-        out->span = span;
-        out->eigval = icp.eigval;
+        loop->from = cand.id;
+        loop->to = cur_kf_id;
+        loop->T_from_to = T_from_to;
+        loop->drift = drift;
+        loop->span = span;
+        loop->eigval = icp.eigval;
         return true;
     }
     return false;

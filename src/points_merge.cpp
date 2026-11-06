@@ -149,6 +149,6 @@ int main(int argc, char** argv) {
     std::cout << "Merged " << merged_cloud->points.size() << " points from " << start_idx << " to " << end_idx
               << std::endl;
     std::cout << "Saving " << merged_cloud->size() << " points to " << output_fname << std::endl;
-    pcl::io::savePCDFileBinary(output_fname, *merged_cloud);
+    pcl::io::savePLYFileBinary(output_fname, *merged_cloud);
     return 0;
 }

@@ -2,7 +2,8 @@
 // Pose graph optimization after Voxel-SLAM (Liu et al.), section VIII, run offline on the output of
 // any odometry: the nodes are the scans, consecutive nodes are tied by the odometry's relative
 // pose, and a loop adds one more edge.  Section IX (global mapping, hierarchical global BA) is
-// deliberately left out, and BTC is replaced by a radius search over the keyframe positions.
+// deliberately left out.  Loop candidates come from BTC (btc.h) or, for comparison, from a radius
+// search over the keyframe positions.
 //
 // Single session and single threaded.  The scans are replayed in time order and a solve happens on
 // the scan that seals a keyframe, so later scans are detected against the already corrected map.
@@ -20,6 +21,12 @@
 namespace faster_lio {
 namespace pgo {
 
+/// Where loop candidates come from; yaml `loop_search: btc | radius`.
+enum class LoopSearch {
+    kBtc,     ///< BTC descriptors (btc.h), rotation invariant, seeded by the descriptor match
+    kRadius,  ///< old keyframes near the current pose estimate, seeded by the odometry
+};
+
 struct PgoParam {
     // ---- keyframes: Voxel-SLAM seals one every win_size scans ----
     int kf_scans = 10;
@@ -31,29 +38,53 @@ struct PgoParam {
     /// only three it had, so it is kept purely as a lever on what the keyframes cost in memory.
     double kf_max_range = 0.0;
 
-    // ---- plane cloud the loop ICP runs on, in place of the BTC plane extraction ----
+    // ---- plane cells: the loop ICP, the BTC reference planes and the plane overlap all use them ----
     double plane_voxel = 1.0;      ///< [m]
     int plane_min_points = 10;
     double plane_min_eigen = 0.01;  ///< [m^2] a cell is a plane below this smallest eigenvalue
 
-    // ---- candidate search ----
-    double loop_radius = 20.0;    ///< [m]
-    double loop_max_dz = 4.0;     ///< [m]
-    int loop_min_kf_gap = 30;     ///< keyframes between the two ends of a loop
+    // ---- candidates: which old keyframes the loop ICP is tried against ----
+    LoopSearch loop_search = LoopSearch::kBtc;
+    int loop_min_kf_gap = 30;       ///< keyframes between the two ends of a loop
     double loop_min_travel = 30.0;  ///< [m] path length between them
+    // radius search only
+    double loop_radius = 20.0;  ///< [m]
+    double loop_max_dz = 4.0;   ///< [m]
     int loop_max_candidates = 3;
     /// [deg] skip a candidate whose estimated heading differs by more than this.  With a narrow
     /// FOV the two views of a heading-reversed revisit share no geometry, so such a candidate can
     /// only ever starve the ICP -- but ranked by distance alone it is usually the NEAREST one and
     /// crowds the genuinely matchable candidates out of the shortlist.
     double loop_max_yaw_diff = 90.0;
-    /// Keyframes merged around each end of a candidate before the ICP: the old end takes
-    /// [from - K, from + K], the current end [cur - K, cur], each placed by the current keyframe
-    /// poses into its anchor's frame.  0 matches single keyframes.  One keyframe is a second of a
-    /// forward-looking scan, so on a heading-reversed revisit (i2Nav AT128, 120 deg FOV) the two
-    /// ends see opposite sides of the place and the ICP starves; the neighbours on each side are
-    /// what saw the shared stretch.  With it the yaw gate above can open to 180.
-    int loop_submap_kf = 0;
+
+    // ---- BTC, defaults from Voxel-SLAM's read_parameters (non-aerial).  The plane cells are the
+    // ---- plane_voxel ones above, which Voxel-SLAM's BTC also builds at 1 m / 10 points / 0.01.
+    double btc_merge_normal = 0.1;  ///< |n1 -+ n2| below which two plane cells may merge
+    double btc_merge_dist = 0.3;    ///< [m] and the largest centre-to-plane distance either way
+    int btc_ref_planes = 2;         ///< M, the largest merged planes the cloud is projected onto
+    double btc_pixel = 0.5;         ///< [m] pixel of the height-encoded image
+    double btc_layer_height = 0.1;  ///< [m] one bit of the binary descriptor
+    double btc_height_min = 0.0;    ///< [m] height band above the reference plane, at most 64 layers
+    double btc_height_max = 5.0;    ///< [m]
+    int btc_min_bits = 10;          ///< sigma_I, the least intensity a keypoint may have
+    bool btc_line_filter = true;    ///< drop block maxima that sit on a ridge of the image
+    double btc_nms_radius = 2.0;    ///< [m] 3D non-maximum suppression among keypoints
+    int btc_max_keypoints = 100;    ///< strongest keypoints kept per keyframe
+    int btc_near_num = 15;          ///< K, nearest keypoints a triangle is formed from
+    double btc_side_min = 2.0;      ///< [m]
+    double btc_side_max = 50.0;     ///< [m]
+    double btc_side_res = 0.2;      ///< [m] hash quantization of the sides
+    double btc_side_tol = 0.01;     ///< sides match within this fraction of |side|
+    double btc_similarity = 0.7;    ///< sigma_s, mean bit similarity of the three vertices
+    int btc_candidates = 20;        ///< kappa, top-voted keyframes RANSACed
+    int btc_min_votes = 5;
+    double btc_ransac_dist = 3.0;   ///< [m] every vertex of an inlier triangle lands within this
+    int btc_min_inliers = 4;
+    double btc_overlap_normal = 0.2;  ///< |n1 -+ n2| of overlapping planes, gamma_u
+    double btc_overlap_dist = 0.5;    ///< [m] their point-to-plane distance, gamma_d
+    /// sigma_p, least plane overlap of the best candidate.  Voxel-SLAM's jud_default; upstream
+    /// BTC's own icp_threshold (0.15-0.2) is below it and so never decides anything.
+    double btc_min_overlap = 0.5;
 
     // ---- icp_normal ----
     int icp_max_iter = 20;
@@ -113,8 +144,8 @@ struct KeyFrame {
     int anchor = 0;    ///< index of the ScanNode this keyframe rides on
     double jour = 0.0;  ///< travelled distance at this keyframe [m]
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
-    std::vector<Vec3> cloud;        ///< downsampled, keyframe body frame
-    std::vector<PlanePoint> planes;  ///< body frame as well, so a pose change costs nothing
+    int points = 0;                  ///< in the downsampled cloud the planes came from
+    std::vector<PlanePoint> planes;  ///< keyframe body frame, so a pose change costs nothing
 };
 
 struct LoopEdge {

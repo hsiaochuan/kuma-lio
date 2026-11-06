@@ -113,6 +113,7 @@ target_link_libraries(run_mapping_offline
 add_library(faster_pgo STATIC
         src/pgo/plane_cloud.cc
         src/pgo/icp_normal.cc
+        src/pgo/btc.cc
         src/pgo/loop_detector.cc
         src/pgo/pose_graph.cc
         src/pgo/pgo_backend.cc

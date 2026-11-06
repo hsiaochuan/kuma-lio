@@ -5,18 +5,44 @@ kf_min_angle: 5.0        # [deg] 同时低于它和 kf_min_dist 才跳过
 kf_min_dist: 0.1         # [m]
 kf_ds_voxel: 0.2         # [m]
 kf_max_range: 0.0        # [m] 关键帧点云裁剪半径，0 关闭；实测不改善回环，仅用于控制内存
-# 回环 ICP 用的平面点云，替代 BTC 的平面提取
+# 平面 cell：回环 ICP、BTC 的参考平面和平面重叠率都用它
 plane_voxel: 1.0         # [m]
 plane_min_points: 10
 plane_min_eigen: 0.01    # [m^2]
-# 候选搜索，替代 BTC 的检索
-loop_radius: 20.0        # [m]
-loop_max_dz: 4.0         # [m]
+# 候选：btc 用描述子检索（旋转不变，种子来自三角形匹配），radius 用当前位姿附近的旧关键帧（种子来自里程计）
+loop_search: btc
 loop_min_kf_gap: 30      # 关键帧数
 loop_min_travel: 30.0    # [m] 两端之间的路程
+# 仅 radius
+loop_radius: 20.0        # [m]
+loop_max_dz: 4.0         # [m]
 loop_max_candidates: 3
-loop_max_yaw_diff: 180.0  # [deg] 有了 loop_submap_kf 反向重访也能对上，不再按朝向过滤
-loop_submap_kf: 3       # AT128 前向 120 度视场，单个关键帧在反向重访时与旧关键帧没有重叠；building00 ATE 1.11 -> 0.18 m
+loop_max_yaw_diff: 180.0  # [deg]
+# BTC，缺省取 Voxel-SLAM 的 read_parameters（非高空）
+btc_merge_normal: 0.1    # 平面 cell 合并：法向差
+btc_merge_dist: 0.3      # [m] 合并：互相到平面的距离
+btc_ref_planes: 2        # 参考平面个数 M
+btc_pixel: 0.5           # [m] 高度编码图的像素
+btc_layer_height: 0.1    # [m] 二值描述子一位
+btc_height_min: 0.0      # [m] 参考平面之上的高度带（朝向传感器一侧），最多 64 层
+btc_height_max: 5.0      # [m]
+btc_min_bits: 10         # 关键点最小强度 sigma_I
+btc_line_filter: true
+btc_nms_radius: 2.0      # [m]
+btc_max_keypoints: 100
+btc_near_num: 15         # 组三角形的近邻数 K
+btc_side_min: 2.0        # [m]
+btc_side_max: 50.0       # [m]
+btc_side_res: 0.2        # [m] 边长哈希量化
+btc_side_tol: 0.01       # 边长差 < |side| * tol
+btc_similarity: 0.7      # 三个顶点二值相似度均值 sigma_s
+btc_candidates: 20       # 投票最高的候选关键帧数 kappa
+btc_min_votes: 5
+btc_ransac_dist: 3.0     # [m]
+btc_min_inliers: 4
+btc_overlap_normal: 0.2  # 平面重叠：法向差
+btc_overlap_dist: 0.5    # [m] 平面重叠：点到面距离
+btc_min_overlap: 0.5     # 平面重叠率阈值 sigma_p（Voxel-SLAM 的 jud_default）
 # icp_normal
 icp_max_iter: 20
 icp_eigval: 3.0          # sum(n n^T) 的最小特征值，论文附录 B；实测 10 在走廊类重访过严

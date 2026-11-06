@@ -3,7 +3,7 @@
 //
 //   run_pgo --scans_dir <dir> --pose_fname <file> [--config pgo.yaml] [--out dir]  (-c/-o, -h for help)
 //
-// <scans_dir> holds the scans as PCD files in the sensor's own frame, <name>.pcd; <pose_fname> is the
+// <scans_dir> holds the scans as PLY files in the sensor's own frame, <name>.ply; <pose_fname> is the
 // pose file with a line "<name> x y z qx qy qz qw" (T_world_body) per scan.  <name> is the same string in
 // both and is also the scan's time, in seconds.  The corrected poses come out as <out>/traj_pgo.txt,
 // in the same format, next to the loop diagnostics and <out>/pgo_graph.ply (nodes white, loops red).
@@ -11,7 +11,6 @@
 
 #include <glog/logging.h>
 #include <pcl/io/pcd_io.h>
-#include <pcl/io/ply_io.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/point_types.h>
 #include <yaml-cpp/yaml.h>
@@ -47,13 +46,46 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("plane_voxel", &p->plane_voxel);
     get("plane_min_points", &p->plane_min_points);
     get("plane_min_eigen", &p->plane_min_eigen);
-    get("loop_radius", &p->loop_radius);
-    get("loop_max_dz", &p->loop_max_dz);
+    if (y["loop_search"]) {
+        const std::string s = y["loop_search"].as<std::string>();
+        if (s == "btc") {
+            p->loop_search = pgo::LoopSearch::kBtc;
+        } else if (s == "radius") {
+            p->loop_search = pgo::LoopSearch::kRadius;
+        } else {
+            LOG(FATAL) << "loop_search must be btc or radius, got " << s;
+        }
+    }
     get("loop_min_kf_gap", &p->loop_min_kf_gap);
     get("loop_min_travel", &p->loop_min_travel);
+    get("loop_radius", &p->loop_radius);
+    get("loop_max_dz", &p->loop_max_dz);
     get("loop_max_candidates", &p->loop_max_candidates);
     get("loop_max_yaw_diff", &p->loop_max_yaw_diff);
-    get("loop_submap_kf", &p->loop_submap_kf);
+    get("btc_merge_normal", &p->btc_merge_normal);
+    get("btc_merge_dist", &p->btc_merge_dist);
+    get("btc_ref_planes", &p->btc_ref_planes);
+    get("btc_pixel", &p->btc_pixel);
+    get("btc_layer_height", &p->btc_layer_height);
+    get("btc_height_min", &p->btc_height_min);
+    get("btc_height_max", &p->btc_height_max);
+    get("btc_min_bits", &p->btc_min_bits);
+    get("btc_line_filter", &p->btc_line_filter);
+    get("btc_nms_radius", &p->btc_nms_radius);
+    get("btc_max_keypoints", &p->btc_max_keypoints);
+    get("btc_near_num", &p->btc_near_num);
+    get("btc_side_min", &p->btc_side_min);
+    get("btc_side_max", &p->btc_side_max);
+    get("btc_side_res", &p->btc_side_res);
+    get("btc_side_tol", &p->btc_side_tol);
+    get("btc_similarity", &p->btc_similarity);
+    get("btc_candidates", &p->btc_candidates);
+    get("btc_min_votes", &p->btc_min_votes);
+    get("btc_ransac_dist", &p->btc_ransac_dist);
+    get("btc_min_inliers", &p->btc_min_inliers);
+    get("btc_overlap_normal", &p->btc_overlap_normal);
+    get("btc_overlap_dist", &p->btc_overlap_dist);
+    get("btc_min_overlap", &p->btc_min_overlap);
     get("icp_max_iter", &p->icp_max_iter);
     get("icp_eigval", &p->icp_eigval);
     get("icp_min_match", &p->icp_min_match);
@@ -77,7 +109,7 @@ int main(int argc, char** argv) {
     std::string scans_dir, pose_fname, config_fname, out_arg;
     po::options_description desc("run_pgo --scans_dir <dir> --pose_fname <file> [options]");
     desc.add_options()("help,h", "show this help")
-        ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.pcd scans")
+        ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.ply scans")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
         ("config,c", po::value<std::string>(&config_fname), "yaml with the pgo parameters (see config/pgo.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/pgo");
@@ -110,8 +142,8 @@ int main(int argc, char** argv) {
 
     pgo::PgoBackend pgo(pgo_prm);
     std::vector<const PoseLine*> matched_lines;
-    for (const PoseLine& line : pose_lines) {
-        const fs::path scan_file = dir / (line.name + ".ply");
+    for (const PoseLine& pose_line : pose_lines) {
+        const fs::path scan_file = dir / (pose_line.name + ".ply");
         pcl::PointCloud<pcl::PointXYZ> cloud;
         if (!fs::exists(scan_file) || pcl::io::loadPLYFile(scan_file.string(), cloud) < 0) {
             LOG(WARNING) << "no readable scan " << scan_file << ", pose skipped";
@@ -122,8 +154,8 @@ int main(int argc, char** argv) {
         for (const auto& q : cloud.points) {
             if (std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z)) pts.emplace_back(q.x, q.y, q.z);
         }
-        pgo.AddScan(line.time, line.pose, pts);
-        matched_lines.push_back(&line);
+        pgo.AddScan(pose_line.time, pose_line.pose, pts);
+        matched_lines.push_back(&pose_line);
     }
     if (matched_lines.empty()) LOG(FATAL) << "no pose has a scan";
     LOG(INFO) << matched_lines.size() << " poses match scans";
