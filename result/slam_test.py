@@ -554,6 +554,8 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         name="mars_lvig",
         config={".": "../config/mars_lvig.yaml"},
         bag_files=[
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMtown03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMvalley03.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS01.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS02.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS03.bag",
