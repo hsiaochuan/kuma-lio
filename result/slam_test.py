@@ -53,6 +53,7 @@ class RunTask:
     gnss_nav_fname: str = ""
     clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments
     pgo_config: str = "../config/pgo.yaml"
+    ba_config: str = "../config/ba.yaml"
 
     @property
     def localization_args(self) -> List[str]:
@@ -240,7 +241,7 @@ class SLAMTestRunner:
         output_dir = task.output_dir
         scans_dir = os.path.join(output_dir, "scans")
         poses = os.path.join(output_dir, "traj_log.txt")  # its first column is the file stem of each scan
-        map_fname = os.path.join(output_dir, "map.pcd")
+        map_fname = os.path.join(output_dir, "map.ply")
         if not (self.if_pgo or self.if_clean or self.if_ba or self.if_merge or self.if_postprocess):
             return
         if not os.path.isdir(scans_dir):
