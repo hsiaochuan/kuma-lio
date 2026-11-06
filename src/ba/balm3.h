@@ -35,6 +35,8 @@ namespace ba {
 
 using VecVec6 = Eigen::aligned_vector<Vec6>;
 using VecMat6 = Eigen::aligned_vector<Mat6>;
+/// The poses seen by the planes, by dense index (the order of BundleAdjuster::ids)
+using DensePoses = Eigen::aligned_vector<Eigen::Isometry3d>;
 
 /// T |+ dT, paper eq. (10).
 inline Eigen::Isometry3d Boxplus(const Eigen::Isometry3d& x, const Vec6& d) {
@@ -81,10 +83,10 @@ class BundleAdjuster {
    public:
     std::vector<PlaneFeature> feats;
     int Nx = 0;                // number of poses seen by the planes
-    std::vector<uint32_t> ids; ///< dense index (0..Nx-1) -> scan index
+    std::vector<IndexT> ids;   ///< dense index (0..Nx-1) -> pose id
     BAOptions opt;
 
-    /// Take the plane features (whose clusters are indexed by scan index).  The poses seen by at least one
+    /// Take the plane features (whose clusters are indexed by pose id).  The poses seen by at least one
     /// plane are numbered 0..Nx-1; a pose seen by no plane is not optimized and stays where it is.
     void Load(std::vector<PlaneFeature>&& planes) {
         feats.clear();
@@ -104,7 +106,7 @@ class BundleAdjuster {
         ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
         Nx = (int)ids.size();
         for (PlaneFeature& f : feats)
-            for (FrameCluster& o : f.clus) o.xid = (uint32_t)(std::lower_bound(ids.begin(), ids.end(), o.xid) - ids.begin());
+            for (FrameCluster& o : f.clus) o.xid = (IndexT)(std::lower_bound(ids.begin(), ids.end(), o.xid) - ids.begin());
     }
 
     size_t NumFeatures() const { return feats.size(); }
@@ -126,8 +128,8 @@ class BundleAdjuster {
     /// Optimize, in place, the poses seen by the planes (the others are untouched).
     void Optimize(Poses& poses) {
         Vec3 shift;
-        Poses xs = Gather(poses, &shift);
-        const Poses x_init = xs;
+        DensePoses xs = Gather(poses, &shift);
+        const DensePoses x_init = xs;
         OptimizeDense(xs);
 
         if (opt.verbose && Nx > 0) {
@@ -144,24 +146,18 @@ class BundleAdjuster {
         }
         for (int i = 0; i < Nx; i++) {
             xs[i].translation() += shift;
-            poses[ids[i]] = xs[i];
+            poses.at(ids[i]) = xs[i];
         }
-    }
-
-    /// Central finite-difference check of the derivatives at the given poses; the largest relative error.
-    double VerifyDerivatives(const Poses& poses, int n_check = 6) {
-        Vec3 shift;
-        return VerifyDerivativesDense(Gather(poses, &shift), n_check);
     }
 
    private:
     /// The poses seen by the planes, densely (the order of ids[]), the translation centered on their mean
     /// for numerical conditioning; `shift` is the vector to add back.
-    Poses Gather(const Poses& poses, Vec3* shift) const {
-        Poses xs(Nx);
+    DensePoses Gather(const Poses& poses, Vec3* shift) const {
+        DensePoses xs(Nx);
         *shift = Vec3::Zero();
         for (int i = 0; i < Nx; i++) {
-            xs[i] = poses[ids[i]];
+            xs[i] = poses.at(ids[i]);
             *shift += xs[i].translation();
         }
         if (Nx > 0) *shift /= Nx;
@@ -170,7 +166,7 @@ class BundleAdjuster {
     }
 
     /// The world-frame cluster of one feature at poses xs.
-    static void Accumulate(const PlaneFeature& fea, const Poses& xs, PointCluster* total) {
+    static void Accumulate(const PlaneFeature& fea, const DensePoses& xs, PointCluster* total) {
         total->SetZero();
         PointCluster tr;
         for (const FrameCluster& o : fea.clus) {
@@ -180,7 +176,7 @@ class BundleAdjuster {
     }
 
     /// The plane of feature `a` at poses xs (u and q only if `axes`); returns lambda_min.
-    double EvalPlane(long a, const Poses& xs, bool axes, PlaneAnchor* plane) const {
+    double EvalPlane(long a, const DensePoses& xs, bool axes, PlaneAnchor* plane) const {
         PointCluster sig;
         Accumulate(feats[a], xs, &sig);
         *plane = PlaneAnchor();
@@ -195,7 +191,7 @@ class BundleAdjuster {
     }
 
     /// All the planes at poses xs; returns c(xs), paper eq. (1).
-    double EvalPlanes(const Poses& xs, bool axes, Eigen::aligned_vector<PlaneAnchor>* planes) const {
+    double EvalPlanes(const DensePoses& xs, bool axes, Eigen::aligned_vector<PlaneAnchor>* planes) const {
         planes->resize(feats.size());
         double cost = 0.0;
 #pragma omp parallel for schedule(static) reduction(+ : cost)
@@ -203,16 +199,16 @@ class BundleAdjuster {
         return cost;
     }
 
-    double OriginalCost(const Poses& xs) const {
+    double OriginalCost(const DensePoses& xs) const {
         Eigen::aligned_vector<PlaneAnchor> planes;
         return EvalPlanes(xs, false, &planes);
     }
 
     /// Freeze the planes at xs; returns c(xs) = c_M(xs | xs).
-    double BuildSurrogate(const Poses& xs) { return EvalPlanes(xs, true, &anc_); }
+    double BuildSurrogate(const DensePoses& xs) { return EvalPlanes(xs, true, &anc_); }
 
     /// Surrogate cost, paper eq. (8) in the point-to-plane form.
-    double SurrogateCost(const Poses& xs) const {
+    double SurrogateCost(const DensePoses& xs) const {
         double cost = 0.0;
 #pragma omp parallel for schedule(static) reduction(+ : cost)
         for (long a = 0; a < (long)feats.size(); a++) {
@@ -228,7 +224,7 @@ class BundleAdjuster {
     }
 
     /// The normal equations of the surrogate and, in the same pass, its cost.
-    void BuildNormalEquations(const Poses& xs, VecVec6* J, VecMat6* H, double* cost) const {
+    void BuildNormalEquations(const DensePoses& xs, VecVec6* J, VecMat6* H, double* cost) const {
         NormalEq ne(Nx);
 #pragma omp parallel for schedule(dynamic, 32) reduction(neq_sum : ne)
         for (long a = 0; a < (long)feats.size(); a++) {
@@ -272,11 +268,11 @@ class BundleAdjuster {
 
     /// Algorithm 1 of the paper: the outer loop rebuilds the surrogate, the inner loop runs LM on it with the
     /// decoupled 6x6 solves of eq. (19).
-    void OptimizeDense(Poses& xs) {
+    void OptimizeDense(DensePoses& xs) {
         VecVec6 J;
         VecMat6 H;
         VecVec6 dx(Nx);
-        Poses x_new(Nx), x_prev;
+        DensePoses x_new(Nx), x_prev;
 
         double c = OriginalCost(xs);
         const double c_init = c;
@@ -341,7 +337,7 @@ class BundleAdjuster {
 
     /// Central finite-difference check of J and H against the surrogate cost.  Second differences divide
     /// roundoff by h^2, so the Hessian needs a much larger step than the gradient.
-    double VerifyDerivativesDense(const Poses& xs, int n_check, double h = 1e-6, double h2 = 1e-4) {
+    double VerifyDerivativesDense(const DensePoses& xs, int n_check, double h = 1e-6, double h2 = 1e-4) {
         BuildSurrogate(xs);
         VecVec6 J;
         VecMat6 H;
@@ -354,7 +350,7 @@ class BundleAdjuster {
             if (cnt[i] > 5) probe.push_back(i);
 
         auto CostAt = [&](int idx, const Vec6& d) {
-            Poses x = xs;
+            DensePoses x = xs;
             x[idx] = Boxplus(xs[idx], d);
             return SurrogateCost(x);
         };

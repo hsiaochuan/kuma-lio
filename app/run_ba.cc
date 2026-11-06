@@ -1,14 +1,17 @@
 //
 // Offline LiDAR bundle adjustment of the scan poses, BALM3.0 (Li et al., 2025): the poses are refined so that
-// the planes the scans see together are as thin as possible.
+// the planes the scans see together are as thin as possible.  The lidar part of openMVG's main_BALVM, laid out
+// the same way: the poses and the laser frames are loaded into a BaData, associated by name, and
+// BAOptimize refines the poses that hold a laser frame.
 //
 //   run_ba --scans_dir <dir> --pose_fname <file> [--config ba.yaml] [--out dir]  (-c/-o, -h for help)
 //
 // The inputs are those of run_pgo and run_clean: <scans_dir>/<name>.ply are the scans in the sensor's own
 // frame and <pose_fname> holds a line "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's
-// traj_pgo.txt.  The output <out>/traj_ba.txt is the same file with the refined poses: the same lines, in the
-// same order, with the same names.  A pose without a readable scan, or whose scan no plane ties to another
-// scan, comes out unchanged.  The refined poses are written as the optimizer left them.
+// traj_pgo.txt.  The output <out>/traj_ba.txt is in TUM format, one line "<name> x y z qx qy qz qw" per laser
+// frame, in the order of the file names; a pose without a readable scan is left out.  A scan that no plane ties
+// to another scan keeps its pose, so do all of them if no plane is found.  The refined poses are written as
+// the optimizer left them.
 //
 
 #include <glog/logging.h>
@@ -18,12 +21,13 @@
 #include <yaml-cpp/yaml.h>
 #include <boost/program_options.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <iomanip>
 #include <iostream>
+#include <map>
 
+#include "ba/ba_data.h"
 #include "ba/balm3.h"
 #include "pgo/plane_cloud.h"
 #include "pose_io.h"
@@ -60,17 +64,62 @@ void LoadParam(const std::string& file, BaParam* p) {
     get("verbose", &p->opt.verbose);
 }
 
-/// The scan's points in its own frame, thinned; empty if it cannot be read.
-std::vector<Vec3> LoadScan(const fs::path& file, const BaParam& prm) {
+/// The points of a .ply file; false if it cannot be read.
+bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     pcl::PointCloud<pcl::PointXYZ> cloud;
-    if (!fs::exists(file) || pcl::io::loadPLYFile(file.string(), cloud) < 0) return {};
+    if (pcl::io::loadPLYFile(file.string(), cloud) < 0) return false;
+    points->clear();
+    points->reserve(cloud.size());
+    for (const auto& q : cloud.points) points->emplace_back(q.x, q.y, q.z);
+    return true;
+}
+
+/// The points of a scan that go into the BA: the far enough ones, thinned.
+std::vector<Vec3> PreprocessScan(const ba::Scan& scan, const BaParam& prm) {
     std::vector<Vec3> kept;
-    kept.reserve(cloud.size());
-    for (const auto& q : cloud.points) {
-        const Vec3 p(q.x, q.y, q.z);
-        if (p.norm() >= prm.min_range) kept.push_back(p);  // false for a NaN
-    }
+    kept.reserve(scan.points.size());
+    for (const Vec3& p : scan.points)
+        if (p.allFinite() && p.norm() >= prm.min_range) kept.push_back(p);
     return prm.downsample > 0 ? pgo::UniformSample(kept, prm.downsample) : kept;
+}
+
+/// Optimize the poses associated to a laser frame (Scan::id_pose) with the point-to-plane bundle adjustment of
+/// BALM3.  Only these poses move; false, with the poses untouched, if no plane ties two scans together.
+bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm) {
+    // Plane association.  The map is only needed to find the planes, and is the largest thing in memory, so it
+    // is gone before the optimization.
+    ba::BundleAdjuster adjuster;
+    adjuster.opt = prm.opt;
+    {
+        std::vector<const ba::Scan*> scans;
+        for (const auto& scan_it : sfm_data.scans) scans.push_back(scan_it.second.get());
+        std::vector<std::vector<Vec3>> pts(scans.size());
+#pragma omp parallel for schedule(dynamic, 1)
+        for (long i = 0; i < (long)scans.size(); ++i) pts[i] = PreprocessScan(*scans[i], prm);
+
+        ba::PlaneMap plane_map(prm.voxel);
+        size_t total_pts = 0;
+        for (size_t i = 0; i < scans.size(); ++i) {
+            const Eigen::Isometry3d& pose = sfm_data.poses.at(scans[i]->id_pose);
+            plane_map.AddScan(scans[i]->id_pose, pose.linear(), pose.translation(), pts[i]);
+            total_pts += pts[i].size();
+        }
+        LOG(INFO) << "inserted " << total_pts << " points from " << scans.size() << " laser frames into "
+                  << plane_map.NumVoxels() << " voxels";
+        adjuster.Load(plane_map.ExtractPlanes(sfm_data.poses));
+    }
+    LOG(INFO) << "plane features: " << adjuster.NumFeatures() << ", observations: " << adjuster.NumObservations()
+              << ", poses in the BA: " << adjuster.Nx << "/" << sfm_data.poses.size();
+    if (adjuster.NumFeatures() == 0) {
+        LOG(WARNING) << "no plane feature found (try a larger voxel_size or a looser plane_eigen_ratio)";
+        return false;
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    adjuster.Optimize(sfm_data.poses);
+    LOG(INFO) << "BALM3 took " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
+              << " s";
+    return true;
 }
 
 }  // namespace
@@ -79,7 +128,7 @@ int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
-    std::string scans_dir, pose_fname, config_fname, out_arg;
+    std::string scans_dir, pose_fname, config_fname, out_dir;
     po::options_description desc("run_ba --scans_dir <dir> --pose_fname <file> [options]");
     // clang-format off
     desc.add_options()
@@ -87,8 +136,7 @@ int main(int argc, char** argv) {
         ("scans_dir", po::value<std::string>(&scans_dir),"folder with the <name>.ply scans")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
         ("config,c", po::value<std::string>(&config_fname),"yaml with the BA parameters (see config/ba.yaml); defaults if absent")
-        ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/ba")
-        ("verify", "check the derivatives against finite differences before optimizing");
+        ("out,o", po::value<std::string>(&out_dir), "output folder; default <scans_dir>/ba");
     // clang-format on
     po::variables_map vm;
     try {
@@ -104,82 +152,72 @@ int main(int argc, char** argv) {
     }
     const fs::path dir = scans_dir;
     if (!fs::is_directory(dir)) LOG(FATAL) << "not a folder: " << dir;
-    const fs::path out = out_arg.empty() ? dir / "ba" : fs::path(out_arg);
+    const fs::path out = out_dir.empty() ? dir / "ba" : fs::path(out_dir);
     fs::create_directories(out);
 
+    // Parameters of the lidar BA
     BaParam prm;
     if (!config_fname.empty()) LoadParam(config_fname, &prm);
-    if (prm.threads > 0) omp_set_num_threads(prm.threads);
+    if (prm.threads > 0) omp_set_num_threads(prm.threads);  // the scans are read in parallel too
 
-    const std::vector<PoseLine> lines = LoadPoses(pose_fname);
-    if (lines.empty()) LOG(FATAL) << "no poses in " << pose_fname;
-    LOG(INFO) << "poses: " << lines.size() << " from " << pose_fname;
+    // Load the poses
+    const std::vector<PoseLine> named_poses = LoadPoses(pose_fname);
+    if (named_poses.empty()) LOG(FATAL) << "no poses in " << pose_fname;
+    LOG(INFO) << "loaded " << named_poses.size() << " poses from " << pose_fname;
 
-    // Scans go into the map as they are read: a chunk is read in parallel, then added in order.  The map is only
-    // needed to find the planes, and is the largest thing in memory, so it is gone before the optimization.
-    ba::Poses poses;              // of the scans that could be read, by dense scan index
-    std::vector<size_t> line_of;  // dense scan index -> index in `lines`
-    ba::BundleAdjuster adjuster;
-    adjuster.opt = prm.opt;
-    {
-        ba::PlaneMap plane_map(prm.voxel);
-        size_t total_pts = 0;
-        const size_t kChunk = 64;
-        for (size_t begin = 0; begin < lines.size(); begin += kChunk) {
-            const size_t end = std::min(lines.size(), begin + kChunk);
-            std::vector<std::vector<Vec3>> chunk(end - begin);
-#pragma omp parallel for schedule(dynamic, 1)
-            for (long i = 0; i < (long)(end - begin); ++i)
-                chunk[i] = LoadScan(dir / (lines[begin + i].name + ".ply"), prm);
-            for (size_t i = begin; i < end; ++i) {
-                const std::vector<Vec3>& pts = chunk[i - begin];
-                if (pts.empty()) {
-                    LOG(WARNING) << "no readable scan " << (dir / (lines[i].name + ".ply")) << ", pose left as it is";
-                    continue;
-                }
-                plane_map.AddScan(static_cast<uint32_t>(poses.size()), lines[i].pose.linear(),
-                                  lines[i].pose.translation(), pts);
-                poses.push_back(lines[i].pose);
-                line_of.push_back(i);
-                total_pts += pts.size();
-            }
+    // Poses are indexed by their line rank in the pose file.
+    std::map<std::string, ba::IndexT> name_id_map;
+    for (size_t i = 0; i < named_poses.size(); ++i)
+        if (!name_id_map.emplace(named_poses[i].name, static_cast<ba::IndexT>(i)).second)
+            LOG(FATAL) << "duplicated pose name in the pose file: " << named_poses[i].name;
+    ba::BaData ba_data;
+    // The id of the pose with this name (kUndefinedIndex if none), registered in sfm_data.poses.
+    auto FindPoseId = [&](const std::string& name) -> ba::IndexT {
+        const auto it = name_id_map.find(name);
+        if (it == name_id_map.end()) return ba::kUndefinedIndex;
+        ba_data.poses[it->second] = named_poses[it->second].pose;
+        return it->second;
+    };
+
+    // Load the laser frames and associate them to the poses
+    std::vector<fs::path> ply_files;
+    for (const auto& entry : fs::directory_iterator(dir))
+        if (entry.is_regular_file() && entry.path().extension() == ".ply") ply_files.push_back(entry.path());
+    std::sort(ply_files.begin(), ply_files.end());
+    std::vector<std::shared_ptr<ba::Scan>> loaded;
+    size_t scan_without_pose = 0;
+    for (const fs::path& points_fname : ply_files) {
+        // A laser frame without pose is dropped
+        const ba::IndexT id_pose = FindPoseId(points_fname.stem().string());
+        if (id_pose == ba::kUndefinedIndex) {
+            LOG(WARNING) << "no pose for point cloud, it is removed: " << points_fname;
+            ++scan_without_pose;
+            continue;
         }
-        LOG(INFO) << "inserted " << total_pts << " points from " << poses.size() << " scans into "
-                  << plane_map.NumVoxels() << " voxels";
-        adjuster.Load(plane_map.ExtractPlanes(poses));
+        auto scan = std::make_shared<ba::Scan>();
+        scan->path = points_fname.string();
+        scan->id_pose = id_pose;
+        loaded.push_back(std::move(scan));
     }
-    ba::Poses refined = poses;  // the planes only move the scans they connect
-    LOG(INFO) << "plane features: " << adjuster.NumFeatures() << ", observations: " << adjuster.NumObservations()
-              << ", poses in the BA: " << adjuster.Nx << "/" << poses.size();
-    if (adjuster.NumFeatures() == 0) {
-        LOG(WARNING)
-            << "no plane feature found (try a larger voxel_size or a looser plane_eigen_ratio): poses unchanged";
-    } else {
-        if (vm.count("verify"))
-            LOG(INFO) << "derivatives: worst relative error " << adjuster.VerifyDerivatives(refined);
-        const auto t0 = std::chrono::steady_clock::now();
-        adjuster.Optimize(refined);
-        LOG(INFO) << "BALM3 took " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
-                  << " s";
+    std::vector<char> readable(loaded.size());
+#pragma omp parallel for schedule(dynamic, 1)
+    for (long i = 0; i < (long)loaded.size(); ++i) readable[i] = LoadPly(loaded[i]->path, &loaded[i]->points);
+    ba::IndexT scan_id = 0;
+    for (size_t i = 0; i < loaded.size(); ++i) {
+        if (!readable[i]) {
+            LOG(WARNING) << "cannot read point cloud: " << loaded[i]->path;
+            continue;
+        }
+        ba_data.scans[scan_id++] = std::move(loaded[i]);
     }
+    LOG(INFO) << "laser frames loaded: " << ba_data.scans.size() << " (removed without pose: " << scan_without_pose
+              << ")";
 
-    // the same file as the input, with the refined poses
-    std::vector<Eigen::Isometry3d> result;
-    for (const PoseLine& line : lines) result.push_back(line.pose);
-    double max_dt = 0.0;
-    for (size_t k = 0; k < refined.size(); ++k) {
-        max_dt = std::max(max_dt, (refined[k].translation() - poses[k].translation()).norm());
-        result[line_of[k]] = refined[k];
-    }
-    std::ofstream out_file((out / "traj_ba.txt").string());
-    out_file << std::setprecision(9);
-    for (size_t i = 0; i < lines.size(); ++i) {
-        const Eigen::Vector3d t = result[i].translation();
-        const Eigen::Quaterniond q(result[i].rotation());
-        out_file << lines[i].name << ' ' << t.x() << ' ' << t.y() << ' ' << t.z() << ' ' << q.x() << ' ' << q.y() << ' '
-                 << q.z() << ' ' << q.w() << '\n';
-    }
-    LOG(INFO) << "wrote " << (out / "traj_ba.txt") << ": " << lines.size() << " poses, " << refined.size()
-              << " with a scan, largest change " << max_dt << " m";
+    // Optimize the poses associated to a laser frame
+    if (!BAOptimize(ba_data, prm)) LOG(WARNING) << "poses unchanged";
+
+    const fs::path traj = out / "traj_ba.txt";
+    if (!ba_data.SaveTumPoses(traj.string())) LOG(FATAL) << "cannot write " << traj;
+    LOG(INFO) << "wrote " << traj << ": " << ba_data.scans.size() << " poses";
     return 0;
 }

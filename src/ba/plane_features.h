@@ -20,14 +20,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ba/ba_data.h"
 #include "common_lib.h"
 #include "point_cluster.h"
 
 namespace faster_lio {
 namespace ba {
-
-/// The scan poses T_world_body, by dense scan index.
-using Poses = Eigen::aligned_vector<Eigen::Isometry3d>;
 
 struct VoxelMapOptions {
     double voxel_size = 1.0;         ///< [m] layer-0 voxel; layers 1 and 2 halve it
@@ -39,11 +37,11 @@ struct VoxelMapOptions {
 
 /// The points scan `xid` put on one plane, in that scan's body frame.
 struct FrameCluster {
-    uint32_t xid = 0;  ///< scan index (a dense index inside the BundleAdjuster)
+    IndexT xid = 0;  ///< pose id, a key of SfmData::poses (a dense index inside the BundleAdjuster)
     PointCluster clu;
 };
 
-/// One plane: the scans that see it.  Sorted by scan, one entry per scan.
+/// One plane: the scans that see it.  Sorted by pose id, one entry per pose.
 struct PlaneFeature {
     std::vector<FrameCluster> clus;
     int layer = 0;
@@ -57,8 +55,8 @@ class PlaneMap {
 
     explicit PlaneMap(const VoxelMapOptions& param) : param_(param) {}
 
-    /// Add the points of scan `id`, given in its body frame.
-    void AddScan(uint32_t id, const Mat3& R, const Vec3& p, const std::vector<Vec3>& body_pts) {
+    /// Add the points of a scan at pose `id`, given in its body frame.
+    void AddScan(IndexT id, const Mat3& R, const Vec3& p, const std::vector<Vec3>& body_pts) {
         for (const Vec3& pb : body_pts) {
             const Vec3 pw = R * pb + p;
             Cell& cell = CellAt(pw);
@@ -133,7 +131,7 @@ class PlaneMap {
                 const int n = NodeOf(cell.idx, layer);
                 touched[n] = any = true;
                 for (const FrameCluster& cl : cell.obs) {
-                    const Eigen::Isometry3d& pose = poses[cl.xid];
+                    const Eigen::Isometry3d& pose = poses.at(cl.xid);
                     tr_clu.Transform(cl.clu, pose.linear(), pose.translation());
                     node_total_clu[n] += tr_clu;
                     node_clus[n].push_back(&cl);
