@@ -1,0 +1,15 @@
+# run_ba (BALM3.0 的批量 LiDAR BA) 的参数，扁平键，全部可省略（缺省值即下面这些）。
+# 预处理
+downsample: 0.1          # [m] 每个 scan 的体素降采样（0 关闭）
+min_range: 1.0           # [m] 丢掉比它更近的点（载体自身）
+threads: 0               # 0: OpenMP 缺省
+# 平面关联（Voxel-SLAM 的三层体素：voxel_size、/2、/4）
+voxel_size: 1.0          # [m] 第 0 层体素边长
+plane_eigen_ratio: 0.1   # 节点的 lambda_0 / lambda_1 低于它才算平面，与尺度无关
+min_plane_size: 0.05     # 平面内较小方向的最小标准差，占本层格子边长的比例
+min_points: 10           # 点数不超过它的节点既不成平面也不再细分
+# 优化（BALM3 论文 Algorithm 1）
+max_outer: 300           # 重建上界的最多次数
+max_inner: 5             # 每个上界上 LM 的最多步数
+eps: 1.0e-5              # 位姿更新量的收敛阈值
+verbose: true

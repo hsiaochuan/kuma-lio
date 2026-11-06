@@ -79,6 +79,7 @@ class DatasetConfig:
     is_localization: bool = False
     clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments, they depend on the platform
     pgo_config: str = "../config/pgo.yaml"  # run_pgo parameters, they depend on the sensor's field of view
+    ba_config: str = "../config/ba.yaml"  # run_ba parameters
 
 
 @dataclass
@@ -89,6 +90,7 @@ class TestResult:
     duration_sec: float = 0.0  # SLAM only
     ate: float = 0.0
     ate_pgo: float = 0.0
+    ate_ba: float = 0.0
 
 
 @dataclass
@@ -135,6 +137,7 @@ class SLAMTestRunner:
             points_post_app: str = "../build/points_jet",
             pgo_app: str = "../build/run_pgo",
             clean_app: str = "../build/run_clean",
+            ba_app: str = "../build/run_ba",
             merge_app: str = "../build/points_merge",
 
             build_dir: str = "../build",
@@ -144,6 +147,7 @@ class SLAMTestRunner:
             if_slam: bool = True,
             if_pgo: bool = False,
             if_clean: bool = False,
+            if_ba: bool = False,
             if_merge: bool = False,
             if_postprocess: bool = False,
     ):
@@ -153,6 +157,7 @@ class SLAMTestRunner:
         self.points_post_app = points_post_app
         self.pgo_app = pgo_app
         self.clean_app = clean_app
+        self.ba_app = ba_app
         self.merge_app = merge_app
 
         self.build_dir = build_dir
@@ -164,6 +169,7 @@ class SLAMTestRunner:
         self.if_slam = if_slam
         self.if_pgo = if_pgo
         self.if_clean = if_clean
+        self.if_ba = if_ba
         self.if_merge = if_merge
         self.if_postprocess = if_postprocess
 
@@ -179,6 +185,7 @@ class SLAMTestRunner:
                  "run_mapping_offline",
                  "run_pgo",
                  "run_clean",
+                 "run_ba",
                  "points_merge",
                  "points_jet",
                  "-j", str(jobs)],
@@ -224,16 +231,17 @@ class SLAMTestRunner:
             return False
 
     def run_mapping(self, task: RunTask):
-        """SLAM scans -> loop closure -> dynamic point removal -> merged map -> smoothed map.
+        """SLAM scans -> loop closure -> dynamic point removal -> bundle adjustment -> merged map -> smoothed map.
 
         Every step takes what the steps before it produced: without --if_pgo the scans are placed by
-        traj_log.txt, without --if_clean the merged map has the dynamic points.
+        traj_log.txt, without --if_clean the merged map has the dynamic points and run_ba adjusts with them,
+        without --if_ba the merged map is placed by the poses of run_pgo.
         """
         output_dir = task.output_dir
         scans_dir = os.path.join(output_dir, "scans")
         poses = os.path.join(output_dir, "traj_log.txt")  # its first column is the file stem of each scan
         map_fname = os.path.join(output_dir, "map.pcd")
-        if not (self.if_pgo or self.if_clean or self.if_merge or self.if_postprocess):
+        if not (self.if_pgo or self.if_clean or self.if_ba or self.if_merge or self.if_postprocess):
             return
         if not os.path.isdir(scans_dir):
             print(f"  no {scans_dir}, mapping steps skipped: they need front_end: fastlio and pcd_save_en: true")
@@ -261,6 +269,18 @@ class SLAMTestRunner:
                                               ] + task.clean_args):
                 return
             scans_dir = clean_dir
+
+        if self.if_ba:
+            ba_dir = os.path.join(output_dir, "ba")
+            if not self.run_step("run_ba", [
+                self.ba_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--config", task.ba_config,
+                "--out", ba_dir,
+            ]):
+                return
+            poses = os.path.join(ba_dir, "traj_ba.txt")
 
         if self.if_merge:
             if not self.run_step("points_merge", [
@@ -310,6 +330,10 @@ class SLAMTestRunner:
             if self.if_pgo and os.path.exists(traj_pgo):
                 result.ate_pgo = self.evaluate_ate(task.ground_truth_fname, traj_pgo)
                 print("ATE RMSE after PGO: {}".format(result.ate_pgo))
+            traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
+            if self.if_ba and os.path.exists(traj_ba):
+                result.ate_ba = self.evaluate_ate(task.ground_truth_fname, traj_ba)
+                print("ATE RMSE after BA: {}".format(result.ate_ba))
         else:
             print("Fail to evaluate the ATE RMSE")
         return result
@@ -372,6 +396,7 @@ class SLAMTestRunner:
                 gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
                 clean_args=dataset.clean_args,
                 pgo_config=dataset.pgo_config,
+                ba_config=dataset.ba_config,
             )
             test_result = self.run_single(task)
             suite.test_results.append(test_result)
@@ -388,8 +413,8 @@ class SLAMTestRunner:
             f.write("-" * 65 + "\n")
             for suite_result in suite_results:
                 for test_result in suite_result.test_results:
-                    f.write("{},\t{},\t{},\t{}\n".format(test_result.bag_name, test_result.duration_sec,
-                                                         test_result.ate, test_result.ate_pgo))
+                    f.write("{},\t{},\t{},\t{},\t{}\n".format(test_result.bag_name, test_result.duration_sec,
+                                                              test_result.ate, test_result.ate_pgo, test_result.ate_ba))
             f.write("-" * 65 + "\n")
 
     # ── Main entry ────────────────────────────────

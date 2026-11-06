@@ -1,7 +1,7 @@
 //
 // Offline pose graph optimization: loop closure over the output of any odometry.
 //
-//   run_pgo <scans_dir> <pose_fname> [--config pgo.yaml] [--out dir]  (-c/-o, -h for help)
+//   run_pgo --scans_dir <dir> --pose_fname <file> [--config pgo.yaml] [--out dir]  (-c/-o, -h for help)
 //
 // <scans_dir> holds the scans as PCD files in the sensor's own frame, <name>.pcd; <pose_fname> is the
 // pose file with a line "<name> x y z qx qy qz qw" (T_world_body) per scan.  <name> is the same string in
@@ -75,17 +75,15 @@ int main(int argc, char** argv) {
     FLAGS_logtostderr = true;
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
     std::string scans_dir, pose_fname, config_fname, out_arg;
-    po::options_description desc("run_pgo <scans_dir> <pose_fname> [options]");
+    po::options_description desc("run_pgo --scans_dir <dir> --pose_fname <file> [options]");
     desc.add_options()("help,h", "show this help")
         ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.pcd scans")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
         ("config,c", po::value<std::string>(&config_fname), "yaml with the pgo parameters (see config/pgo.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/pgo");
-    po::positional_options_description pos;
-    pos.add("scans_dir", 1).add("pose_fname", 1);
     po::variables_map vm;
     try {
-        po::store(po::command_line_parser(argc, argv).options(desc).positional(pos).run(), vm);
+        po::store(po::command_line_parser(argc, argv).options(desc).run(), vm);
         po::notify(vm);
     } catch (const po::error& e) {
         std::cerr << e.what() << "\n" << desc << std::endl;

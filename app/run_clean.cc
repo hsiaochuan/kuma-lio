@@ -1,7 +1,7 @@
 //
 // Offline removal of dynamic points from LiDAR scans, after DUFOMap (Daniel et al., RA-L 2024).
 //
-//   run_clean <scans_dir> <pose_fname> [--out dir] [--voxel 0.2] ...  (-h for help)
+//   run_clean --scans_dir <dir> --pose_fname <file> [--out dir] [--voxel 0.2] ...  (-h for help)
 //
 // <scans_dir>/<name>.ply are the scans in the sensor's own frame and <pose_fname> holds a line
 // "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's traj_pgo.txt.  The output folder
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
 
     std::string scans_dir, pose_fname, out_arg;
     Param prm;
-    po::options_description desc("run_clean <scans_dir> <pose_fname> [options]");
+    po::options_description desc("run_clean --scans_dir <dir> --pose_fname <file> [options]");
     desc.add_options()("help,h", "show this help")
         ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.ply scans")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
@@ -203,11 +203,9 @@ int main(int argc, char** argv) {
         ("near_range", po::value<double>(&prm.near_range)->default_value(prm.near_range), "what counts as near [m]")
         ("up_z", po::value<double>(&prm.up_z)->default_value(prm.up_z), "+1 if the world's z axis points up, -1 if down")
         ("sensor_height", po::value<double>(&prm.sensor_height)->default_value(prm.sensor_height), "sensor above the ground [m]");
-    po::positional_options_description pos;
-    pos.add("scans_dir", 1).add("pose_fname", 1);
     po::variables_map vm;
     try {
-        po::store(po::command_line_parser(argc, argv).options(desc).positional(pos).run(), vm);
+        po::store(po::command_line_parser(argc, argv).options(desc).run(), vm);
         po::notify(vm);
     } catch (const po::error& e) {
         std::cerr << e.what() << "\n" << desc << std::endl;
