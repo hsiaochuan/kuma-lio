@@ -54,6 +54,11 @@ resple:
 
 fastlio:
   mode: LIO
+  # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
+  sub_max: 4
+  # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
+  sub_std_acc: 0.0
+  sub_std_gyr: 0.0
   down_size: 0.2
   cov_gyr: 0.01
   cov_acc: 1.0

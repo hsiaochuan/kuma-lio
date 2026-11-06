@@ -106,6 +106,13 @@ class FastLio {
     /// Voxel-SLAM IMUEKF::motion_blur: x to `end_ns`, and the frame's points to that instant, LiDAR frame.
     void Propagate(const MeasureGroup& measures, int64_t end_ns, std::vector<Vec3>* scan);
     std::vector<Vec3> UniformSample(const std::vector<Vec3>& scan, double size) const;
+    /// Indices of the points UniformSample keeps.
+    std::vector<size_t> UniformSampleIndices(const std::vector<Vec3>& scan, double size) const;
+    /// FR-LIO Eq. 1: how many sub-frames this frame is cut into, from the spread of its IMU samples.
+    int SubFrameCount(const MeasureGroup& measures) const;
+    /// FR-LIO: n updates on slices of the frame, a backward smoother over their states, and the frame's points
+    /// re-expressed at the frame end with the smoothed poses.  Leaves x at the frame end and `points` as one frame.
+    void ProcessSubFrames(MeasureGroup& measures, int n);
     void SetPoints(const std::vector<Vec3>& scan);
     int Match();
     /// Voxel-SLAM lio_state_estimation; false when the matched planes leave a direction unobserved.
@@ -113,6 +120,7 @@ class FastLio {
 
     Imu last_imu_;
     int degrade_cnt_ = 0;
+    FastLioState::MatN phi_ = FastLioState::MatN::Identity();  ///< error-state transition of the last Propagate
 };
 
 }  // namespace faster_lio

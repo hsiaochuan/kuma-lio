@@ -1,6 +1,7 @@
 #include "fast_lio.h"
 
 #include <Eigen/Eigenvalues>
+#include <cmath>
 #include <unordered_map>
 
 #include "timer.h"
@@ -47,6 +48,7 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
     Vec3 pos = x.p, vel = x.v;
     Mat3 rot = x.R;
     FastLioState::MatN F, cov_w;
+    phi_.setIdentity();
     for (size_t i = 0; i + 1 < imus.size(); ++i) {
         const Imu& head = *imus[i];
         const Imu& tail = *imus[i + 1];
@@ -78,6 +80,7 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
         cov_w.block<3, 3>(9, 9).diagonal() = cov_bg * dt * dt;
         cov_w.block<3, 3>(12, 12).diagonal() = cov_ba * dt * dt;
         x.cov = F * x.cov * F.transpose() + cov_w;
+        phi_ = F * phi_;
 
         pos += vel * dt + 0.5 * acc_w * dt * dt;
         vel += acc_w * dt;
@@ -123,7 +126,7 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
     }
 }
 
-std::vector<Vec3> FastLio::UniformSample(const std::vector<Vec3>& scan, double size) const {
+std::vector<size_t> FastLio::UniformSampleIndices(const std::vector<Vec3>& scan, double size) const {
     struct Best {
         size_t idx;
         double d2;
@@ -143,9 +146,17 @@ std::vector<Vec3> FastLio::UniformSample(const std::vector<Vec3>& scan, double s
             best[ins.first->second] = {i, d2};
         }
     }
-    std::vector<Vec3> out;
+    std::vector<size_t> out;
     out.reserve(best.size());
-    for (const Best& b : best) out.push_back(scan[b.idx]);
+    for (const Best& b : best) out.push_back(b.idx);
+    return out;
+}
+
+std::vector<Vec3> FastLio::UniformSample(const std::vector<Vec3>& scan, double size) const {
+    const std::vector<size_t> idx = UniformSampleIndices(scan, size);
+    std::vector<Vec3> out;
+    out.reserve(idx.size());
+    for (const size_t i : idx) out.push_back(scan[i]);
     return out;
 }
 
@@ -233,24 +244,136 @@ bool FastLio::IteratedUpdate() {
     return saes.eigenvalues()[0] >= kMinNormalEigen;
 }
 
+int FastLio::SubFrameCount(const MeasureGroup& measures) const {
+    const FastLioParam& fp = param->fast_lio_;
+    if (fp.sub_max <= 1 || measures.imu_.size() < 2) return 1;
+    if (fp.sub_std_acc <= 0.0 && fp.sub_std_gyr <= 0.0) return fp.sub_max;
+    Vec3 acc_sum = Vec3::Zero(), acc_sq = Vec3::Zero(), gyr_sum = Vec3::Zero(), gyr_sq = Vec3::Zero();
+    for (const Imu& imu : measures.imu_) {
+        acc_sum += imu.linear_acceleration;
+        acc_sq += imu.linear_acceleration.cwiseProduct(imu.linear_acceleration);
+        gyr_sum += imu.angular_velocity;
+        gyr_sq += imu.angular_velocity.cwiseProduct(imu.angular_velocity);
+    }
+    const double m = static_cast<double>(measures.imu_.size());
+    const auto std_of = [m](const Vec3& sum, const Vec3& sq) {
+        const Vec3 mean = sum / m;
+        return std::sqrt(std::max(0.0, (sq / m - mean.cwiseProduct(mean)).sum() / 3.0));
+    };
+    const double sa = std_of(acc_sum, acc_sq);
+    const double sg = std_of(gyr_sum, gyr_sq);
+    const double ratio = std::max(fp.sub_std_acc > 0.0 ? sa / fp.sub_std_acc : 0.0,
+                                  fp.sub_std_gyr > 0.0 ? sg / fp.sub_std_gyr : 0.0);
+    return std::min(fp.sub_max, std::max(1, static_cast<int>(std::ceil(fp.sub_max * ratio))));
+}
+
+void FastLio::ProcessSubFrames(MeasureGroup& measures, int n) {
+    using MatN = FastLioState::MatN;
+    using VecN = FastLioState::VecN;
+    struct Node {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        FastLioState prior;  ///< after the propagation to the end of the slice, cov = P-
+        FastLioState post;   ///< after its update
+        MatN phi;            ///< error-state transition from the previous slice's end
+        Eigen::aligned_vector<FastLioPoint> pts;  ///< body frame at the end of the slice
+    };
+    Eigen::aligned_vector<Node> nodes(n);
+    const FastLioParam& fast_opt = param->fast_lio_;
+    const int64_t t0 = last_end_ns;
+    const int64_t t1 = measures.mea_end_;
+    const PointCloud& cloud = *measures.lidar_;
+    size_t pi = 0, ii = 0;
+    MeasureGroup slice;
+    for (int j = 0; j < n; ++j) {
+        const bool last = j == n - 1;
+        const int64_t tj = last ? t1 : t0 + (t1 - t0) * (j + 1) / n;
+        slice.imu_.clear();
+        slice.lidar_->clear();
+        slice.mea_end_ = tj;
+        while (ii < measures.imu_.size() && (last || measures.imu_[ii].time_ns <= tj))
+            slice.imu_.push_back(measures.imu_[ii++]);
+        while (pi < cloud.size() && (last || cloud.points[pi].GetTimeNs() <= tj))
+            slice.lidar_->push_back(cloud.points[pi++]);
+
+        std::vector<Vec3> scan;
+        Propagate(slice, tj, &scan);
+        nodes[j].phi = phi_;
+        nodes[j].prior = x;
+        std::vector<Vec3> down = UniformSample(scan, fast_opt.down_size);
+        if (static_cast<int>(down.size()) < kMinScanPoints / n) down = UniformSample(scan, fast_opt.down_size / 2);
+        SetPoints(down);
+        if (!points.empty()) {
+            if (IteratedUpdate()) {
+                if (degrade_cnt_ > 0) degrade_cnt_--;
+            } else {
+                degrade_cnt_++;
+            }
+        }
+        nodes[j].post = x;
+        nodes[j].pts = points;
+    }
+
+    // backward smoother (FR-LIO Eq. 12-14): the correction the last update made is pushed back through the slices
+    Eigen::aligned_vector<FastLioState> smooth(n);
+    smooth[n - 1] = nodes[n - 1].post;
+    MatN P_next = nodes[n - 1].post.cov;
+    for (int j = n - 2; j >= 0; --j) {
+        const MatN& P_post = nodes[j].post.cov;
+        const MatN& P_prior_next = nodes[j + 1].prior.cov;
+        const MatN G = P_prior_next.ldlt().solve(nodes[j + 1].phi * P_post).transpose();  // P+ Phi^T (P-)^-1
+        const VecN dx = smooth[j + 1] - nodes[j + 1].prior;
+        smooth[j] = nodes[j].post;
+        smooth[j] += G * dx;
+        smooth[j].cov = P_post + G * (P_next - P_prior_next) * G.transpose();
+        P_next = smooth[j].cov;
+    }
+
+    // the whole frame at the frame end, with the smoothed pose of every slice
+    x = smooth[n - 1];
+    const Mat3 Rt = x.R.transpose();
+    Eigen::aligned_vector<FastLioPoint> all;
+    std::vector<Vec3> pos;
+    for (int j = 0; j < n; ++j) {
+        const Mat3 Rr = Rt * smooth[j].R;
+        const Vec3 tr = Rt * (smooth[j].p - x.p);
+        for (const FastLioPoint& pt : nodes[j].pts) {
+            FastLioPoint q = pt;
+            if (j < n - 1) {
+                q.body = Rr * pt.body + tr;
+                q.var = Rr * pt.var * Rr.transpose();
+            }
+            pos.push_back(q.body);
+            all.push_back(q);
+        }
+    }
+
+    points.clear();
+    for (const size_t i : UniformSampleIndices(pos, fast_opt.down_size)) points.push_back(all[i]);
+}
+
 void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     Timer timer;
     for (const Imu& imu : measures.imu_) lba->AddImu(imu.time_ns, imu.angular_velocity, imu.linear_acceleration);
 
-    std::vector<Vec3> scan;
-    Propagate(measures, measures.mea_end_, &scan);
+    const int n_sub = SubFrameCount(measures);
+    if (n_sub <= 1) {
+        std::vector<Vec3> scan;
+        Propagate(measures, measures.mea_end_, &scan);
 
-    const double down_size = param->fast_lio_.down_size;
-    std::vector<Vec3> down = UniformSample(scan, down_size);
-    if (static_cast<int>(down.size()) < kMinScanPoints) down = UniformSample(scan, down_size / 2);
-    SetPoints(down);
+        const double down_size = param->fast_lio_.down_size;
+        std::vector<Vec3> down = UniformSample(scan, down_size);
+        if (static_cast<int>(down.size()) < kMinScanPoints) down = UniformSample(scan, down_size / 2);
+        SetPoints(down);
 
-    if (!points.empty()) {
-        if (IteratedUpdate()) {
-            if (degrade_cnt_ > 0) degrade_cnt_--;
-        } else {
-            degrade_cnt_++;
+        if (!points.empty()) {
+            if (IteratedUpdate()) {
+                if (degrade_cnt_ > 0) degrade_cnt_--;
+            } else {
+                degrade_cnt_++;
+            }
         }
+    } else {
+        ProcessSubFrames(measures, n_sub);
     }
     const double t_update = timer.ElapsedMiniSeconds(true);
 
@@ -269,7 +392,7 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     }
     for (FastLioPoint& pt : points) pt.world = x.R * pt.body + x.p;
     LOG(INFO) << "time [ms]: update " << t_update << " lba " << timer.ElapsedMiniSeconds() << " raw points "
-              << measures.lidar_->size() << " degrade " << degrade_cnt_ << " bg " << x.bg.transpose() << " ba "
+              << measures.lidar_->size() << " degrade " << degrade_cnt_ << " sub " << n_sub << " bg " << x.bg.transpose() << " ba "
               << x.ba.transpose();
 }
 

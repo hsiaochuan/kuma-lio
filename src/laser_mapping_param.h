@@ -67,6 +67,9 @@ struct FastLioParam {
     double rdw_gyr;            // per sample, as Voxel-SLAM
     double rdw_acc;
     double r_base;             // [m^2] added to the per-point residual variance
+    int sub_max = 1;           // FR-LIO: a frame is cut into at most this many sub-frames; 1 = one update per frame
+    double sub_std_acc = 0.0;  // [m/s^2] IMU accel std within a frame at which sub_max sub-frames are used
+    double sub_std_gyr = 0.0;  // [rad/s] the same for the gyroscope; both <= 0: always sub_max
 };
 
 /// A key every config has: the configs all list the same keys.
@@ -219,6 +222,9 @@ class LaserMappingParam {
             fast_lio_.rdw_gyr = ConfigKey<double>(f, "rdw_gyr");
             fast_lio_.rdw_acc = ConfigKey<double>(f, "rdw_acc");
             fast_lio_.r_base = ConfigKey<double>(f, "r_base");
+            fast_lio_.sub_max = f["sub_max"].as<int>();
+            fast_lio_.sub_std_acc = f["sub_std_acc"].as<double>();
+            fast_lio_.sub_std_gyr = f["sub_std_gyr"].as<double>();
 
             const YAML::Node b = yaml["lba"];
             lba_.win_size = ConfigKey<int>(b, "win_size");
