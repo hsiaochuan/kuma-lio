@@ -22,10 +22,12 @@
 #include <boost/program_options.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <set>
 
 #include "ba/ba_data.h"
 #include "ba/balm3.h"
@@ -72,6 +74,15 @@ bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     points->reserve(cloud.size());
     for (const auto& q : cloud.points) points->emplace_back(q.x, q.y, q.z);
     return true;
+}
+
+/// A file whose extension (any case) is one of the common image formats.
+bool IsImageFile(const fs::path& file) {
+    std::string ext = file.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+    static const std::set<std::string> kImageExts = {".png", ".jpg", ".jpeg", ".bmp", ".tif",
+                                                     ".tiff", ".webp", ".pgm", ".ppm"};
+    return kImageExts.count(ext) > 0;
 }
 
 /// The points of a scan that go into the BA: the far enough ones, thinned.
@@ -128,12 +139,13 @@ int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
-    std::string scans_dir, pose_fname, config_fname, out_dir;
+    std::string scans_dir, images_dir, pose_fname, config_fname, out_dir;
     po::options_description desc("run_ba --scans_dir <dir> --pose_fname <file> [options]");
     // clang-format off
     desc.add_options()
         ("help,h", "show this help")
         ("scans_dir", po::value<std::string>(&scans_dir),"folder with the <name>.ply scans")
+        ("images_dir", po::value<std::string>(&images_dir), "folder with the <name>.<png|jpg|...> images (optional)")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
         ("config,c", po::value<std::string>(&config_fname),"yaml with the BA parameters (see config/ba.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_dir), "output folder; default <scans_dir>/ba");
@@ -152,6 +164,7 @@ int main(int argc, char** argv) {
     }
     const fs::path dir = scans_dir;
     if (!fs::is_directory(dir)) LOG(FATAL) << "not a folder: " << dir;
+    if (!images_dir.empty() && !fs::is_directory(images_dir)) LOG(FATAL) << "not a folder: " << images_dir;
     const fs::path out = out_dir.empty() ? dir / "ba" : fs::path(out_dir);
     fs::create_directories(out);
 
@@ -212,6 +225,33 @@ int main(int argc, char** argv) {
     }
     LOG(INFO) << "laser frames loaded: " << ba_data.scans.size() << " (removed without pose: " << scan_without_pose
               << ")";
+
+    // Associate the images to the poses; an image without pose is dropped.  Only the file is recorded.
+    if (!images_dir.empty()) {
+        std::vector<fs::path> image_files;
+        for (const auto& entry : fs::directory_iterator(images_dir))
+            if (entry.is_regular_file() && IsImageFile(entry.path())) image_files.push_back(entry.path());
+        std::sort(image_files.begin(), image_files.end());
+        std::set<ba::IndexT> pose_with_image;
+        ba::IndexT image_id = 0;
+        for (const fs::path& image_fname : image_files) {
+            const ba::IndexT id_pose = FindPoseId(image_fname.stem().string());
+            if (id_pose == ba::kUndefinedIndex) {
+                LOG(WARNING) << "no pose for image, it is removed: " << image_fname;
+                continue;
+            }
+            // the same name in two formats (<name>.png and <name>.jpg): the first one in file name order is kept
+            if (!pose_with_image.insert(id_pose).second) {
+                LOG(WARNING) << "another image already has this name, it is removed: " << image_fname;
+                continue;
+            }
+            auto image = std::make_shared<ba::RgbImage>();
+            image->path = image_fname.string();
+            image->id_pose = id_pose;
+            ba_data.rgb_images[image_id++] = std::move(image);
+        }
+        LOG(INFO) << "images associated to a pose: " << ba_data.rgb_images.size() << "/" << image_files.size();
+    }
 
     // Optimize the poses associated to a laser frame
     if (!BAOptimize(ba_data, prm)) LOG(WARNING) << "poses unchanged";

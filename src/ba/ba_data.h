@@ -39,12 +39,17 @@ struct Scan {
 /// All the laser frames, indexed by scan id
 using Scans = std::map<IndexT, std::shared_ptr<Scan>>;
 
+struct RgbImage {
+    std::string path;
+    IndexT id_pose = kUndefinedIndex;
+};
+using RgbImages = std::map<IndexT, std::shared_ptr<RgbImage>>;
 struct BaData {
     Poses poses;
     Scans scans;
+    RgbImages rgb_images;
 
-    /// Write the pose of every scan, in scan order, as TUM "timestamp x y z qx qy qz qw", the timestamp being the
-    /// stem of the scan's file; false if the file cannot be written.
+    Eigen::Isometry3d extrin;
     bool SaveTumPoses(const std::string& file) const {
         std::ofstream out(file);
         if (!out) return false;
