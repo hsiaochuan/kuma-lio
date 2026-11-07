@@ -210,9 +210,6 @@ int main(int argc, char** argv) {
             LOG(FATAL) << "duplicated pose name in the pose file: " << named_poses[i].name;
     ba::BaData ba_data;
     ba_data.extrin = extrin_fname.empty() ? Eigen::Isometry3d::Identity() : LoadExtrin(extrin_fname);
-    const Eigen::IOFormat one_line(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "; ", "", "", "[", "]");
-    LOG(INFO) << "extrin: R " << ba_data.extrin.linear().format(one_line) << ", t "
-              << ba_data.extrin.translation().transpose().format(one_line);
     // The id of the pose with this name (kUndefinedIndex if none), registered in sfm_data.poses.
     auto FindPoseId = [&](const std::string& name) -> ba::IndexT {
         const auto it = name_id_map.find(name);

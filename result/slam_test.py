@@ -222,8 +222,9 @@ class SLAMTestRunner:
 
         Every step takes what the steps before it produced: without --if_pgo the scans are placed by
         traj_log.txt, without --if_clean the merged map has the dynamic points and run_ba adjusts with them,
-        without --if_ba the merged map is placed by the poses of run_pgo.  run_ba alone starts from
-        pgo/traj_pgo.txt whenever that file exists, even from an earlier run, and from traj_log.txt otherwise.
+        without --if_ba the merged map is placed by the poses of run_pgo.  Poses are picked by which files exist,
+        even from an earlier run: run_ba starts from pgo/traj_pgo.txt, else traj_log.txt; points_merge takes
+        ba/traj_ba.txt, else pgo/traj_pgo.txt, else traj_log.txt.
         """
         output_dir = task.output_dir
         scans_dir = os.path.join(output_dir, "scans")
@@ -273,15 +274,19 @@ class SLAMTestRunner:
                 "--extrin_fname", "/home/hsiaochuan/slam/faster-lio/config/ba_extrin_i2nav.yaml",
             ]):
                 return
-            poses = os.path.join(ba_dir, "traj_ba.txt")
 
         if self.if_merge:
+            traj_log = os.path.join(output_dir, "traj_log.txt")
+            traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
+            traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
+            # the best poses there are: run_ba's, else run_pgo's, else the SLAM trajectory
+            poses = traj_ba if os.path.exists(traj_ba) else traj_pgo if os.path.exists(traj_pgo) else traj_log
             if not self.run_step("points_merge", [
                 self.merge_app,
                 "--trajectory", poses,
                 "--pcd_dir", scans_dir,
                 "--output", map_fname,
-                "--voxel_size", "0.05",
+                "--voxel_size", "0.02",
             ]):
                 return
 
@@ -315,18 +320,19 @@ class SLAMTestRunner:
         self.run_mapping(task)
 
         result.duration_sec = round(end_time - start_time, 1)
-        # result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
         if os.path.exists(task.ground_truth_fname):
-            result.ate = self.evaluate_ate(task.ground_truth_fname, os.path.join(output_dir, "traj_log.txt"))
-            print("ATE RMSE: {}".format(result.ate))
+            traj_log = os.path.join(output_dir, "traj_log.txt")
+            if os.path.exists(traj_log):
+                result.ate = self.evaluate_ate(task.ground_truth_fname, traj_log)
+                print("ATE RMSE LIO: {}".format(result.ate))
             traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
-            if self.if_pgo and os.path.exists(traj_pgo):
+            if os.path.exists(traj_pgo):
                 result.ate_pgo = self.evaluate_ate(task.ground_truth_fname, traj_pgo)
-                print("ATE RMSE after PGO: {}".format(result.ate_pgo))
+                print("ATE RMSE PGO: {}".format(result.ate_pgo))
             traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
-            if self.if_ba and os.path.exists(traj_ba):
+            if os.path.exists(traj_ba):
                 result.ate_ba = self.evaluate_ate(task.ground_truth_fname, traj_ba)
-                print("ATE RMSE after BA: {}".format(result.ate_ba))
+                print("ATE RMSE BA: {}".format(result.ate_ba))
         else:
             print("Fail to evaluate the ATE RMSE")
         return result
