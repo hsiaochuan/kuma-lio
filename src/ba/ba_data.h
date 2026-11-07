@@ -8,6 +8,7 @@
 //
 
 #include <Eigen/Geometry>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -90,7 +91,52 @@ struct BaData {
         }
         return images.good();
     }
+    /// Write the image pairs whose views overlap, one "<name1> <name2>" per line, as `colmap matches_importer
+    /// --match_type pairs` reads them.  A camera sees the pyramid of depth `radius` [m] and opening hfov x vfov
+    /// [deg] around its +z axis (the defaults are the i2Nav-Robot left camera of config/cameras.txt); two images
+    /// are a pair when their centers are closer than `radius` and each sees a point of the other's optical axis
+    /// within that depth.  False if the file cannot be written.
+    bool SavePairList(const std::string& pair_list_fname, double hfov = 73.8, double vfov = 58.8,
+                      double radius = 10.0) const {
+        std::ofstream out(pair_list_fname);
+        if (!out) return false;
+        const double tan_h = std::tan(hfov * EIGEN_PI / 360.0), tan_v = std::tan(vfov * EIGEN_PI / 360.0);
 
+        struct View {
+            Eigen::Isometry3d world_from_cam, cam_from_world;
+            std::string name;
+        };
+        std::vector<View, Eigen::aligned_allocator<View>> views;
+        views.reserve(rgb_images.size());
+        for (const auto& image_it : rgb_images) {
+            const RgbImage& image = *image_it.second;
+            View v;
+            v.world_from_cam = poses.at(image.id_pose) * extrin;
+            v.cam_from_world = v.world_from_cam.inverse();
+            v.name = std::filesystem::path(image.path).filename().string();
+            views.push_back(std::move(v));
+        }
+
+        // a sees b: a point of b's optical axis, up to `radius` deep, lies in a's view pyramid
+        constexpr int kSamples = 8;
+        auto sees = [&](const View& a, const View& b) {
+            for (int k = 1; k <= kSamples; ++k) {
+                const Eigen::Vector3d pc = a.cam_from_world * (b.world_from_cam * Eigen::Vector3d(0, 0, radius * k / kSamples));
+                if (pc.z() > 0 && pc.z() <= radius && std::abs(pc.x()) <= tan_h * pc.z() &&
+                    std::abs(pc.y()) <= tan_v * pc.z())
+                    return true;
+            }
+            return false;
+        };
+        for (size_t i = 0; i < views.size(); ++i)
+            for (size_t j = i + 1; j < views.size(); ++j) {
+                const View& a = views[i];
+                const View& b = views[j];
+                if ((a.world_from_cam.translation() - b.world_from_cam.translation()).norm() >= radius) continue;
+                if (sees(a, b) && sees(b, a)) out << a.name << ' ' << b.name << '\n';
+            }
+        return out.good();
+    }
     bool SaveTumPoses(const std::string& file) const {
         std::ofstream out(file);
         if (!out) return false;

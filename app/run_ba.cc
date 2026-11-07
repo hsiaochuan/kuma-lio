@@ -294,7 +294,10 @@ int main(int argc, char** argv) {
         fs::path images = fs::absolute(images_dir).lexically_normal();
         if (!images.has_filename()) images = images.parent_path();  // "images/" ends with a separator
         const fs::path sparse = images.parent_path() / "sparse";
-        if (!ba_data.SaveCOLMAP(sparse.string())) LOG(FATAL) << "cannot write " << sparse;
+        if (!ba_data.SaveCOLMAP(sparse.string()))
+            LOG(FATAL) << "cannot write " << sparse;
+        if (!ba_data.SavePairList(images.parent_path() / "pair_list.txt"))
+            LOG(FATAL) << "cannot write " << images.parent_path() / "pair_list.txt";
         LOG(INFO) << "wrote " << sparse / "images.txt" << " (" << ba_data.rgb_images.size()
                   << " images) and an empty " << sparse / "points3D.txt";
     }
