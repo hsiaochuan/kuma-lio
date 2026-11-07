@@ -1,11 +1,11 @@
-// points_jet.cpp
+// run_mls.cpp
 //
 // Point cloud smoothing by RIMLS projection: every point is moved onto the robust implicit MLS surface of the
 // cloud (Oztireli, Guennebaud, Gross, "Feature Preserving Point Set Surfaces based on Non-Linear Kernel
 // Regression", Eurographics 2009), after MeshLab's "MLS projection (RIMLS)" filter
 // (src/meshlabplugins/filter_mls/rimls.tpp and mlssurface.tpp of https://github.com/cnr-isti-vclab/meshlab).
 //
-//   points_jet -i map.ply -o map_post.ply [--filter_scale 2] [--sigma_n 0.75] ...  (-h for help)
+//   run_mls -i map.ply -o map_post.ply [--filter_scale 2] [--sigma_n 0.75] ...  (-h for help)
 //
 // What is the same as MeshLab: the per-point radius h = 2 sqrt(d2_max / k) over the k nearest neighbours, the
 // spatial weight (1 - d^2 / (scale h_j)^2)^4 and its gradient, the refitting loop with the normal weight
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
     int sor_mean_k = 16;
     double sor_stddev = 1.0;
 
-    po::options_description desc("points_jet: RIMLS point cloud smoothing");
+    po::options_description desc("run_mls: RIMLS point cloud smoothing");
     // clang-format off
     desc.add_options()
         ("help,h", "show this help")

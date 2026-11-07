@@ -121,11 +121,11 @@ class SLAMTestRunner:
     def __init__(
             self,
             offline_app: str = "../build/run_mapping_offline",
-            points_post_app: str = "../build/points_jet",
+            points_post_app: str = "../build/run_mls",
             pgo_app: str = "../build/run_pgo",
             clean_app: str = "../build/run_clean",
             ba_app: str = "../build/run_ba",
-            merge_app: str = "../build/points_merge",
+            merge_app: str = "../build/run_merge",
 
             build_dir: str = "../build",
             output_root: str = "./test_results",
@@ -173,8 +173,8 @@ class SLAMTestRunner:
                  "run_pgo",
                  "run_clean",
                  "run_ba",
-                 "points_merge",
-                 "points_jet",
+                 "run_merge",
+                 "run_mls",
                  "-j", str(jobs)],
                 check=True,
                 stdout=subprocess.PIPE,
@@ -223,7 +223,7 @@ class SLAMTestRunner:
         Every step takes what the steps before it produced: without --if_pgo the scans are placed by
         traj_log.txt, without --if_clean the merged map has the dynamic points and run_ba adjusts with them,
         without --if_ba the merged map is placed by the poses of run_pgo.  Poses are picked by which files exist,
-        even from an earlier run: run_ba starts from pgo/traj_pgo.txt, else traj_log.txt; points_merge takes
+        even from an earlier run: run_ba starts from pgo/traj_pgo.txt, else traj_log.txt; run_merge takes
         ba/traj_ba.txt, else pgo/traj_pgo.txt, else traj_log.txt.
         """
         output_dir = task.output_dir
@@ -281,7 +281,7 @@ class SLAMTestRunner:
             traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
             # the best poses there are: run_ba's, else run_pgo's, else the SLAM trajectory
             poses = traj_ba if os.path.exists(traj_ba) else traj_pgo if os.path.exists(traj_pgo) else traj_log
-            if not self.run_step("points_merge", [
+            if not self.run_step("run_merge", [
                 self.merge_app,
                 "--trajectory", poses,
                 "--pcd_dir", scans_dir,
@@ -292,12 +292,12 @@ class SLAMTestRunner:
 
         if self.if_postprocess:
             if not os.path.exists(map_fname):
-                print(f"  no {map_fname}, points_jet skipped: it needs --if_merge")
+                print(f"  no {map_fname}, run_mls skipped: it needs --if_merge")
                 return
-            self.run_step("points_jet", [
+            self.run_step("run_mls", [
                 self.points_post_app,
                 "--input", map_fname,
-                "--output", os.path.join(output_dir, "map_post.pcd"),
+                "--output", os.path.join(output_dir, "map_post.ply"),
             ])
 
     def run_single(self, task: RunTask) -> TestResult:

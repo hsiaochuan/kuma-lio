@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     int start_idx = 0;
     int end_idx = -1;
     double voxel_size = 0.05;
-    po::options_description desc("Jet smoothing options");
+    po::options_description desc("run_merge options");
     // clang-format off
     desc.add_options()
         ("help,h", "Show help message")

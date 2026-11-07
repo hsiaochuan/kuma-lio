@@ -141,8 +141,8 @@ target_link_libraries(run_clean ${PCL_LIBRARIES} ${OpenMP_CXX_LIBRARIES} glog ya
 add_executable(run_ba app/run_ba.cc)
 target_link_libraries(run_ba faster_pgo Boost::program_options)
 
-add_executable(points_jet ./src/points_jet.cpp)
-target_link_libraries(points_jet ${PROJECT_NAME})
+add_executable(run_mls app/run_mls.cpp)
+target_link_libraries(run_mls ${PROJECT_NAME})
 
-add_executable(points_merge ./src/points_merge.cpp)
-target_link_libraries(points_merge ${PROJECT_NAME})
+add_executable(run_merge app/run_merge.cpp)
+target_link_libraries(run_merge ${PROJECT_NAME})
