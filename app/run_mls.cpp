@@ -33,6 +33,7 @@
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <boost/program_options.hpp>
+#include <boost/progress.hpp>
 
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/io/ply_io.h>
@@ -45,6 +46,16 @@ namespace po = boost::program_options;
 namespace {
 
 using Cloud = pcl::PointCloud<pcl::PointXYZI>;
+
+/// boost::progress_display is not thread safe: the loops below advance it once per kProgressBlock points, under a
+/// critical section, from inside `omp for schedule(dynamic, kProgressBlock)` (whose chunks start at multiples of it).
+constexpr long kProgressBlock = 1024;
+inline void Tick(boost::progress_display& bar, long i) {
+    if (i % kProgressBlock == kProgressBlock - 1) {
+#pragma omp critical(progress)
+        bar += kProgressBlock;
+    }
+}
 
 struct RimlsParam {
     int k = 16;                       ///< neighbours of the per-point radius and of the PCA normal
@@ -174,7 +185,8 @@ int main(int argc, char** argv) {
     RimlsParam prm;
     bool enable_sor = true;
     int sor_mean_k = 16;
-    double sor_stddev = 1.0;
+    double sor_stddev = 3.0;  // was 1.0, which cuts the top ~16 % of a normal distribution; a LiDAR map's density
+                              // falls with range, so its sparse far points fail a global mean + k sigma test
 
     po::options_description desc("run_mls: RIMLS point cloud smoothing");
     // clang-format off
@@ -195,7 +207,7 @@ int main(int argc, char** argv) {
          "projection stops at this fraction of the mean point radius")
         ("sor", po::value<bool>(&enable_sor)->default_value(enable_sor), "statistical outlier removal first")
         ("sor-mean-k", po::value<int>(&sor_mean_k)->default_value(sor_mean_k), "SOR mean K")
-        ("sor-stddev", po::value<double>(&sor_stddev)->default_value(sor_stddev), "SOR stddev multiplier");
+        ("sor-stddev", po::value<double>(&sor_stddev)->default_value(sor_stddev), "SOR: a point goes when its mean distance to its sor-mean-k neighbours exceeds the global mean + this many standard deviations; larger removes fewer");
     // clang-format on
     po::variables_map vm;
     try {
@@ -231,8 +243,10 @@ int main(int argc, char** argv) {
         sor.setMeanK(sor_mean_k);
         sor.setStddevMulThresh(sor_stddev);
         sor.filter(*filtered);
+        std::cout << "[INFO] SOR kept " << filtered->size() << " of " << cloud->size() << " points ("
+                  << 100.0 * (cloud->size() - filtered->size()) / std::max<size_t>(cloud->size(), 1) << " % removed)"
+                  << std::endl;
         cloud = filtered;
-        std::cout << "[INFO] SOR kept " << cloud->size() << " points" << std::endl;
     }
     if (cloud->size() <= size_t(prm.k)) {
         std::cerr << "[ERROR] " << cloud->size() << " points, not more than --k " << prm.k << std::endl;
@@ -245,11 +259,13 @@ int main(int argc, char** argv) {
     const long n = long(cloud->size());
     std::vector<double> radii(n);
     std::vector<Eigen::Vector3d> normals(n);
+    std::cout << "[INFO] point radii and normals" << std::endl;
+    boost::progress_display bar_normal(n);
 #pragma omp parallel
     {
         std::vector<int> ids;
         std::vector<float> d2s;
-#pragma omp for schedule(dynamic, 1024)
+#pragma omp for schedule(dynamic, kProgressBlock)
         for (long i = 0; i < n; ++i) {
             const int found = knn.nearestKSearch(cloud->points[i], prm.k, ids, d2s);
             const double d2_max = found > 0 ? *std::max_element(d2s.begin(), d2s.begin() + found) : 0.0;
@@ -264,21 +280,27 @@ int main(int argc, char** argv) {
             }
             const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(cov);
             normals[i] = es.eigenvectors().col(0);  // smallest eigenvalue; the sign is fixed per neighbourhood later
+            Tick(bar_normal, i);
         }
     }
+    bar_normal += n % kProgressBlock;  // the last, partial block
 
     // 4) RIMLS projection of every point
     const Rimls rimls(cloud, normals, radii, prm);
     Cloud::Ptr out(new Cloud(*cloud));
     long failed = 0;
-#pragma omp parallel for schedule(dynamic, 1024) reduction(+ : failed)
+    std::cout << "[INFO] RIMLS projection" << std::endl;
+    boost::progress_display bar_project(n);
+#pragma omp parallel for schedule(dynamic, kProgressBlock) reduction(+ : failed)
     for (long i = 0; i < n; ++i) {
         Eigen::Vector3d p;
         if (!rimls.Project(int(i), &p)) ++failed;
         out->points[i].x = float(p.x());
         out->points[i].y = float(p.y());
         out->points[i].z = float(p.z());
+        Tick(bar_project, i);
     }
+    bar_project += n % kProgressBlock;
     out->width = std::uint32_t(out->size());
     out->height = 1;
     out->is_dense = true;

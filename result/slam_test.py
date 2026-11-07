@@ -121,7 +121,7 @@ class SLAMTestRunner:
     def __init__(
             self,
             offline_app: str = "../build/run_mapping_offline",
-            points_post_app: str = "../build/run_mls",
+            mls_app: str = "../build/run_mls",
             pgo_app: str = "../build/run_pgo",
             clean_app: str = "../build/run_clean",
             ba_app: str = "../build/run_ba",
@@ -136,12 +136,12 @@ class SLAMTestRunner:
             if_clean: bool = False,
             if_ba: bool = False,
             if_merge: bool = False,
-            if_postprocess: bool = False,
+            if_mls: bool = False,
     ):
         self.git_branch = get_git_info()[0]
         self.git_commit = get_git_info()[1]
         self.offline_app = offline_app
-        self.points_post_app = points_post_app
+        self.mls_app = mls_app
         self.pgo_app = pgo_app
         self.clean_app = clean_app
         self.ba_app = ba_app
@@ -158,7 +158,7 @@ class SLAMTestRunner:
         self.if_clean = if_clean
         self.if_ba = if_ba
         self.if_merge = if_merge
-        self.if_postprocess = if_postprocess
+        self.if_mls = if_mls
 
     # ── Build ──────────────────────────────────
 
@@ -230,7 +230,7 @@ class SLAMTestRunner:
         scans_dir = os.path.join(output_dir, "scans")
         poses = os.path.join(output_dir, "traj_log.txt")  # its first column is the file stem of each scan
         map_fname = os.path.join(output_dir, "map.ply")
-        if not (self.if_pgo or self.if_clean or self.if_ba or self.if_merge or self.if_postprocess):
+        if not (self.if_pgo or self.if_clean or self.if_ba or self.if_merge or self.if_mls):
             return
         if not os.path.isdir(scans_dir):
             print(f"  no {scans_dir}, mapping steps skipped: they need front_end: fastlio and pcd_save_en: true")
@@ -258,7 +258,6 @@ class SLAMTestRunner:
                 "--out", clean_dir,
             ]):
                 return
-            scans_dir = clean_dir
 
         if self.if_ba:
             ba_dir = os.path.join(output_dir, "ba")
@@ -281,21 +280,21 @@ class SLAMTestRunner:
             traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
             # the best poses there are: run_ba's, else run_pgo's, else the SLAM trajectory
             poses = traj_ba if os.path.exists(traj_ba) else traj_pgo if os.path.exists(traj_pgo) else traj_log
+
+            clean_scans_dir = os.path.join(output_dir, "clean")
+            scans = clean_scans_dir if os.path.isdir(clean_scans_dir) else scans_dir
             if not self.run_step("run_merge", [
                 self.merge_app,
                 "--trajectory", poses,
-                "--pcd_dir", scans_dir,
+                "--pcd_dir", scans,
                 "--output", map_fname,
                 "--voxel_size", "0.02",
             ]):
                 return
 
-        if self.if_postprocess:
-            if not os.path.exists(map_fname):
-                print(f"  no {map_fname}, run_mls skipped: it needs --if_merge")
-                return
+        if self.if_mls:
             self.run_step("run_mls", [
-                self.points_post_app,
+                self.mls_app,
                 "--input", map_fname,
                 "--output", os.path.join(output_dir, "map_post.ply"),
             ])
@@ -621,7 +620,7 @@ def main():
     runner.if_clean = args.if_clean
     runner.if_ba = args.if_ba
     runner.if_merge = args.if_merge
-    runner.if_postprocess = args.if_postprocess
+    runner.if_mls = args.if_mls
     runner.run_all(datasets)
 
 
