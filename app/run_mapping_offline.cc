@@ -15,14 +15,11 @@ namespace fs = boost::filesystem;
 
 DEFINE_string(config_file, "./config/avia.yaml", "path to config file");
 DEFINE_string(bag_file, "", "path to the ros bag");
-DEFINE_string(prior_map_file, "", "path to the prior map file");
 DEFINE_string(output_dir, "", "save the result to the dir");
 DEFINE_double(start, 0.0, "start time in seconds from beginning of bag");
 DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
 DEFINE_bool(dynamic_init, false, "try the dynamic (moving-start) initialization before the stationary one");
-DEFINE_string(prior_map_fname, "", "path to prior map file");
-DEFINE_string(prior_init_pose, "", "");
-DEFINE_string(camera_fname, "", "");
+DEFINE_string(camera_fname, "", "camera yaml like config/i2nav_robot_camera.yaml: extrin_R, extrin_t (T_imu_cam) and camera (cameras.txt lines); empty = no camera");
 DEFINE_string(gnss_obs_fname, "", "");
 DEFINE_string(nav_fname, "", "");
 bool if_exit = false;
@@ -30,15 +27,11 @@ void SigHandle(int sig) {
     if_exit = true;
     LOG(INFO) << "Catch Kill Signal";
 }
-void StringToPose(const std::string &str, Vec3 &pos, Eigen::Quaterniond &q) {
-    sscanf(str.c_str(), "%lf,%lf,%lf,%lf,%lf,%lf,%lf", &pos[0], &pos[1], &pos[2], &q.x(), &q.y(), &q.z(), &q.w());
-}
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     const std::string bag_file = FLAGS_bag_file;
     const std::string config_file = FLAGS_config_file;
     const std::string output_dir = FLAGS_output_dir;
-    const std::string prior_map_file = FLAGS_prior_map_file;
     const std::string camera_fname = FLAGS_camera_fname;
     const std::string gnss_obs_fname = FLAGS_gnss_obs_fname;
     const std::string nav_fname = FLAGS_nav_fname;
@@ -61,16 +54,6 @@ int main(int argc, char **argv) {
     laser_mapping->output_dir = output_dir;
     laser_mapping->dynamic_init_ = FLAGS_dynamic_init;
     laser_mapping->InitialPublishers(nh);
-
-    Eigen::Vector3d prior_init_position(0, 0, 0);
-    Eigen::Quaterniond prior_init_rotation(1, 0, 0, 0);
-    if (!FLAGS_prior_init_pose.empty()) {
-        StringToPose(FLAGS_prior_init_pose, prior_init_position, prior_init_rotation);
-        laser_mapping->prior_init_rotation_ = prior_init_rotation;
-        laser_mapping->prior_init_position_ = prior_init_position;
-        LOG(INFO) << "prior init position: " << prior_init_position.transpose();
-        LOG(INFO) << "prior init rotation: " << prior_init_rotation.coeffs().transpose();
-    }
 
     // handle ctrl-c
     signal(SIGINT, SigHandle);

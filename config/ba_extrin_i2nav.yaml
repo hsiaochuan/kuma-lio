@@ -1,6 +1,0 @@
-# run_ba --extrin_fname: i2Nav-Robot 左相机（openMVG balvm/i2nav_robot.yaml，官方 calibration.yaml 的 camera.left）
-# extrin = T_imu_cam：P_imu = R * P_cam + t，只有当位姿文件是 IMU 位姿 T_world_imu 时才对
-extrin_R: [0.00549192, -0.00206914, 0.99998278,
-           0.99998051, -0.00295932, -0.00549803,
-           0.00297065, 0.99999348, 0.00205284]
-extrin_t: [0.09, -0.2, -0.054]  # [m]

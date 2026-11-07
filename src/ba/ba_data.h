@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "common_lib.h"
-
+#include "cameras/cameras.h"
 namespace faster_lio {
 namespace ba {
 
@@ -44,26 +44,34 @@ using Scans = std::map<IndexT, std::shared_ptr<Scan>>;
 struct RgbImage {
     std::string path;
     IndexT id_pose = kUndefinedIndex;
+    IndexT id_camera = kUndefinedIndex;
 };
 using RgbImages = std::map<IndexT, std::shared_ptr<RgbImage>>;
-
+using Cameras = std::map<IndexT, std::shared_ptr<CamModel>>;
 struct BaData {
     Poses poses;
     Scans scans;
     RgbImages rgb_images;
-
+    Cameras cameras;
     /// T_body_cam, the camera in the body frame of the poses: P_body = R P_cam + t
     Eigen::Isometry3d extrin = Eigen::Isometry3d::Identity();
 
-    /// Write `dir` as the --input_path of `colmap point_triangulator`: images.txt and an empty points3D.txt.  The
-    /// cameras.txt holding camera 1 is not written (config/cameras.txt is the i2Nav-Robot left camera).  Every image
-    /// uses camera 1, is named by its file name (the name the database has under --image_path) and has
-    /// cam_from_world = (pose * extrin)^-1, with no 2D point.  False if a file cannot be written.
+    /// Write `dir` as the --input_path of `colmap point_triangulator`: cameras.txt (the cameras, by CAMERA_ID;
+    /// left out when there is none), images.txt and an empty points3D.txt.  Every image uses camera 1, is named by
+    /// its file name (the name the database has under --image_path) and has cam_from_world = (pose * extrin)^-1,
+    /// with no 2D point.  False if a file cannot be written.
     bool SaveCOLMAP(const std::string& dir) const {
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (ec) return false;
         const std::filesystem::path folder(dir);
+
+        if (!cameras.empty()) {
+            if (!cameras.count(1)) LOG(WARNING) << "no camera 1, which every image of images.txt refers to";
+            if (!WriteCamerasToCamerasText((folder / "cameras.txt").string(), cameras)) return false;
+        } else {
+            LOG(WARNING) << "no camera: cameras.txt not written, point_triangulator needs one with camera 1";
+        }
 
         std::ofstream points(folder / "points3D.txt");
         if (!points) return false;

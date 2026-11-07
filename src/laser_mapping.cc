@@ -1458,10 +1458,7 @@ bool LaserMapping::Init(const std::string& config_fname, const std::string& came
     Eigen::setNbThreads(1);
     param = std::make_shared<LaserMappingParam>();
     param->LoadFromYaml(config_fname);
-    if (!camera_fname.empty()) {
-        param->cam_model_ = ReadCameraFromCamerasText(camera_fname);
-        if (!param->cam_model_) LOG(INFO) << "Null camera model";
-    }
+    if (!camera_fname.empty()) param->LoadCameraFromYaml(camera_fname);
     preprocess_ = std::make_shared<PointCloudPreprocess>();
     preprocess_->param = param;
 

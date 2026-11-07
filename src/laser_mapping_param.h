@@ -6,7 +6,10 @@
 #define FASTER_LIO_LASER_MAPPING_PARAM_H
 #include <glog/logging.h>
 #include <yaml-cpp/yaml.h>
-#include "cameras/camera_io.h"
+
+#include <Eigen/SVD>
+#include <sstream>
+
 #include "cameras/cameras.h"
 #include "pose3.h"
 #include "local_ba.h"
@@ -127,8 +130,8 @@ class LaserMappingParam {
     int livox_tag_mask = 0x3F;
 
     Pose3 extrin_il_ = Pose3::Identity();
-    Pose3 extrin_ic_ = Pose3::Identity();
-    CamModel::Ptr cam_model_ = nullptr;
+    Pose3 extrin_ic_ = Pose3::Identity();  // T_imu_cam (body_from_cam), from LoadCameraFromYaml; identity without
+    CamModel::Ptr cam_model_ = nullptr;    // the camera, from LoadCameraFromYaml; nullptr without
 
     bool pcd_save_en_;
     double pcd_save_interval_;
@@ -158,6 +161,42 @@ class LaserMappingParam {
     double std_ext_pos_init;     // t_ecef_enu std at alignment [m]
     prcopt_t prcopt;
     solopt_t solopt;
+
+    /**
+     * @brief The camera (--camera_fname): a yaml like config/i2nav_robot_camera.yaml with
+     *   extrin_R: T_imu_cam rotation, 3x3 row major (9 values), P_imu = R P_cam + t
+     *   extrin_t: T_imu_cam translation (3 values) [m]
+     *   camera:   COLMAP cameras.txt lines, "CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]"; the smallest CAMERA_ID is used
+     * Sets extrin_ic_ and cam_model_.  Fatal if an entry is missing or wrong.
+     */
+    void LoadCameraFromYaml(const std::string& fname) {
+        YAML::Node y;
+        try {
+            y = YAML::LoadFile(fname);
+        } catch (const YAML::Exception& e) {
+            LOG(FATAL) << "cannot read " << fname << ": " << e.what();
+        }
+        const std::vector<double> r = ConfigKey<std::vector<double>>(y, "extrin_R");
+        const std::vector<double> t = ConfigKey<std::vector<double>>(y, "extrin_t");
+        CHECK_EQ(r.size(), 9u) << "extrin_R must have 9 values (row major) in " << fname;
+        CHECK_EQ(t.size(), 3u) << "extrin_t must have 3 values in " << fname;
+        const Mat3 M = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(r.data());
+        // a calibration printed with a few digits is not exactly orthonormal: take the nearest rotation
+        const Eigen::JacobiSVD<Mat3> svd(M, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        const Mat3 R = svd.matrixU() * svd.matrixV().transpose();
+        CHECK(R.determinant() > 0.0 && (R - M).norm() < 1e-3) << "extrin_R is not a rotation in " << fname;
+        extrin_ic_.q_ = Eigen::Quaterniond(R).normalized();
+        extrin_ic_.t_ = Vec3(t[0], t[1], t[2]);
+
+        std::istringstream camera_lines(ConfigKey<std::string>(y, "camera"));
+        const std::map<uint32_t, CamModel::Ptr> cameras = ReadCamerasFromCamerasText(camera_lines);
+        CHECK(!cameras.empty()) << "no camera in the camera entry of " << fname;
+        if (cameras.size() > 1) LOG(WARNING) << fname << " has " << cameras.size() << " cameras, camera "
+                                             << cameras.begin()->first << " is used";
+        cam_model_ = cameras.begin()->second;
+        LOG(INFO) << "camera " << cameras.begin()->first << ": " << cam_model_->model_name() << " " << cam_model_->w()
+                  << "x" << cam_model_->h() << ", extrin_t_ic [" << t[0] << ", " << t[1] << ", " << t[2] << "]";
+    }
 
     void LoadFromYaml(const std::string& config_fname) {
         const YAML::Node yaml = YAML::LoadFile(config_fname);
@@ -264,26 +303,6 @@ class LaserMappingParam {
             std_clk_init = ConfigKey<double>(g, "std_clk_init");
             std_ext_yaw_init = ConfigKey<double>(g, "std_ext_yaw_init");
             std_ext_pos_init = ConfigKey<double>(g, "std_ext_pos_init");
-
-            // an empty model means no camera
-            const YAML::Node c = yaml["cam"];
-            const std::string cam_model = ConfigKey<std::string>(c, "model");
-            const int cam_width = ConfigKey<int>(c, "width");
-            const int cam_height = ConfigKey<int>(c, "height");
-            const std::vector<double> cam_params = ConfigKey<std::vector<double>>(c, "params");
-            Pose3 extrin_cl;
-            extrin_cl.q_ = RotationFromArray(ConfigKey<std::vector<double>>(c, "extrin_R_cl"));
-            extrin_cl.t_ = ConfigVec3(c, "extrin_t_cl");
-            if (!cam_model.empty()) {
-                // intrinsics as one COLMAP cameras.txt line: MODEL WIDTH HEIGHT PARAMS[]
-                std::ostringstream line;
-                line << std::setprecision(17) << "0 " << cam_model << " " << cam_width << " " << cam_height;
-                for (double p : cam_params) line << " " << p;
-                std::istringstream stream(line.str());
-                cam_model_ = ReadCameraFromCamerasText(stream);
-                CHECK(cam_model_) << "cannot build a camera from the `cam:` block: " << line.str();
-                extrin_ic_ = extrin_il_ * extrin_cl.GetInverse();
-            }
         } catch (const YAML::Exception& e) {
             throw std::runtime_error(config_fname + ": " + e.what());
         }

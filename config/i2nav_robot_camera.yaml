@@ -1,0 +1,11 @@
+# run_ba --calib_fname: i2Nav-Robot 左相机（openMVG balvm/i2nav_robot.yaml，官方 calibration.yaml 的 camera.left）
+# extrin = T_imu_cam：P_imu = R * P_cam + t，只有当位姿文件是 IMU 位姿 T_world_imu 时才对
+extrin_R: [0.00549192, -0.00206914, 0.99998278,
+           0.99998051, -0.00295932, -0.00549803,
+           0.00297065, 0.99999348, 0.00205284]
+extrin_t: [0.09, -0.2, -0.054]  # [m]
+# COLMAP cameras.txt 的行：CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]，每个相机一行
+# OPENCV: fx, fy, cx, cy, k1, k2, p1, p2；cx, cy 已 +0.5（COLMAP 的像素中心约定）
+# OPENCV 没有 k3，官方标定的 k3 = -0.0229 被舍去（FULL_OPENCV 可以保留它）
+camera: |
+  1 OPENCV 1600 1200 1064.895 1065.2546 801.9049 625.1878 -0.1516 0.0942 0.000169 -0.000142

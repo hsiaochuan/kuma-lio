@@ -28,6 +28,7 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <sstream>
 
 #include "ba/ba_data.h"
 #include "ba/balm3.h"
@@ -76,15 +77,19 @@ bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     return true;
 }
 
-/// ba_data.extrin from a yaml with extrin_R (3x3, row major, 9 values) and extrin_t (3 values).
-Eigen::Isometry3d LoadExtrin(const std::string& file) {
+/// ba_data.extrin and ba_data.cameras from the calibration yaml:
+///   extrin_R: T_body_cam rotation, 3x3 row major (9 values)
+///   extrin_t: T_body_cam translation (3 values) [m]
+///   camera:   COLMAP cameras.txt lines, "CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]", one per camera
+void LoadCalib(const std::string& file, ba::BaData* ba_data) {
     YAML::Node y;
     try {
         y = YAML::LoadFile(file);
     } catch (const YAML::Exception& e) {
         LOG(FATAL) << "cannot read " << file << ": " << e.what();
     }
-    if (!y["extrin_R"] || !y["extrin_t"]) LOG(FATAL) << file << " needs extrin_R and extrin_t";
+    if (!y["extrin_R"] || !y["extrin_t"] || !y["camera"]) LOG(FATAL) << file << " needs extrin_R, extrin_t and camera";
+
     const std::vector<double> r = y["extrin_R"].as<std::vector<double>>();
     const std::vector<double> t = y["extrin_t"].as<std::vector<double>>();
     if (r.size() != 9) LOG(FATAL) << "extrin_R must have 9 values (row major), got " << r.size() << " in " << file;
@@ -94,10 +99,14 @@ Eigen::Isometry3d LoadExtrin(const std::string& file) {
     const Eigen::JacobiSVD<Mat3> svd(M, Eigen::ComputeFullU | Eigen::ComputeFullV);
     const Mat3 R = svd.matrixU() * svd.matrixV().transpose();
     if (R.determinant() < 0.0 || (R - M).norm() > 1e-3) LOG(FATAL) << "extrin_R is not a rotation in " << file;
-    Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
-    T.linear() = R;
-    T.translation() = Vec3(t[0], t[1], t[2]);
-    return T;
+    ba_data->extrin = Eigen::Isometry3d::Identity();
+    ba_data->extrin.linear() = R;
+    ba_data->extrin.translation() = Vec3(t[0], t[1], t[2]);
+
+    std::istringstream camera_lines(y["camera"].as<std::string>());
+    for (const auto& camera_it : ReadCamerasFromCamerasText(camera_lines))
+        ba_data->cameras[camera_it.first] = camera_it.second;
+    if (ba_data->cameras.empty()) LOG(FATAL) << "no camera in the camera entry of " << file;
 }
 
 /// A file whose extension (any case) is one of the common image formats.
@@ -163,7 +172,7 @@ int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_logtostderr = true;
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
-    std::string scans_dir, images_dir, pose_fname, config_fname, extrin_fname, out_dir;
+    std::string scans_dir, images_dir, pose_fname, config_fname, calib_fname, out_dir;
     po::options_description desc("run_ba --scans_dir <dir> --pose_fname <file> [options]");
     // clang-format off
     desc.add_options()
@@ -171,7 +180,7 @@ int main(int argc, char** argv) {
         ("scans_dir", po::value<std::string>(&scans_dir),"folder with the <name>.ply scans")
         ("images_dir", po::value<std::string>(&images_dir), "folder with the <name>.<png|jpg|...> images (optional)")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
-        ("extrin_fname", po::value<std::string>(&extrin_fname), "yaml with extrin_R (9 values, row major) and extrin_t (3 values), T_body_cam; identity if absent")
+        ("calib_fname", po::value<std::string>(&calib_fname), "yaml with extrin_R, extrin_t (T_body_cam) and camera (cameras.txt lines); identity and no camera if absent")
         ("config,c", po::value<std::string>(&config_fname),"yaml with the BA parameters (see config/ba.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_dir), "output folder; default <scans_dir>/ba");
     // clang-format on
@@ -209,7 +218,10 @@ int main(int argc, char** argv) {
         if (!name_id_map.emplace(named_poses[i].name, static_cast<ba::IndexT>(i)).second)
             LOG(FATAL) << "duplicated pose name in the pose file: " << named_poses[i].name;
     ba::BaData ba_data;
-    ba_data.extrin = extrin_fname.empty() ? Eigen::Isometry3d::Identity() : LoadExtrin(extrin_fname);
+    if (!calib_fname.empty()) LoadCalib(calib_fname, &ba_data);
+    for (const auto& camera_it : ba_data.cameras)
+        LOG(INFO) << "camera " << camera_it.first << ": " << camera_it.second->model_name() << " "
+                  << camera_it.second->w() << "x" << camera_it.second->h();
     // The id of the pose with this name (kUndefinedIndex if none), registered in sfm_data.poses.
     auto FindPoseId = [&](const std::string& name) -> ba::IndexT {
         const auto it = name_id_map.find(name);
@@ -295,8 +307,8 @@ int main(int argc, char** argv) {
             LOG(FATAL) << "cannot write " << sparse;
         if (!ba_data.SavePairList(images.parent_path() / "pair_list.txt"))
             LOG(FATAL) << "cannot write " << images.parent_path() / "pair_list.txt";
-        LOG(INFO) << "wrote " << sparse / "images.txt" << " (" << ba_data.rgb_images.size()
-                  << " images) and an empty " << sparse / "points3D.txt";
+        LOG(INFO) << "wrote " << sparse << ": cameras.txt (" << ba_data.cameras.size() << " cameras), images.txt ("
+                  << ba_data.rgb_images.size() << " images) and an empty points3D.txt";
     }
     return 0;
 }
