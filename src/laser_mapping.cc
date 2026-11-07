@@ -1854,8 +1854,13 @@ void LaserMapping::PostUpdateFastLio() {
             return 0;
         }();
         static Vec3 last_save_pos = Vec3::Zero();
-        if (last_save_pos == Vec3::Zero() || (last_save_pos - fast_lio_->x.p).norm() > param->image_save_interval_) {
+        static Mat3 last_save_R = Mat3::Identity();
+        constexpr double kMaxAngleChange = 20 * M_PI / 180;
+        if (last_save_pos == Vec3::Zero() ||
+            (last_save_pos - fast_lio_->x.p).norm() > param->image_save_interval_ ||
+            LogMat(last_save_R.transpose() * fast_lio_->x.R).norm() > kMaxAngleChange) {
             last_save_pos = fast_lio_->x.p;
+            last_save_R = fast_lio_->x.R;
             double time_s = global_offset_time + time_ns * 1e-9;
             std::stringstream stamp_string;
             stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".png";
