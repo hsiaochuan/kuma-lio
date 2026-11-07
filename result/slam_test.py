@@ -539,6 +539,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         gnss_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/GNSS",
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
+        camera_config="../config/mars_lvig_cameras.yaml",
     )
     m3dgr = DatasetConfig(
         name="m3dgr",

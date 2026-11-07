@@ -2,7 +2,7 @@ common:
   lid_topic: "/livox/lidar"
   imu_topic: "/livox/imu"
   gnss_topic: "/ublox_driver/receiver_lla"
-  img_topic: ""
+  img_topic: "/left_camera/image/compressed"
   gnss_enable: true
   acc_ratio: true
   lidar_time_offset: 0
