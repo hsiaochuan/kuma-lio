@@ -7,9 +7,8 @@
 #include <glog/logging.h>
 #include <yaml-cpp/yaml.h>
 
-#include <Eigen/SVD>
-#include <sstream>
 
+#include "cameras/camera_calib.h"
 #include "cameras/cameras.h"
 #include "pose3.h"
 #include "local_ba.h"
@@ -162,40 +161,18 @@ class LaserMappingParam {
     prcopt_t prcopt;
     solopt_t solopt;
 
-    /**
-     * @brief The camera (--camera_fname): a yaml like config/i2nav_robot_camera.yaml with
-     *   extrin_R: T_imu_cam rotation, 3x3 row major (9 values), P_imu = R P_cam + t
-     *   extrin_t: T_imu_cam translation (3 values) [m]
-     *   camera:   COLMAP cameras.txt lines, "CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]"; the smallest CAMERA_ID is used
-     * Sets extrin_ic_ and cam_model_.  Fatal if an entry is missing or wrong.
-     */
+    /// The camera (--camera_fname): extrin_ic_ (T_imu_cam) and cam_model_ (the smallest CAMERA_ID) from a camera
+    /// calibration yaml, see LoadCameraCalib in cameras/camera_calib.h for its two extrinsic forms.
     void LoadCameraFromYaml(const std::string& fname) {
-        YAML::Node y;
-        try {
-            y = YAML::LoadFile(fname);
-        } catch (const YAML::Exception& e) {
-            LOG(FATAL) << "cannot read " << fname << ": " << e.what();
-        }
-        const std::vector<double> r = ConfigKey<std::vector<double>>(y, "extrin_R");
-        const std::vector<double> t = ConfigKey<std::vector<double>>(y, "extrin_t");
-        CHECK_EQ(r.size(), 9u) << "extrin_R must have 9 values (row major) in " << fname;
-        CHECK_EQ(t.size(), 3u) << "extrin_t must have 3 values in " << fname;
-        const Mat3 M = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(r.data());
-        // a calibration printed with a few digits is not exactly orthonormal: take the nearest rotation
-        const Eigen::JacobiSVD<Mat3> svd(M, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        const Mat3 R = svd.matrixU() * svd.matrixV().transpose();
-        CHECK(R.determinant() > 0.0 && (R - M).norm() < 1e-3) << "extrin_R is not a rotation in " << fname;
-        extrin_ic_.q_ = Eigen::Quaterniond(R).normalized();
-        extrin_ic_.t_ = Vec3(t[0], t[1], t[2]);
-
-        std::istringstream camera_lines(ConfigKey<std::string>(y, "camera"));
-        const std::map<uint32_t, CamModel::Ptr> cameras = ReadCamerasFromCamerasText(camera_lines);
-        CHECK(!cameras.empty()) << "no camera in the camera entry of " << fname;
-        if (cameras.size() > 1) LOG(WARNING) << fname << " has " << cameras.size() << " cameras, camera "
-                                             << cameras.begin()->first << " is used";
-        cam_model_ = cameras.begin()->second;
-        LOG(INFO) << "camera " << cameras.begin()->first << ": " << cam_model_->model_name() << " " << cam_model_->w()
-                  << "x" << cam_model_->h() << ", extrin_t_ic [" << t[0] << ", " << t[1] << ", " << t[2] << "]";
+        const CameraCalib calib = LoadCameraCalib(fname);
+        extrin_ic_ = Pose3(calib.T_imu_cam);
+        if (calib.cameras.size() > 1) LOG(WARNING) << fname << " has " << calib.cameras.size() << " cameras, camera "
+                                                   << calib.cameras.begin()->first << " is used";
+        cam_model_ = calib.cameras.begin()->second;
+        LOG(INFO) << "camera " << calib.cameras.begin()->first << ": " << cam_model_->model_name() << " "
+                  << cam_model_->w() << "x" << cam_model_->h() << ", extrin_t_ic [" << extrin_ic_.t_.x() << ", "
+                  << extrin_ic_.t_.y() << ", " << extrin_ic_.t_.z() << "]"
+                  << (calib.from_lidar ? " (from T_cam_lidar and T_imu_lidar)" : "");
     }
 
     void LoadFromYaml(const std::string& config_fname) {

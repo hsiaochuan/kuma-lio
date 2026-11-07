@@ -32,6 +32,7 @@
 
 #include "ba/ba_data.h"
 #include "ba/balm3.h"
+#include "cameras/camera_calib.h"
 #include "pgo/plane_cloud.h"
 #include "pose_io.h"
 
@@ -77,36 +78,13 @@ bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     return true;
 }
 
-/// ba_data.extrin and ba_data.cameras from the calibration yaml:
-///   extrin_R: T_body_cam rotation, 3x3 row major (9 values)
-///   extrin_t: T_body_cam translation (3 values) [m]
-///   camera:   COLMAP cameras.txt lines, "CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]", one per camera
+/// ba_data.extrin (T_body_cam: the poses are IMU poses) and ba_data.cameras from a camera calibration yaml, see
+/// LoadCameraCalib in cameras/camera_calib.h for its two extrinsic forms.
 void LoadCalib(const std::string& file, ba::BaData* ba_data) {
-    YAML::Node y;
-    try {
-        y = YAML::LoadFile(file);
-    } catch (const YAML::Exception& e) {
-        LOG(FATAL) << "cannot read " << file << ": " << e.what();
-    }
-    if (!y["extrin_R"] || !y["extrin_t"] || !y["camera"]) LOG(FATAL) << file << " needs extrin_R, extrin_t and camera";
-
-    const std::vector<double> r = y["extrin_R"].as<std::vector<double>>();
-    const std::vector<double> t = y["extrin_t"].as<std::vector<double>>();
-    if (r.size() != 9) LOG(FATAL) << "extrin_R must have 9 values (row major), got " << r.size() << " in " << file;
-    if (t.size() != 3) LOG(FATAL) << "extrin_t must have 3 values, got " << t.size() << " in " << file;
-    const Mat3 M = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(r.data());
-    // a calibration printed with a few digits is not exactly orthonormal: take the nearest rotation
-    const Eigen::JacobiSVD<Mat3> svd(M, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    const Mat3 R = svd.matrixU() * svd.matrixV().transpose();
-    if (R.determinant() < 0.0 || (R - M).norm() > 1e-3) LOG(FATAL) << "extrin_R is not a rotation in " << file;
-    ba_data->extrin = Eigen::Isometry3d::Identity();
-    ba_data->extrin.linear() = R;
-    ba_data->extrin.translation() = Vec3(t[0], t[1], t[2]);
-
-    std::istringstream camera_lines(y["camera"].as<std::string>());
-    for (const auto& camera_it : ReadCamerasFromCamerasText(camera_lines))
-        ba_data->cameras[camera_it.first] = camera_it.second;
-    if (ba_data->cameras.empty()) LOG(FATAL) << "no camera in the camera entry of " << file;
+    const CameraCalib calib = LoadCameraCalib(file);
+    ba_data->extrin = calib.T_imu_cam;
+    for (const auto& camera_it : calib.cameras) ba_data->cameras[camera_it.first] = camera_it.second;
+    if (calib.from_lidar) LOG(INFO) << "extrin from T_cam_lidar and T_imu_lidar";
 }
 
 /// A file whose extension (any case) is one of the common image formats.
@@ -180,7 +158,7 @@ int main(int argc, char** argv) {
         ("scans_dir", po::value<std::string>(&scans_dir),"folder with the <name>.ply scans")
         ("images_dir", po::value<std::string>(&images_dir), "folder with the <name>.<png|jpg|...> images (optional)")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
-        ("calib_fname", po::value<std::string>(&calib_fname), "yaml with extrin_R, extrin_t (T_body_cam) and camera (cameras.txt lines); identity and no camera if absent")
+        ("calib_fname", po::value<std::string>(&calib_fname), "camera yaml like config/i2nav_robot_camera.yaml: extrin_R, extrin_t (T_body_cam) or extrin_Rcl, extrin_tcl, extrin_Ril, extrin_til, and camera (cameras.txt lines); identity and no camera if empty")
         ("config,c", po::value<std::string>(&config_fname),"yaml with the BA parameters (see config/ba.yaml); defaults if absent")
         ("out,o", po::value<std::string>(&out_dir), "output folder; default <scans_dir>/ba");
     // clang-format on
