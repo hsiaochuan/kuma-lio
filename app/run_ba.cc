@@ -289,11 +289,14 @@ int main(int argc, char** argv) {
     if (!ba_data.SaveTumPoses(traj.string())) LOG(FATAL) << "cannot write " << traj;
     LOG(INFO) << "wrote " << traj << ": " << ba_data.scans.size() << " poses";
 
-    // The images at the refined poses, for colmap point_triangulator
+    // The images at the refined poses, for colmap point_triangulator: <images_dir>/../sparse
     if (!ba_data.rgb_images.empty()) {
-        const fs::path images_txt = out / "images.txt";
-        if (!ba_data.SaveCOLMAP(images_txt.string())) LOG(FATAL) << "cannot write " << images_txt;
-        LOG(INFO) << "wrote " << images_txt << ": " << ba_data.rgb_images.size() << " images";
+        fs::path images = fs::absolute(images_dir).lexically_normal();
+        if (!images.has_filename()) images = images.parent_path();  // "images/" ends with a separator
+        const fs::path sparse = images.parent_path() / "sparse";
+        if (!ba_data.SaveCOLMAP(sparse.string())) LOG(FATAL) << "cannot write " << sparse;
+        LOG(INFO) << "wrote " << sparse / "images.txt" << " (" << ba_data.rgb_images.size()
+                  << " images) and an empty " << sparse / "points3D.txt";
     }
     return 0;
 }

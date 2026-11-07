@@ -54,12 +54,24 @@ struct BaData {
     /// T_body_cam, the camera in the body frame of the poses: P_body = R P_cam + t
     Eigen::Isometry3d extrin = Eigen::Isometry3d::Identity();
 
-    /// Write the images as COLMAP's images.txt, for the --input_path folder of `colmap point_triangulator` (with a
-    /// cameras.txt holding camera 1 and an empty points3D.txt next to it): every image uses camera 1, is named by
-    /// its file name (the name the database has under --image_path) and has cam_from_world = (pose * extrin)^-1,
-    /// with no 2D point.  False if the file cannot be written.
-    bool SaveCOLMAP(const std::string& file) const {
-        std::ofstream images(file);
+    /// Write `dir` as the --input_path of `colmap point_triangulator`: images.txt and an empty points3D.txt.  The
+    /// cameras.txt holding camera 1 is not written (config/cameras.txt is the i2Nav-Robot left camera).  Every image
+    /// uses camera 1, is named by its file name (the name the database has under --image_path) and has
+    /// cam_from_world = (pose * extrin)^-1, with no 2D point.  False if a file cannot be written.
+    bool SaveCOLMAP(const std::string& dir) const {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec) return false;
+        const std::filesystem::path folder(dir);
+
+        std::ofstream points(folder / "points3D.txt");
+        if (!points) return false;
+        points << "# 3D point list with one line of data per point:\n"
+               << "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n"
+               << "# Number of points: 0, mean track length: 0\n";
+        if (!points.good()) return false;
+
+        std::ofstream images(folder / "images.txt");
         if (!images) return false;
         images << std::setprecision(17);
         images << "# Image list with two lines of data per image:\n"
