@@ -1,7 +1,7 @@
 //
 // Offline removal of dynamic points from LiDAR scans, after DUFOMap (Daniel et al., RA-L 2024).
 //
-//   run_clean --scans_dir <dir> --pose_fname <file> [--out dir] [--voxel 0.2] ...  (-h for help)
+//   run_clean --scans_dir <dir> --pose_fname <file> [--config clean.yaml] [--out dir]  (-c/-o, -h for help)
 //
 // <scans_dir>/<name>.ply are the scans in the sensor's own frame and <pose_fname> holds a line
 // "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's traj_pgo.txt.  The output folder
@@ -16,6 +16,7 @@
 //
 
 #include <glog/logging.h>
+#include <yaml-cpp/yaml.h>
 #include <Eigen/Eigenvalues>
 #include <pcl/console/print.h>
 #include <pcl/io/ply_io.h>
@@ -28,6 +29,8 @@
 #include <filesystem>
 #include <iostream>
 #include <unordered_map>
+#include <string>
+#include <type_traits>
 #include <unordered_set>
 
 #include "pose_io.h"
@@ -40,6 +43,7 @@ namespace {
 using Cloud = pcl::PointCloud<pcl::PointXYZI>;
 using Key = uint64_t;
 
+/// The parameters of config/clean.yaml, which documents each of them.
 struct Param {
     double voxel = 0.2;     ///< [m]
     double margin = 0.4;    ///< [m] the last stretch of a ray is not called empty (surface thickness, pose error)
@@ -51,7 +55,37 @@ struct Param {
     double near_range = 8;     ///< [m]
     double up_z = 1;           ///< +1 if the world's z axis points up, -1 if it points down
     double sensor_height = 1;  ///< [m] above the ground
+    double min_range = 2.0;    ///< [m] points nearer the sensor are dropped from the output (the carrier itself)
 };
+
+/// Keys absent from the yaml keep their defaults; an unknown key is fatal, it is most likely a typo.
+void LoadParam(const std::string& file, Param* p) {
+    YAML::Node y;
+    try {
+        y = YAML::LoadFile(file);
+    } catch (const YAML::Exception& e) {
+        LOG(FATAL) << "cannot read " << file << ": " << e.what();
+    }
+    std::unordered_set<std::string> known;
+    auto get = [&](const char* key, auto* v) {
+        known.insert(key);
+        if (y[key]) *v = y[key].as<std::decay_t<decltype(*v)>>();
+    };
+    get("voxel", &p->voxel);
+    get("margin", &p->margin);
+    get("max_range", &p->max_range);
+    get("min_free", &p->min_free);
+    get("ratio", &p->ratio);
+    get("ground_dist", &p->ground_dist);
+    get("min_hits", &p->min_hits);
+    get("near_range", &p->near_range);
+    get("up_z", &p->up_z);
+    get("sensor_height", &p->sensor_height);
+    get("min_range", &p->min_range);
+    for (const auto& kv : y)
+        if (!known.count(kv.first.as<std::string>())) LOG(FATAL) << "unknown key \"" << kv.first << "\" in " << file;
+    if (!(p->voxel > 0)) LOG(FATAL) << "voxel must be > 0 in " << file;
+}
 
 struct Count {
     uint16_t free = 0, hit = 0;
@@ -185,24 +219,13 @@ int main(int argc, char** argv) {
     FLAGS_logtostderr = true;
     pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
 
-    std::string scans_dir, pose_fname, out_arg;
-    Param prm;
+    std::string scans_dir, pose_fname, config_fname, out_arg;
     po::options_description desc("run_clean --scans_dir <dir> --pose_fname <file> [options]");
     desc.add_options()("help,h", "show this help")
         ("scans_dir", po::value<std::string>(&scans_dir), "folder with the <name>.ply scans")
         ("pose_fname", po::value<std::string>(&pose_fname), "pose file, one \"<name> x y z qx qy qz qw\" per line")
-        ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/clean")
-        ("voxel", po::value<double>(&prm.voxel)->default_value(prm.voxel), "voxel size [m]")
-        ("margin", po::value<double>(&prm.margin)->default_value(prm.margin), "end of each ray not counted as empty [m]")
-        ("max_range", po::value<double>(&prm.max_range)->default_value(prm.max_range), "longest ray cast [m]")
-        ("min_free", po::value<int>(&prm.min_free)->default_value(prm.min_free), "scans that must see a voxel empty")
-        ("ratio", po::value<double>(&prm.ratio)->default_value(prm.ratio), "empty count needed per hit count")
-        ("ground_dist", po::value<double>(&prm.ground_dist)->default_value(prm.ground_dist),
-         "points this close to the ground plane are ground and never removed [m]; 0 = off")
-        ("min_hits", po::value<int>(&prm.min_hits)->default_value(prm.min_hits), "near a point, its voxel must be hit by more scans than this")
-        ("near_range", po::value<double>(&prm.near_range)->default_value(prm.near_range), "what counts as near [m]")
-        ("up_z", po::value<double>(&prm.up_z)->default_value(prm.up_z), "+1 if the world's z axis points up, -1 if down")
-        ("sensor_height", po::value<double>(&prm.sensor_height)->default_value(prm.sensor_height), "sensor above the ground [m]");
+        ("config,c", po::value<std::string>(&config_fname), "yaml with the parameters (see config/clean.yaml); defaults if absent")
+        ("out,o", po::value<std::string>(&out_arg), "output folder; default <scans_dir>/clean");
     po::variables_map vm;
     try {
         po::store(po::command_line_parser(argc, argv).options(desc).run(), vm);
@@ -215,6 +238,12 @@ int main(int argc, char** argv) {
         std::cerr << desc << std::endl;
         return vm.count("help") ? 0 : 1;
     }
+    Param prm;
+    if (!config_fname.empty()) LoadParam(config_fname, &prm);
+    LOG(INFO) << "voxel " << prm.voxel << " margin " << prm.margin << " max_range " << prm.max_range << " min_free "
+              << prm.min_free << " ratio " << prm.ratio << " ground_dist " << prm.ground_dist << " min_hits "
+              << prm.min_hits << " near_range " << prm.near_range << " up_z " << prm.up_z << " sensor_height "
+              << prm.sensor_height << " min_range " << prm.min_range;
     const fs::path dir = scans_dir;
     if (!fs::is_directory(dir)) LOG(FATAL) << "not a folder: " << dir;
     const fs::path out = out_arg.empty() ? dir / "clean" : fs::path(out_arg);
@@ -283,7 +312,7 @@ int main(int argc, char** argv) {
             continue;
         }
         for (auto pt_it = cloud.begin(); pt_it != cloud.end(); ) {
-            if (pt_it->getVector3fMap().norm() < 2.0)
+            if (pt_it->getVector3fMap().norm() < prm.min_range)
                 pt_it = cloud.erase(pt_it);
             else
                 pt_it++;

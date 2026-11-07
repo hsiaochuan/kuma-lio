@@ -44,24 +44,13 @@ class RunTask:
     run_mode: RunMode = RunMode.OFFLINE
     start: float = 0.0
     duration: float = -1.0
-    prior_map_fname: str = ""  # prior map for localization mode
-    prior_init_pose: str = ""  # init pose for localization mode
     name: str = ""  # automatically extracted from bag_file
     ground_truth_fname: str = ""
-    is_localization: bool = False
     gnss_obs_fname: str = ""
     gnss_nav_fname: str = ""
-    clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments
+    clean_config: str = "../config/clean.yaml"
     pgo_config: str = "../config/pgo.yaml"
     ba_config: str = "../config/ba.yaml"
-
-    @property
-    def localization_args(self) -> List[str]:
-        if not self.is_localization:
-            return []
-        args = ["--prior_map_fname", self.prior_map_fname]
-        args += ["--prior_init_pose", self.prior_init_pose]
-        return args
 
 
 @dataclass
@@ -73,12 +62,9 @@ class DatasetConfig:
     start: float = 0.0
     duration: float = -1.0
     run_mode: RunMode = RunMode.OFFLINE
-    prior_init_pose: Dict[str, str] = field(default_factory=dict)
-    prior_map: Dict[str, str] = field(default_factory=dict)
     ground_truth_dir: str = ""
     gnss_dir: str = ""
-    is_localization: bool = False
-    clean_args: List[str] = field(default_factory=list)  # extra run_clean arguments, they depend on the platform
+    clean_config: str = "../config/clean.yaml"  # run_clean parameters
     pgo_config: str = "../config/pgo.yaml"  # run_pgo parameters, they depend on the sensor's field of view
     ba_config: str = "../config/ba.yaml"  # run_ba parameters
 
@@ -236,7 +222,8 @@ class SLAMTestRunner:
 
         Every step takes what the steps before it produced: without --if_pgo the scans are placed by
         traj_log.txt, without --if_clean the merged map has the dynamic points and run_ba adjusts with them,
-        without --if_ba the merged map is placed by the poses of run_pgo.
+        without --if_ba the merged map is placed by the poses of run_pgo.  run_ba alone starts from
+        pgo/traj_pgo.txt whenever that file exists, even from an earlier run, and from traj_log.txt otherwise.
         """
         output_dir = task.output_dir
         scans_dir = os.path.join(output_dir, "scans")
@@ -263,22 +250,27 @@ class SLAMTestRunner:
         if self.if_clean:
             clean_dir = os.path.join(output_dir, "clean")
             if not self.run_step("run_clean", [
-                                                  self.clean_app,
-                                                  "--scans_dir", scans_dir,
-                                                  "--pose_fname", poses,
-                                                  "--out", clean_dir,
-                                              ] + task.clean_args):
+                self.clean_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--config", task.clean_config,
+                "--out", clean_dir,
+            ]):
                 return
             scans_dir = clean_dir
 
         if self.if_ba:
             ba_dir = os.path.join(output_dir, "ba")
+            traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
+            poses = traj_pgo if os.path.exists(traj_pgo) else os.path.join(output_dir, "traj_log.txt")
             if not self.run_step("run_ba", [
                 self.ba_app,
                 "--scans_dir", scans_dir,
                 "--pose_fname", poses,
                 "--config", task.ba_config,
                 "--out", ba_dir,
+                "--images_dir", os.path.join(output_dir, "images"),
+                "--extrin_fname", "/home/hsiaochuan/slam/faster-lio/config/ba_extrin_i2nav.yaml",
             ]):
                 return
             poses = os.path.join(ba_dir, "traj_ba.txt")
@@ -373,14 +365,6 @@ class SLAMTestRunner:
             for pattern, config_fname in dataset.config.items():
                 if re.search(pattern, name):
                     break
-            prior_map_fname = ""
-            for pattern, prior_map_fname in dataset.prior_map.items():
-                if re.search(pattern, name):
-                    break
-            prior_init_pose = ""
-            for pattern, prior_init_pose in dataset.prior_init_pose.items():
-                if re.search(pattern, name):
-                    break
             task = RunTask(
                 bag_file=bag_file,
                 config=config_fname,
@@ -389,13 +373,10 @@ class SLAMTestRunner:
                 run_mode=dataset.run_mode,
                 start=dataset.start,
                 duration=dataset.duration,
-                prior_map_fname=prior_map_fname,
-                prior_init_pose=prior_init_pose,
                 ground_truth_fname=os.path.join(dataset.ground_truth_dir, name + ".txt"),
-                is_localization=dataset.is_localization,
                 gnss_obs_fname=os.path.join(dataset.gnss_dir, name + ".o"),
                 gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
-                clean_args=dataset.clean_args,
+                clean_config=dataset.clean_config,
                 pgo_config=dataset.pgo_config,
                 ba_config=dataset.ba_config,
             )
@@ -445,23 +426,6 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         config={
             "ntu": "../config/mcd_viral_atv.yaml",
             "kth|tuhh": "../config/mcd_viral_handheld.yaml",
-        },
-        is_localization=False,
-        prior_map={
-            "ntu": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/NTU/map.pcd",
-            "tuhh": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/TUHH/map.pcd",
-            "kth": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/KTH/map.pcd",
-        },
-        prior_init_pose={
-            "ntu_day_01": "49.260631711144441, 107.371797989246588, 7.635809572392588, 0.936118452267473, -0.351663294301812, 0.003894594980225, -0.000053806028052",
-            "ntu_day_02": "61.961311814185514, 119.593225444885661, 7.696161795293277, 0.393007783516859, -0.919096202232126, -0.005400025874432, -0.027890730686113",
-            "ntu_day_10": "39.916532928019564, 23.052257138316396, 7.299254388426964, 0.886432211042536, 0.292027951287205, 0.156779604991748, 0.323075480889327",
-            "tuhh_day_02": "45.690090862136245, 447.141417866168638, 14.609562334189976, -0.197423661689090, 0.979502111007773, 0.001873158034956, 0.039950013962013",
-            "tuhh_day_03": "43.608801682558919, 446.534935432984810, 14.597698878700372, -0.154246716717734, 0.987560512077699, -0.009204072595886, 0.029111345112889",
-            "tuhh_day_04": "35.139850852161452, 114.906595889361554, -1.274419348455590, -0.413172157260666, 0.910454794447510, -0.007934554354419, 0.017259159287378",
-            "kth_day_06": "64.393253256515791, 66.483233094665749, 38.514334105006881, 0.289019760011319, 0.956543598228710, -0.018788172343168, -0.033748001284148",
-            "kth_day_09": "70.392009196482377, 63.111919578407303, 38.304007735781937, 0.974443073722663, -0.223447643378903, -0.022907254727646, -0.002665412385693",
-            "kth_day_10": "69.125536959169182, 63.567368550279582, 38.383523176445017, 0.305395593145653, 0.952159100742401, 0.002354607087536, -0.011001562893546",
         },
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/ntu_day_01.bag",
@@ -572,17 +536,18 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         config={".": "../config/m3dgr.yaml"},
         bag_files=[
             f"/media/hsiaochuan/hsiaochuan-data/M3DGR/{seq}.bag"
-            for seq in ["Dark01",
-                        "Dark02",
-                        "Occlusion03",
-                        "Occlusion04",
-                        "Outdoor01",
-                        "Varying-illu03",
-                        "Varying-illu04",
-                        "Varying-illu05",
-                        "GNSS-denial01",
-                        "GNSS-denial02",
-                        ]
+            for seq in [
+                "Dark01",
+                "Dark02",
+                "Occlusion03",
+                "Occlusion04",
+                "Outdoor01",
+                "Varying-illu03",
+                "Varying-illu04",
+                "Varying-illu05",
+                "GNSS-denial01",
+                "GNSS-denial02",
+            ]
         ],
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/groundtruth",
@@ -601,11 +566,6 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/inav-robot/groundtruth",
-        # the sensor is the ADIS16465, 0.852 m above the floor (calibration.yaml odo_lever); z is up in the
-        # gravity-aligned world.  min_hits counts scans: 6 at 0.4 s per scan is 24 at the 0.1 s of the local BA.
-        clean_args=["--voxel", "0.4", "--margin", "0.8", "--max_range", "80", "--min_free", "2", "--ratio", "3",
-                    "--min_hits", "24", "--near_range", "8", "--ground_dist", "0.1",
-                    "--up_z", "1", "--sensor_height", "0.852"],
         pgo_config="../config/pgo.yaml",
     )
     all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot]
@@ -653,6 +613,7 @@ def main():
     runner.if_slam = args.if_slam
     runner.if_pgo = args.if_pgo
     runner.if_clean = args.if_clean
+    runner.if_ba = args.if_ba
     runner.if_merge = args.if_merge
     runner.if_postprocess = args.if_postprocess
     runner.run_all(datasets)

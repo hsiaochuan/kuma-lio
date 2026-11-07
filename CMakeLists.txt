@@ -136,7 +136,7 @@ add_executable(run_pgo app/run_pgo.cc)
 target_link_libraries(run_pgo faster_pgo Boost::program_options)
 
 add_executable(run_clean app/run_clean.cc)
-target_link_libraries(run_clean ${PCL_LIBRARIES} ${OpenMP_CXX_LIBRARIES} glog Boost::program_options)
+target_link_libraries(run_clean ${PCL_LIBRARIES} ${OpenMP_CXX_LIBRARIES} glog yaml-cpp Boost::program_options)
 
 add_executable(run_ba app/run_ba.cc)
 target_link_libraries(run_ba faster_pgo Boost::program_options)
