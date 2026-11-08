@@ -5,7 +5,7 @@
 // Regression", Eurographics 2009), after MeshLab's "MLS projection (RIMLS)" filter
 // (src/meshlabplugins/filter_mls/rimls.tpp and mlssurface.tpp of https://github.com/cnr-isti-vclab/meshlab).
 //
-//   run_mls -i map.ply -o map_post.ply [--filter_scale 2] [--sigma_n 0.75] ...  (-h for help)
+//   run_mls -i map.ply -o map_post.ply  (-h for help; every other parameter is the RimlsParam / SOR default)
 //
 // What is the same as MeshLab: the per-point radius h = 2 sqrt(d2_max / k) over the k nearest neighbours, the
 // spatial weight (1 - d^2 / (scale h_j)^2)^4 and its gradient, the refitting loop with the normal weight
@@ -225,33 +225,21 @@ bool SavePly(const std::string& fname, const OutCloud& cloud) {
 
 int main(int argc, char** argv) {
     std::string input_fname, output_fname;
-    RimlsParam prm;
-    bool enable_sor = true;
-    int sor_mean_k = 16;
-    double sor_stddev = 3.0;  // was 1.0, which cuts the top ~16 % of a normal distribution; a LiDAR map's density
-                              // falls with range, so its sparse far points fail a global mean + k sigma test
+    const RimlsParam prm;
+    // statistical outlier removal first: a point goes when its mean distance to its kSorMeanK neighbours exceeds the
+    // global mean + kSorStddev standard deviations.  1.0 would cut the top ~16 % of a normal distribution; a LiDAR
+    // map's density falls with range, so its sparse far points fail a global mean + k sigma test
+    constexpr bool kEnableSor = true;
+    constexpr int kSorMeanK = 16;
+    constexpr double kSorStddev = 3.0;
 
     po::options_description desc("run_mls: RIMLS point cloud smoothing");
     // clang-format off
     desc.add_options()
         ("help,h", "show this help")
         ("input,i", po::value<std::string>(&input_fname), "input PLY")
-        ("output,o", po::value<std::string>(&output_fname), "output PLY")
-        ("k,k", po::value<int>(&prm.k)->default_value(prm.k), "neighbours of the point radius and the PCA normal")
-        ("filter_scale", po::value<double>(&prm.filter_scale)->default_value(prm.filter_scale),
-         "spatial filter scale, relative to the point radius")
-        ("sigma_n", po::value<double>(&prm.sigma_n)->default_value(prm.sigma_n),
-         "sharpness: width of the normal refitting weight, 0.5 sharp ... 2 smooth")
-        ("max_refitting_iters", po::value<int>(&prm.max_refitting_iters)->default_value(prm.max_refitting_iters),
-         "max fitting iterations, 0 or 1 is plain IMLS")
-        ("max_projection_iters", po::value<int>(&prm.max_projection_iters)->default_value(prm.max_projection_iters),
-         "max projection iterations")
-        ("projection_accuracy", po::value<double>(&prm.projection_accuracy)->default_value(prm.projection_accuracy),
-         "projection stops at this fraction of the mean point radius")
-        ("sor", po::value<bool>(&enable_sor)->default_value(enable_sor), "statistical outlier removal first")
-        ("sor-mean-k", po::value<int>(&sor_mean_k)->default_value(sor_mean_k), "SOR mean K")
-        ("sor-stddev", po::value<double>(&sor_stddev)->default_value(sor_stddev), "SOR: a point goes when its mean distance to its sor-mean-k neighbours exceeds the global mean + this many standard deviations; larger removes fewer");
-    // clang-format on
+        ("output,o", po::value<std::string>(&output_fname), "output PLY");
+// clang-format on
     po::variables_map vm;
     try {
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -279,12 +267,12 @@ int main(int argc, char** argv) {
     std::cout << "[INFO] Loaded " << cloud->size() << " points from " << input_fname << std::endl;
 
     // 2) statistical outlier removal
-    if (enable_sor) {
+    if (kEnableSor) {
         Cloud::Ptr filtered(new Cloud);
         pcl::StatisticalOutlierRemoval<pcl::PointXYZI> sor;
         sor.setInputCloud(cloud);
-        sor.setMeanK(sor_mean_k);
-        sor.setStddevMulThresh(sor_stddev);
+        sor.setMeanK(kSorMeanK);
+        sor.setStddevMulThresh(kSorStddev);
         sor.filter(*filtered);
         std::cout << "[INFO] SOR kept " << filtered->size() << " of " << cloud->size() << " points ("
                   << 100.0 * (cloud->size() - filtered->size()) / std::max<size_t>(cloud->size(), 1) << " % removed)"
@@ -292,7 +280,7 @@ int main(int argc, char** argv) {
         cloud = filtered;
     }
     if (cloud->size() <= size_t(prm.k)) {
-        std::cerr << "[ERROR] " << cloud->size() << " points, not more than --k " << prm.k << std::endl;
+        std::cerr << "[ERROR] " << cloud->size() << " points, not more than k = " << prm.k << std::endl;
         return 1;
     }
 
