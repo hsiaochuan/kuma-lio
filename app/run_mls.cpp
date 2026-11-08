@@ -19,7 +19,9 @@
 //    2 scale h_i around the point i being projected is filtered by that test, so a neighbour whose radius is more
 //    than twice h_i can be missed;
 //  - the projection threshold is scaled by the mean point radius (MeshLab leaves mAveragePointSpacing unset);
-//  - points are projected in parallel, and intensity is kept.
+//  - points are projected in parallel, and intensity is kept;
+//  - the output is pcl::PointXYZINormal: the normal is the RIMLS gradient direction at the projected point (the
+//    PCA normal where the projection failed, NaN where that failed too), curvature is PCA's surface variation.
 //
 
 #include <omp.h>
@@ -83,11 +85,13 @@ class Rimls {
         epsilon_ = prm_.projection_accuracy * sum / std::max<size_t>(radii_.size(), 1);
     }
 
-    /// Point i moved onto the surface; false (and the point unchanged) if it has no normal or no neighbour.
-    bool Project(int i, Eigen::Vector3d* out) const {
+    /// Point i moved onto the surface, with the surface normal there; false (point unchanged, normal the PCA one,
+    /// NaN if none) if it has no normal or no neighbour.
+    bool Project(int i, Eigen::Vector3d* out, Eigen::Vector3d* normal) const {
         const auto& q = cloud_->points[i];
         const Eigen::Vector3d x(q.x, q.y, q.z);
         *out = x;
+        *normal = Normal(i);
         if (!HasNormal(i)) return false;
         const double search_radius = 2.0 * prm_.filter_scale * radii_[i];
         Eigen::Vector3d position = x, ref = Normal(i), grad;
@@ -101,6 +105,7 @@ class Rimls {
             position -= ref * potential;
         } while (std::abs(potential) > epsilon_ && ++iters < prm_.max_projection_iters);
         *out = position;
+        *normal = ref;
         return true;
     }
 
@@ -302,23 +307,30 @@ int main(int argc, char** argv) {
 
     // 5) RIMLS projection of every point
     const Rimls rimls(cloud, normals, radii, prm);
-    Cloud::Ptr out(new Cloud(*cloud));
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr out(new pcl::PointCloud<pcl::PointXYZINormal>);
+    out->resize(n);
     long failed = 0;
     std::cout << "[INFO] RIMLS projection" << std::endl;
     boost::progress_display bar_project(n);
 #pragma omp parallel for schedule(dynamic, kProgressBlock) reduction(+ : failed)
     for (long i = 0; i < n; ++i) {
-        Eigen::Vector3d p;
-        if (!rimls.Project(int(i), &p)) ++failed;
-        out->points[i].x = float(p.x());
-        out->points[i].y = float(p.y());
-        out->points[i].z = float(p.z());
+        Eigen::Vector3d p, nrm;
+        if (!rimls.Project(int(i), &p, &nrm)) ++failed;
+        pcl::PointXYZINormal& o = out->points[i];
+        o.x = float(p.x());
+        o.y = float(p.y());
+        o.z = float(p.z());
+        o.intensity = cloud->points[i].intensity;
+        o.normal_x = float(nrm.x());
+        o.normal_y = float(nrm.y());
+        o.normal_z = float(nrm.z());
+        o.curvature = normals->points[i].curvature;
         Tick(bar_project, i);
     }
     bar_project += n % kProgressBlock;
     out->width = std::uint32_t(out->size());
     out->height = 1;
-    out->is_dense = true;
+    out->is_dense = no_normal == 0;  // a NaN normal makes the cloud not dense
     if (failed > 0)
         std::cout << "[INFO] " << failed << " points without a normal or a neighbour were left in place" << std::endl;
 
