@@ -48,10 +48,9 @@ using namespace faster_lio;
 namespace {
 
 struct BaParam {
-    double downsample = 0.1;  // [m] voxel size used to thin every scan (0: off)
-    double min_range = 1.0;   // [m] drop the points closer than this (the carrier itself)
+    double downsample = 0.1;      // [m] voxel size used to thin every scan (0: off)
+    double min_range = 1.0;       // [m] drop the points closer than this (the carrier itself)
     double min_constraint = 0.0;  // scans whose PlaneConstraint is below it are removed (0: off)
-    int threads = 0;          // 0: OpenMP default
     ba::VoxelMapOptions voxel;
     ba::BAOptions opt;
 };
@@ -64,7 +63,6 @@ void LoadParam(const std::string& file, BaParam* p) {
     get("downsample", &p->downsample);
     get("min_range", &p->min_range);
     get("min_constraint", &p->min_constraint);
-    get("threads", &p->threads);
     get("voxel_size", &p->voxel.voxel_size);
     get("plane_eigen_ratio", &p->voxel.plane_eigen_ratio);
     get("min_plane_size", &p->voxel.min_plane_size);
@@ -107,8 +105,6 @@ std::pair<double, double> CameraFov(const CamModel& cam) {
             std::acos(std::clamp(top.dot(bottom), -1.0, 1.0)) * kDeg};
 }
 
-/// Median distance of the scan points from the sensor [m], from up to 200 scans spread over the run: how deep the
-/// scene the cameras look at is.  0 if there is no point.
 double MedianRange(const ba::BaData& ba_data) {
     std::vector<double> ranges;
     const size_t step = std::max<size_t>(1, ba_data.scans.size() / 200);
@@ -128,8 +124,8 @@ double MedianRange(const ba::BaData& ba_data) {
 bool IsImageFile(const fs::path& file) {
     std::string ext = file.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
-    static const std::set<std::string> kImageExts = {".png", ".jpg", ".jpeg", ".bmp", ".tif",
-                                                     ".tiff", ".webp", ".pgm", ".ppm"};
+    static const std::set<std::string> kImageExts = {".png",  ".jpg",  ".jpeg", ".bmp", ".tif",
+                                                     ".tiff", ".webp", ".pgm",  ".ppm"};
     return kImageExts.count(ext) > 0;
 }
 
@@ -208,8 +204,8 @@ void RemoveWeakScans(ba::BaData& sfm_data, std::vector<ba::PlaneFeature>* planes
             ++it;
         }
     }
-    LOG(INFO) << "removed " << weak.size() << " frames (" << removed_images << " images) with a plane constraint below " << min_constraint << ":"
-              << names.str() << (weak.size() > 20 ? " ..." : "");
+    LOG(INFO) << "removed " << weak.size() << " frames (" << removed_images << " images) with a plane constraint below "
+              << min_constraint << ":" << names.str() << (weak.size() > 20 ? " ..." : "");
 }
 
 /// Optimize the poses associated to a laser frame (Scan::id_pose) with the point-to-plane bundle adjustment of
@@ -248,8 +244,7 @@ bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm, const fs::path& out) {
 
     const auto t0 = std::chrono::steady_clock::now();
     adjuster.Optimize(sfm_data.poses);
-    LOG(INFO) << "BALM3 took " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
-              << " s";
+    LOG(INFO) << "BALM3 took " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s";
     return true;
 }
 
@@ -292,7 +287,6 @@ int main(int argc, char** argv) {
     // Parameters of the lidar BA
     BaParam prm;
     if (!config_fname.empty()) LoadParam(config_fname, &prm);
-    if (prm.threads > 0) omp_set_num_threads(prm.threads);  // the scans are read in parallel too
 
     // Load the poses
     const std::vector<PoseLine> named_poses = LoadPoses(pose_fname);
@@ -390,10 +384,7 @@ int main(int argc, char** argv) {
         fs::path images = fs::absolute(images_dir).lexically_normal();
         if (!images.has_filename()) images = images.parent_path();  // "images/" ends with a separator
         const fs::path sparse = images.parent_path() / "sparse";
-        if (!ba_data.SaveCOLMAP(sparse.string()))
-            LOG(FATAL) << "cannot write " << sparse;
-        // the camera's own field of view, and a pyramid as deep as the scene: an indoor robot sees ~10 m, a
-        // drone 80-130 m, and SavePairList pairs two images only if each sees the other's optical axis within it
+        if (!ba_data.SaveCOLMAP(sparse.string())) LOG(FATAL) << "cannot write " << sparse;
         double hfov = 73.8, vfov = 58.8;
         if (ba_data.cameras.count(1)) std::tie(hfov, vfov) = CameraFov(*ba_data.cameras.at(1));
         const double scene_depth = MedianRange(ba_data);
@@ -401,7 +392,8 @@ int main(int argc, char** argv) {
         const fs::path pair_list = images.parent_path() / "pair_list.txt";
         if (!ba_data.SavePairList(pair_list.string(), hfov, vfov, radius)) LOG(FATAL) << "cannot write " << pair_list;
         std::ifstream pairs_in(pair_list);
-        const long num_pairs = std::count(std::istreambuf_iterator<char>(pairs_in), std::istreambuf_iterator<char>(), '\n');
+        const long num_pairs =
+            std::count(std::istreambuf_iterator<char>(pairs_in), std::istreambuf_iterator<char>(), '\n');
         LOG(INFO) << "wrote " << pair_list << ": " << num_pairs << " pairs (fov " << hfov << " x " << vfov
                   << " deg, median scene depth " << scene_depth << " m, radius " << radius << " m)";
         LOG(INFO) << "wrote " << sparse << ": cameras.txt (" << ba_data.cameras.size() << " cameras), images.txt ("

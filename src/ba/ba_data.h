@@ -99,16 +99,14 @@ struct BaData {
         }
         return images.good();
     }
-    /// Write the image pairs whose views overlap, one "<name1> <name2>" per line, as `colmap matches_importer
-    /// --match_type pairs` reads them.  A camera sees the pyramid of depth `radius` [m] and opening hfov x vfov
-    /// [deg] around its +z axis (the defaults are the i2Nav-Robot left camera of config/cameras.txt); two images
-    /// are a pair when their centers are closer than `radius` and each sees a point of the other's optical axis
-    /// within that depth.  False if the file cannot be written.
+
     bool SavePairList(const std::string& pair_list_fname, double hfov = 73.8, double vfov = 58.8,
                       double radius = 10.0) const {
-        std::ofstream out(pair_list_fname);
-        if (!out) return false;
-        const double tan_h = std::tan(hfov * EIGEN_PI / 360.0), tan_v = std::tan(vfov * EIGEN_PI / 360.0);
+        std::ofstream pair_ofs(pair_list_fname);
+        if (!pair_ofs)
+            return false;
+        const double tan_h = std::tan(hfov * EIGEN_PI / 360.0);
+        const double tan_v = std::tan(vfov * EIGEN_PI / 360.0);
 
         struct View {
             Eigen::Isometry3d world_from_cam, cam_from_world;
@@ -127,10 +125,12 @@ struct BaData {
 
         // a sees b: a point of b's optical axis, up to `radius` deep, lies in a's view pyramid
         constexpr int kSamples = 8;
-        auto sees = [&](const View& a, const View& b) {
+        auto IsSeen = [&](const View& a, const View& b) {
             for (int k = 1; k <= kSamples; ++k) {
                 const Eigen::Vector3d pc = a.cam_from_world * (b.world_from_cam * Eigen::Vector3d(0, 0, radius * k / kSamples));
-                if (pc.z() > 0 && pc.z() <= radius && std::abs(pc.x()) <= tan_h * pc.z() &&
+                if (pc.z() > 0 &&
+                    pc.z() <= radius &&
+                    std::abs(pc.x()) <= tan_h * pc.z() &&
                     std::abs(pc.y()) <= tan_v * pc.z())
                     return true;
             }
@@ -140,24 +140,26 @@ struct BaData {
             for (size_t j = i + 1; j < views.size(); ++j) {
                 const View& a = views[i];
                 const View& b = views[j];
-                if ((a.world_from_cam.translation() - b.world_from_cam.translation()).norm() >= radius) continue;
-                if (sees(a, b) && sees(b, a)) out << a.name << ' ' << b.name << '\n';
+                if ((a.world_from_cam.translation() - b.world_from_cam.translation()).norm() >= radius)
+                    continue;
+                if (IsSeen(a, b) && IsSeen(b, a))
+                    pair_ofs << a.name << ' ' << b.name << '\n';
             }
-        return out.good();
+        return pair_ofs.good();
     }
-    bool SaveTumPoses(const std::string& file) const {
-        std::ofstream out(file);
-        if (!out) return false;
-        out << std::setprecision(9);
+    bool SaveTumPoses(const std::string& tum_fname) const {
+        std::ofstream ofs(tum_fname);
+        if (!ofs) return false;
+        ofs << std::setprecision(9);
         for (const auto& scan_it : scans) {
             const Scan& scan = *scan_it.second;
             const Eigen::Isometry3d& pose = poses.at(scan.id_pose);
             const Eigen::Vector3d t = pose.translation();
             const Eigen::Quaterniond q(pose.rotation());
-            out << std::filesystem::path(scan.path).stem().string() << ' ' << t.x() << ' ' << t.y() << ' ' << t.z()
+            ofs << std::filesystem::path(scan.path).stem().string() << ' ' << t.x() << ' ' << t.y() << ' ' << t.z()
                 << ' ' << q.x() << ' ' << q.y() << ' ' << q.z() << ' ' << q.w() << '\n';
         }
-        return out.good();
+        return ofs.good();
     }
 };
 
