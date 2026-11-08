@@ -12,8 +12,9 @@
 // exp(-|n_j - grad|^2 / sigma_n^2), and the projection x <- x - f(x) grad / |grad|.
 // What differs:
 //  - MeshLab takes the normals of the input mesh; a LiDAR map has none, so they are fitted by PCA over the same
-//    k neighbours.  Their sign is arbitrary, and RIMLS only needs it consistent inside one neighbourhood, so each
-//    neighbour's normal is flipped to agree with the current surface direction before it is used;
+//    k neighbours (pcl::NormalEstimationOMP).  Their sign is arbitrary, and RIMLS only needs it consistent inside one
+//    neighbourhood, so each neighbour's normal is flipped to agree with the current surface direction before it is
+//    used;
 //  - MeshLab's ball tree returns every point j with |x - p_j| < scale h_j.  Here a radius search of
 //    2 scale h_i around the point i being projected is filtered by that test, so a neighbour whose radius is more
 //    than twice h_i can be missed;
@@ -31,21 +32,23 @@
 #include <vector>
 
 #include <Eigen/Core>
-#include <Eigen/Eigenvalues>
 #include <boost/program_options.hpp>
 #include <boost/progress.hpp>
 
+#include <pcl/features/normal_3d_omp.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/search/kdtree.h>
 
 namespace po = boost::program_options;
 
 namespace {
 
 using Cloud = pcl::PointCloud<pcl::PointXYZI>;
+using Normals = pcl::PointCloud<pcl::Normal>;
 
 /// boost::progress_display is not thread safe: the loops below advance it once per kProgressBlock points, under a
 /// critical section, from inside `omp for schedule(dynamic, kProgressBlock)` (whose chunks start at multiples of it).
@@ -58,11 +61,11 @@ inline void Tick(boost::progress_display& bar, long i) {
 }
 
 struct RimlsParam {
-    int k = 16;                       ///< neighbours of the per-point radius and of the PCA normal
-    double filter_scale = 2.0;        ///< support radius of point j is filter_scale * h_j
-    double sigma_n = 0.75;            ///< width of the normal refitting weight: 0.5 sharp ... 2 smooth
+    int k = 16;                 ///< neighbours of the per-point radius and of the PCA normal
+    double filter_scale = 2.0;  ///< support radius of point j is filter_scale * h_j
+    double sigma_n = 0.75;      ///< width of the normal refitting weight: 0.5 sharp ... 2 smooth
     int min_refitting_iters = 1;
-    int max_refitting_iters = 3;      ///< 0 or 1 is plain IMLS
+    int max_refitting_iters = 3;  ///< 0 or 1 is plain IMLS
     double refitting_threshold = 1e-3;
     int max_projection_iters = 15;
     double projection_accuracy = 1e-4;  ///< stop when |f| < projection_accuracy * mean radius
@@ -71,7 +74,7 @@ struct RimlsParam {
 /// The robust implicit MLS surface of a point set with normals (MeshLab's GaelMls::RIMLS).
 class Rimls {
    public:
-    Rimls(const Cloud::ConstPtr& cloud, const std::vector<Eigen::Vector3d>& normals, const std::vector<double>& radii,
+    Rimls(const Cloud::ConstPtr& cloud, const Normals::ConstPtr& normals, const std::vector<double>& radii,
           const RimlsParam& prm)
         : cloud_(cloud), normals_(normals), radii_(radii), prm_(prm) {
         tree_.setInputCloud(cloud_);
@@ -80,19 +83,18 @@ class Rimls {
         epsilon_ = prm_.projection_accuracy * sum / std::max<size_t>(radii_.size(), 1);
     }
 
-    /// Point i moved onto the surface; false (and the point unchanged) if it has no neighbour.
+    /// Point i moved onto the surface; false (and the point unchanged) if it has no normal or no neighbour.
     bool Project(int i, Eigen::Vector3d* out) const {
         const auto& q = cloud_->points[i];
         const Eigen::Vector3d x(q.x, q.y, q.z);
+        *out = x;
+        if (!HasNormal(i)) return false;
         const double search_radius = 2.0 * prm_.filter_scale * radii_[i];
-        Eigen::Vector3d position = x, ref = normals_[i], grad;
+        Eigen::Vector3d position = x, ref = Normal(i), grad;
         double potential = 0;
         int iters = 0;
         do {
-            if (!PotentialAndGradient(position, search_radius, ref, &potential, &grad)) {
-                *out = x;
-                return false;
-            }
+            if (!PotentialAndGradient(position, search_radius, ref, &potential, &grad)) return false;
             const double norm = grad.norm();
             if (norm < 1e-12) break;
             ref = grad / norm;
@@ -103,6 +105,13 @@ class Rimls {
     }
 
    private:
+    /// PCL leaves NaN where the fit failed (fewer than 3 neighbours, or all of them on a line).
+    bool HasNormal(int i) const {
+        const pcl::Normal& n = normals_->points[i];
+        return std::isfinite(n.normal_x) && std::isfinite(n.normal_y) && std::isfinite(n.normal_z);
+    }
+    Eigen::Vector3d Normal(int i) const { return normals_->points[i].getNormalVector3fMap().cast<double>(); }
+
     /// rimls.tpp computePotentialAndGradient: f(x) and its gradient; `ref` orients the neighbours' normals.
     bool PotentialAndGradient(const Eigen::Vector3d& x, double search_radius, const Eigen::Vector3d& ref,
                               double* potential, Eigen::Vector3d* grad) const {
@@ -128,10 +137,11 @@ class Rimls {
             const auto& p = cloud_->points[id];
             const Eigen::Vector3d diff = x - Eigen::Vector3d(p.x, p.y, p.z);
             const double aux = 1.0 - diff.squaredNorm() * s2;
-            if (aux <= 0) continue;  // outside the support of point id
+            if (aux <= 0 || !HasNormal(id)) continue;  // outside the support of point id, or no normal
+            const Eigen::Vector3d normal = Normal(id);
             Sample smp;
             smp.diff = diff;
-            smp.normal = normals_[id].dot(ref) < 0 ? -normals_[id] : normals_[id];
+            smp.normal = normal.dot(ref) < 0 ? -normal : normal;
             smp.w = aux * aux * aux * aux;
             smp.grad_w = diff * (-2.0 * s2 * 4.0 * aux * aux * aux);
             samples.push_back(smp);
@@ -171,7 +181,7 @@ class Rimls {
     }
 
     Cloud::ConstPtr cloud_;
-    const std::vector<Eigen::Vector3d>& normals_;
+    Normals::ConstPtr normals_;
     const std::vector<double>& radii_;
     RimlsParam prm_;
     pcl::KdTreeFLANN<pcl::PointXYZI> tree_;
@@ -253,39 +263,44 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 3) per-point radius (mlssurface.tpp computeVertexRadius) and PCA normal over the k nearest neighbours
-    pcl::KdTreeFLANN<pcl::PointXYZI> knn;
-    knn.setInputCloud(cloud);
+    // 3) per-point radius (mlssurface.tpp computeVertexRadius) over the k nearest neighbours
+    pcl::search::KdTree<pcl::PointXYZI>::Ptr knn(new pcl::search::KdTree<pcl::PointXYZI>);
+    knn->setInputCloud(cloud);
     const long n = long(cloud->size());
     std::vector<double> radii(n);
-    std::vector<Eigen::Vector3d> normals(n);
-    std::cout << "[INFO] point radii and normals" << std::endl;
-    boost::progress_display bar_normal(n);
+    std::cout << "[INFO] point radii" << std::endl;
+    boost::progress_display bar_radius(n);
 #pragma omp parallel
     {
         std::vector<int> ids;
         std::vector<float> d2s;
 #pragma omp for schedule(dynamic, kProgressBlock)
         for (long i = 0; i < n; ++i) {
-            const int found = knn.nearestKSearch(cloud->points[i], prm.k, ids, d2s);
+            const int found = knn->nearestKSearch(cloud->points[i], prm.k, ids, d2s);
             const double d2_max = found > 0 ? *std::max_element(d2s.begin(), d2s.begin() + found) : 0.0;
             radii[i] = 2.0 * std::sqrt(d2_max / std::max(found, 1));
-            Eigen::Vector3d mean = Eigen::Vector3d::Zero();
-            for (int s = 0; s < found; ++s) mean += cloud->points[ids[s]].getVector3fMap().cast<double>();
-            mean /= std::max(found, 1);
-            Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
-            for (int s = 0; s < found; ++s) {
-                const Eigen::Vector3d d = cloud->points[ids[s]].getVector3fMap().cast<double>() - mean;
-                cov += d * d.transpose();
-            }
-            const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(cov);
-            normals[i] = es.eigenvectors().col(0);  // smallest eigenvalue; the sign is fixed per neighbourhood later
-            Tick(bar_normal, i);
+            Tick(bar_radius, i);
         }
     }
-    bar_normal += n % kProgressBlock;  // the last, partial block
+    bar_radius += n % kProgressBlock;  // the last, partial block
 
-    // 4) RIMLS projection of every point
+    // 4) PCA normal over the same k neighbours; its sign is fixed per neighbourhood in Rimls
+    std::cout << "[INFO] normals (pcl::NormalEstimationOMP)" << std::endl;
+    Normals::Ptr normals(new Normals);
+    {
+        pcl::NormalEstimationOMP<pcl::PointXYZI, pcl::Normal> ne;
+        ne.setNumberOfThreads(omp_get_max_threads());
+        ne.setInputCloud(cloud);
+        ne.setSearchMethod(knn);
+        ne.setKSearch(prm.k);
+        ne.compute(*normals);
+    }
+    long no_normal = 0;
+    for (const pcl::Normal& nm : normals->points)
+        if (!std::isfinite(nm.normal_x) || !std::isfinite(nm.normal_y) || !std::isfinite(nm.normal_z)) ++no_normal;
+    if (no_normal > 0) std::cout << "[INFO] " << no_normal << " points without a normal are left in place" << std::endl;
+
+    // 5) RIMLS projection of every point
     const Rimls rimls(cloud, normals, radii, prm);
     Cloud::Ptr out(new Cloud(*cloud));
     long failed = 0;
@@ -304,7 +319,8 @@ int main(int argc, char** argv) {
     out->width = std::uint32_t(out->size());
     out->height = 1;
     out->is_dense = true;
-    if (failed > 0) std::cout << "[INFO] " << failed << " points without a neighbour were left in place" << std::endl;
+    if (failed > 0)
+        std::cout << "[INFO] " << failed << " points without a normal or a neighbour were left in place" << std::endl;
 
     if (pcl::io::savePLYFileBinary(output_fname, *out) != 0) {
         std::cerr << "[ERROR] Failed to save " << output_fname << std::endl;
