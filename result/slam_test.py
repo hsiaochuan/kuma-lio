@@ -68,7 +68,7 @@ class DatasetConfig:
     clean_config: str = "../config/clean.yaml"  # run_clean parameters
     pgo_config: str = "../config/pgo.yaml"  # run_pgo parameters, they depend on the sensor's field of view
     ba_config: str = "../config/ba.yaml"  # run_ba parameters
-    camera_config: str = ""  # run_ba --calib_fname: yaml with extrin_R, extrin_t and camera; empty = none
+    camera_config: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -373,6 +373,8 @@ class SLAMTestRunner:
             for pattern, config_fname in dataset.config.items():
                 if re.search(pattern, name):
                     break
+            # unlike `config`, no match means no camera rather than the last entry
+            camera_fname = next((c for pattern, c in dataset.camera_config.items() if re.search(pattern, name)), "")
             task = RunTask(
                 bag_file=bag_file,
                 config=config_fname,
@@ -387,7 +389,7 @@ class SLAMTestRunner:
                 clean_config=dataset.clean_config,
                 pgo_config=dataset.pgo_config,
                 ba_config=dataset.ba_config,
-                camera_config=dataset.camera_config,
+                camera_config=camera_fname,
             )
             test_result = self.run_single(task)
             suite.test_results.append(test_result)
@@ -539,7 +541,9 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         gnss_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/GNSS",
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
-        camera_config="../config/mars_lvig_cameras.yaml",
+        # HKisland / HKairport and AMtown / AMvalley have different camera calibrations
+        camera_config={"HKisland|HKairport": "../config/mars_lvig_hk_cameras.yaml",
+                       "AMtown|AMvalley": "../config/mars_lvig_am_cameras.yaml"},
     )
     m3dgr = DatasetConfig(
         name="m3dgr",
@@ -577,7 +581,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/inav-robot/groundtruth",
         pgo_config="../config/pgo.yaml",
-        camera_config="../config/i2nav_robot_camera.yaml",
+        camera_config={".": "../config/i2nav_robot_camera.yaml"},
     )
     all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot]
     run_datasets = []
