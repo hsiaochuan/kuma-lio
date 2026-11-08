@@ -9,11 +9,12 @@ kf_max_range: 0.0        # [m] 关键帧点云裁剪半径，0 关闭；实测�
 plane_voxel: 1.0         # [m]
 plane_min_points: 10
 plane_min_eigen: 0.01    # [m^2]
-# 候选：btc 用描述子检索（旋转不变，种子来自三角形匹配），radius 用当前位姿附近的旧关键帧（种子来自里程计）
-loop_search: btc
+# 候选分两层：先 BTC 描述子检索（旋转不变，种子来自三角形匹配），BTC 在该关键帧没有闭合回环时，
+# 再用 radius 搜当前位姿附近的旧关键帧（种子来自里程计）。btc_enable: false 时只用 radius
+btc_enable: true
 loop_min_kf_gap: 30      # 关键帧数
 loop_min_travel: 30.0    # [m] 两端之间的路程
-# 仅 radius
+# radius
 loop_radius: 20.0        # [m]
 loop_max_dz: 4.0         # [m]
 loop_max_candidates: 3

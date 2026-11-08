@@ -46,7 +46,7 @@ for data_dir in datas_dir:
 
     # merge the cleaned scans into one map
     subprocess.run([
-        os.path.join(BIN, "points_merge"),
+        os.path.join(BIN, "run_merge"),
         "--trajectory", traj_pgo,
         "--pcd_dir", clean_dir,
         "--output", os.path.join(out, "map.pcd"),

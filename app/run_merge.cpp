@@ -124,7 +124,12 @@ int main(int argc, char** argv) {
                 std::cerr << "Failed to extract the stamp from the PCD file name: " << points_fname << std::endl;
                 throw;
             }
-            pose = interpolator.query(timestamp);
+            const std::optional<Eigen::Isometry3d> queried = interpolator.query(timestamp, 0.05);
+            if (!queried) {
+                std::cerr << "No pose within " << 0.05 << " s of " << points_fname << ", skipped" << std::endl;
+                continue;
+            }
+            pose = *queried;
         } else {
             pose = stamped_poses[i].pose;
         }
@@ -135,6 +140,9 @@ int main(int argc, char** argv) {
             continue;
         }
         pcl::transformPointCloud(*points, *points, pose.matrix());
+        for (int j = 0; j < points->size(); ++j) {
+            points->points[j].intensity = i;
+        }
         *merged_cloud += *points;
     }
 

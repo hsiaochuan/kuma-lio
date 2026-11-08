@@ -3,6 +3,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 
+#include <algorithm>
 #include <boost/filesystem.hpp>
 #include <cmath>
 #include <fstream>
@@ -175,9 +176,15 @@ double TrajectoryInterpolator::t_end() const {
     return traj_.back().time;
 }
 
-Eigen::Isometry3d TrajectoryInterpolator::query(double t) const {
-    if (t <= traj_.front().time) return traj_.front().pose;
-    if (t >= traj_.back().time) return traj_.back().pose;
+std::optional<Eigen::Isometry3d> TrajectoryInterpolator::query(double t, double thr) const {
+    if (t <= traj_.front().time) {
+        if (traj_.front().time - t > thr) return std::nullopt;
+        return traj_.front().pose;
+    }
+    if (t >= traj_.back().time) {
+        if (t - traj_.back().time > thr) return std::nullopt;
+        return traj_.back().pose;
+    }
 
     // Binary search for adjacent frames
     std::size_t lo = 0, hi = traj_.size() - 1;
@@ -185,6 +192,8 @@ Eigen::Isometry3d TrajectoryInterpolator::query(double t) const {
         std::size_t mid = (lo + hi) / 2;
         (traj_[mid].time <= t ? lo : hi) = mid;
     }
+    // the nearest stamp is one of the two neighbours
+    if (std::min(t - traj_[lo].time, traj_[hi].time - t) > thr) return std::nullopt;
     double span = traj_[hi].time - traj_[lo].time;
     double frac = (span > 1e-12) ? (t - traj_[lo].time) / span : 0.0;
     return interpolate_pose(traj_[lo].pose, traj_[hi].pose, frac);

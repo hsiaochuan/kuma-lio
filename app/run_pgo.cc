@@ -46,16 +46,7 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("plane_voxel", &p->plane_voxel);
     get("plane_min_points", &p->plane_min_points);
     get("plane_min_eigen", &p->plane_min_eigen);
-    if (y["loop_search"]) {
-        const std::string s = y["loop_search"].as<std::string>();
-        if (s == "btc") {
-            p->loop_search = pgo::LoopSearch::kBtc;
-        } else if (s == "radius") {
-            p->loop_search = pgo::LoopSearch::kRadius;
-        } else {
-            LOG(FATAL) << "loop_search must be btc or radius, got " << s;
-        }
-    }
+    get("btc_enable", &p->btc_enable);
     get("loop_min_kf_gap", &p->loop_min_kf_gap);
     get("loop_min_travel", &p->loop_min_travel);
     get("loop_radius", &p->loop_radius);

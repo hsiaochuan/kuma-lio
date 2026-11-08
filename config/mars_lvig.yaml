@@ -53,7 +53,7 @@ resple:
   fb_keep_cov: true
 
 fastlio:
-  mode: LIO
+  mode: LIVO
   # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
   sub_max: 4
   # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max

@@ -1,5 +1,6 @@
 #pragma once
 #include <Eigen/Eigen>
+#include <optional>
 #include <string>
 #include <vector>
 namespace faster_lio {
@@ -55,7 +56,9 @@ class TrajectoryInterpolator {
     double t_start() const;
     double t_end() const;
 
-    Eigen::Isometry3d query(double t) const;
+    /// Pose at `t`, interpolated between the two poses around it (clamped to the ends outside the
+    /// trajectory); nullopt when the pose stamp nearest to `t` is more than `thr` [s] away.
+    std::optional<Eigen::Isometry3d> query(double t, double thr) const;
 
     const Trajectory &trajectory() const;
 

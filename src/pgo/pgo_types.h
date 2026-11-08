@@ -2,8 +2,8 @@
 // Pose graph optimization after Voxel-SLAM (Liu et al.), section VIII, run offline on the output of
 // any odometry: the nodes are the scans, consecutive nodes are tied by the odometry's relative
 // pose, and a loop adds one more edge.  Section IX (global mapping, hierarchical global BA) is
-// deliberately left out.  Loop candidates come from BTC (btc.h) or, for comparison, from a radius
-// search over the keyframe positions.
+// deliberately left out.  Loop candidates come from BTC (btc.h) first and, when BTC closes no loop
+// at a keyframe, from a radius search over the keyframe positions.
 //
 // Single session and single threaded.  The scans are replayed in time order and a solve happens on
 // the scan that seals a keyframe, so later scans are detected against the already corrected map.
@@ -21,11 +21,14 @@
 namespace faster_lio {
 namespace pgo {
 
-/// Where loop candidates come from; yaml `loop_search: btc | radius`.
-enum class LoopSearch {
-    kBtc,     ///< BTC descriptors (btc.h), rotation invariant, seeded by the descriptor match
-    kRadius,  ///< old keyframes near the current pose estimate, seeded by the odometry
+/// The candidate layer a loop came from; see PgoParam::btc_enable.
+enum class LoopSource {
+    kBtc,
+    kRadius,
 };
+
+/// "btc" / "radius", for the logs and the debug dumps.
+inline const char* LoopSourceName(LoopSource s) { return s == LoopSource::kBtc ? "btc" : "radius"; }
 
 struct PgoParam {
     // ---- keyframes: Voxel-SLAM seals one every win_size scans ----
@@ -44,10 +47,13 @@ struct PgoParam {
     double plane_min_eigen = 0.01;  ///< [m^2] a cell is a plane below this smallest eigenvalue
 
     // ---- candidates: which old keyframes the loop ICP is tried against ----
-    LoopSearch loop_search = LoopSearch::kBtc;
+    /// Two layers: BTC descriptors (btc.h, rotation invariant, seeded by the descriptor match) are
+    /// tried first, and only when they close no loop at this keyframe, the old keyframes near the
+    /// current pose estimate (seeded by the odometry).  false skips BTC: radius search only.
+    bool btc_enable = true;
     int loop_min_kf_gap = 30;       ///< keyframes between the two ends of a loop
     double loop_min_travel = 30.0;  ///< [m] path length between them
-    // radius search only
+    // radius search
     double loop_radius = 20.0;  ///< [m]
     double loop_max_dz = 4.0;   ///< [m]
     int loop_max_candidates = 3;
@@ -156,6 +162,7 @@ struct LoopEdge {
     double drift = 0.0;   ///< [m] how far the loop moves the current pose
     double span = 0.0;    ///< [m] travelled between the two keyframes
     double eigval = 0.0;  ///< smallest eigenvalue of sum(n n^T) in icp_normal
+    LoopSource source = LoopSource::kBtc;  ///< the layer that found it
 };
 
 using ScanNodes = std::vector<ScanNode, Eigen::aligned_allocator<ScanNode>>;
@@ -174,6 +181,7 @@ struct LoopRejection {
     double nn_median = 0.0;
     int src_n = 0, tar_n = 0;
     double seed_t = 0.0;
+    LoopSource source = LoopSource::kBtc;  ///< the layer that proposed the candidate
 };
 
 }  // namespace pgo

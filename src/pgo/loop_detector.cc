@@ -30,6 +30,7 @@ void LoopDetector::Reject(int from, int to, const char* reason, double value, co
     r.to = to;
     r.reason = reason;
     r.value = value;
+    r.source = source_;
     if (icp) {
         r.matches = icp->matches;
         r.iters = icp->iters;
@@ -65,6 +66,7 @@ LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const
     }
     if (best < 0) return {};
     if (best_overlap <= pgo_param_.btc_min_overlap) {
+        source_ = LoopSource::kBtc;
         Reject(btc_cands[best].frame_id, cur_kf_id, "btc_overlap", best_overlap);
         return {};
     }
@@ -98,10 +100,15 @@ LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) co
 
 bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells,
                           LoopEdge* loop) {
+    // BTC runs on every keyframe while enabled: its database has to see each one, in order
+    if (pgo_param_.btc_enable && Verify(kfs, BtcCandidates(kfs, kf_points, cells), LoopSource::kBtc, loop)) return true;
+    return Verify(kfs, RadiusCandidates(kfs), LoopSource::kRadius, loop);
+}
+
+bool LoopDetector::Verify(const KeyFrames& kfs, const Candidates& cands, LoopSource source, LoopEdge* loop) {
     const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
     const KeyFrame& cur_kf = kfs[cur_kf_id];
-    const Candidates cands = pgo_param_.loop_search == LoopSearch::kBtc ? BtcCandidates(kfs, kf_points, cells) : RadiusCandidates(kfs);
-
+    source_ = source;
     for (const Candidate& cand : cands) {
         const KeyFrame& ki = kfs[cand.id];
         Eigen::Isometry3d T_from_to = cand.T_from_to;
@@ -138,6 +145,7 @@ bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_poin
         loop->drift = drift;
         loop->span = span;
         loop->eigval = icp.eigval;
+        loop->source = source;
         return true;
     }
     return false;

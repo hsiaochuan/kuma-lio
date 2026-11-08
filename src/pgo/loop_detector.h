@@ -1,7 +1,8 @@
 //
-// Loop closure at the newest keyframe: candidates from BTC or from a radius search (loop_search),
-// each verified by IcpNormal on the two keyframes' plane cells and the paper's drift-over-travel
-// ratio.  The first candidate that passes both becomes the loop.
+// Loop closure at the newest keyframe, in two layers: BTC candidates first and, when none of them
+// is accepted (or btc_enable is off), radius-search candidates.  Each is verified by IcpNormal on
+// the two keyframes' plane cells and the paper's drift-over-travel ratio; the first candidate that
+// passes both becomes the loop.
 //
 
 #ifndef FASTER_LIO_PGO_LOOP_DETECTOR_H
@@ -26,7 +27,7 @@ class LoopDetector {
     bool Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells, LoopEdge* loop);
 
     const std::vector<LoopRejection>& rejections() const { return rejections_; }
-    /// BTC descriptors of keyframe `id`; empty under the radius search.
+    /// BTC descriptors of keyframe `id`; null with btc_enable off.
     const BtcFrame* btc_frame(int id) const { return id < btc_db_.size() ? &btc_db_.frame(id) : nullptr; }
 
    private:
@@ -41,11 +42,14 @@ class LoopDetector {
     bool Eligible(const KeyFrames& kfs, int from, int to) const;
     Candidates BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells);
     Candidates RadiusCandidates(const KeyFrames& kfs) const;
+    /// Runs the ICP and drift checks on `cands` in order; true at the first one that passes.
+    bool Verify(const KeyFrames& kfs, const Candidates& cands, LoopSource source, LoopEdge* loop);
     void Reject(int from, int to, const char* reason, double value, const IcpResult* icp = nullptr);
 
     PgoParam pgo_param_;
     BtcDatabase btc_db_;
     std::vector<LoopRejection> rejections_;
+    LoopSource source_ = LoopSource::kBtc;  ///< layer being verified, stamped on each rejection
 };
 
 }  // namespace pgo

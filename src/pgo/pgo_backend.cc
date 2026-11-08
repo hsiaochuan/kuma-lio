@@ -57,7 +57,7 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& init_pose, const 
         return;
     graph_.AddLoop(kfs_[loop.from].anc_scan_id, kfs_[loop.to].anc_scan_id, loop.T_from_to);
     loops_.push_back(loop);
-    LOG(INFO) << "PGO: loop kf " << loop.from << " -> " << loop.to << " drift " << loop.drift
+    LOG(INFO) << "PGO: " << LoopSourceName(loop.source) << " loop kf " << loop.from << " -> " << loop.to << " drift " << loop.drift
               << " m over " << loop.span << " m, lambda_min " << loop.eigval;
 
     // the paper only pays for a solve and a map rebuild once the drift is worth it
@@ -134,21 +134,21 @@ void PgoBackend::SaveDebug(const std::string& output_dir) const {
     }
     {
         std::ofstream f(output_dir + "/pgo_loops.txt");
-        f << "# from to drift span ratio lambda_min tx ty tz qx qy qz qw (T_from_to)\n";
+        f << "# from to drift span ratio lambda_min tx ty tz qx qy qz qw (T_from_to) source\n";
         for (const LoopEdge& e : loops_) {
             const Eigen::Quaterniond q(e.T_from_to.linear());
             f << e.from << " " << e.to << " " << e.drift << " " << e.span << " " << e.drift / e.span << " "
               << e.eigval << " " << e.T_from_to.translation().transpose() << " " << q.x() << " " << q.y() << " "
-              << q.z() << " " << q.w() << "\n";
+              << q.z() << " " << q.w() << " " << LoopSourceName(e.source) << "\n";
         }
     }
     {
         std::ofstream f(output_dir + "/pgo_rejections.txt");
-        f << "# from to reason value matches iters step nn_median src_n tar_n seed_t\n";
+        f << "# from to reason value matches iters step nn_median src_n tar_n seed_t source\n";
         for (const LoopRejection& r : detector_.rejections()) {
             f << r.from << " " << r.to << " " << r.reason << " " << r.value << " " << r.matches << " "
               << r.iters << " " << r.step << " " << r.nn_median << " " << r.src_n << " " << r.tar_n << " "
-              << r.seed_t << "\n";
+              << r.seed_t << " " << LoopSourceName(r.source) << "\n";
         }
     }
     {
