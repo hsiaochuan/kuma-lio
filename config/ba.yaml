@@ -2,6 +2,8 @@
 # 预处理
 downsample: 0.1          # [m] 每个 scan 的体素降采样（0 关闭）
 min_range: 1.0           # [m] 丢掉比它更近的点（载体自身）
+min_constraint: 0.4      # 平面约束最弱方向上的支撑点数（sum N u u^T 的最小特征值）低于它的 scan 删除，0 关闭；
+                         # 只看到一块地面的起飞帧约 0.001-0.03，正常帧几十到几百
 threads: 0               # 0: OpenMP 缺省
 # 平面关联（Voxel-SLAM 的三层体素：voxel_size、/2、/4）
 voxel_size: 1.0          # [m] 第 0 层体素边长

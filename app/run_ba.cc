@@ -10,7 +10,9 @@
 // frame and <pose_fname> holds a line "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's
 // traj_pgo.txt.  The output <out>/traj_ba.txt is in TUM format, one line "<name> x y z qx qy qz qw" per laser
 // frame, in the order of the file names; a pose without a readable scan is left out.  A scan that no plane ties
-// to another scan keeps its pose, so do all of them if no plane is found.  The refined poses are written as
+// to another scan keeps its pose, so do all of them if no plane is found.  A frame the planes do not hold in place
+// (min_constraint, see PlaneConstraint) is removed with its pose and images: no line in traj_ba.txt, no image in
+// the COLMAP model and the pair list.  The refined poses are written as
 // the optimizer left them.
 //
 
@@ -24,8 +26,11 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
@@ -45,6 +50,7 @@ namespace {
 struct BaParam {
     double downsample = 0.1;  // [m] voxel size used to thin every scan (0: off)
     double min_range = 1.0;   // [m] drop the points closer than this (the carrier itself)
+    double min_constraint = 0.0;  // scans whose PlaneConstraint is below it are removed (0: off)
     int threads = 0;          // 0: OpenMP default
     ba::VoxelMapOptions voxel;
     ba::BAOptions opt;
@@ -57,6 +63,7 @@ void LoadParam(const std::string& file, BaParam* p) {
     };
     get("downsample", &p->downsample);
     get("min_range", &p->min_range);
+    get("min_constraint", &p->min_constraint);
     get("threads", &p->threads);
     get("voxel_size", &p->voxel.voxel_size);
     get("plane_eigen_ratio", &p->voxel.plane_eigen_ratio);
@@ -87,6 +94,36 @@ void LoadCalib(const std::string& file, ba::BaData* ba_data) {
     if (calib.from_lidar) LOG(INFO) << "extrin from T_cam_lidar and T_imu_lidar";
 }
 
+/// Horizontal and vertical field of view [deg] of a camera: the angles between the rays through the middles of
+/// opposite image borders, so it holds for any camera model.  The SavePairList defaults if a ray is missing.
+std::pair<double, double> CameraFov(const CamModel& cam) {
+    const double w = cam.w(), h = cam.h();
+    Vec3 left, right, top, bottom;
+    if (!cam.CamRayFromImg(Vec2(0, h / 2), &left) || !cam.CamRayFromImg(Vec2(w, h / 2), &right) ||
+        !cam.CamRayFromImg(Vec2(w / 2, 0), &top) || !cam.CamRayFromImg(Vec2(w / 2, h), &bottom))
+        return {73.8, 58.8};
+    const double kDeg = 180.0 / M_PI;
+    return {std::acos(std::clamp(left.dot(right), -1.0, 1.0)) * kDeg,
+            std::acos(std::clamp(top.dot(bottom), -1.0, 1.0)) * kDeg};
+}
+
+/// Median distance of the scan points from the sensor [m], from up to 200 scans spread over the run: how deep the
+/// scene the cameras look at is.  0 if there is no point.
+double MedianRange(const ba::BaData& ba_data) {
+    std::vector<double> ranges;
+    const size_t step = std::max<size_t>(1, ba_data.scans.size() / 200);
+    size_t k = 0;
+    for (const auto& scan_it : ba_data.scans) {
+        if (k++ % step != 0) continue;
+        const std::vector<Vec3>& pts = scan_it.second->points;
+        for (size_t i = 0; i < pts.size(); i += 10) ranges.push_back(pts[i].norm());
+    }
+    if (ranges.empty()) return 0.0;
+    const auto mid = ranges.begin() + ranges.size() / 2;
+    std::nth_element(ranges.begin(), mid, ranges.end());
+    return *mid;
+}
+
 /// A file whose extension (any case) is one of the common image formats.
 bool IsImageFile(const fs::path& file) {
     std::string ext = file.extension().string();
@@ -105,9 +142,79 @@ std::vector<Vec3> PreprocessScan(const ba::Scan& scan, const BaParam& prm) {
     return prm.downsample > 0 ? pgo::UniformSample(kept, prm.downsample) : kept;
 }
 
+/// How firmly the planes hold each scan in place, by pose id: the smallest eigenvalue of sum N_ij u u^T over
+/// the planes the scan shares with another scan, N_ij its points on plane i and u the plane normal at the input
+/// poses.  It counts the plane points that push back along the scan's weakest direction, so it is 0 when every
+/// plane it sees is parallel (a drone sitting on the apron sees the ground only) or it shares no plane, and such
+/// a scan slides freely in the BA.  A scan in no shared plane is absent, i.e. 0.
+std::map<ba::IndexT, double> PlaneConstraint(const std::vector<ba::PlaneFeature>& planes, const ba::Poses& poses) {
+    std::map<ba::IndexT, Mat3> info;
+    PointCluster world, tr;
+    for (const ba::PlaneFeature& plane : planes) {
+        if (plane.clus.size() < 2) continue;  // the BA drops it too
+        world.SetZero();
+        for (const ba::FrameCluster& o : plane.clus) {
+            const Eigen::Isometry3d& pose = poses.at(o.xid);
+            tr.Transform(o.clu, pose.linear(), pose.translation());
+            world += tr;
+        }
+        const Vec3 u = Eigen::SelfAdjointEigenSolver<Mat3>(world.Cov()).eigenvectors().col(0);
+        for (const ba::FrameCluster& o : plane.clus) {
+            auto it = info.try_emplace(o.xid, Mat3::Zero()).first;
+            it->second += o.clu.N * u * u.transpose();
+        }
+    }
+    std::map<ba::IndexT, double> constraint;
+    for (const auto& it : info)
+        constraint[it.first] = Eigen::SelfAdjointEigenSolver<Mat3>(it.second, Eigen::EigenvaluesOnly).eigenvalues()[0];
+    return constraint;
+}
+
+/// Remove the frames that the planes do not hold, PlaneConstraint below min_constraint: the scan, its plane
+/// observations, its pose and the images at that pose all leave sfm_data.  Left in, the BA moves them along their
+/// free directions, tens of meters for a drone taking off.
+/// <out>/scan_constraint.txt gets "<name> <PlaneConstraint>" for every scan, to choose the threshold.
+void RemoveWeakScans(ba::BaData& sfm_data, std::vector<ba::PlaneFeature>* planes, double min_constraint,
+                     const fs::path& out) {
+    const std::map<ba::IndexT, double> constraint = PlaneConstraint(*planes, sfm_data.poses);
+    std::ofstream dump(out / "scan_constraint.txt");
+    std::set<ba::IndexT> weak;
+    std::ostringstream names;
+    for (auto it = sfm_data.scans.begin(); it != sfm_data.scans.end();) {
+        const auto c_it = constraint.find(it->second->id_pose);
+        const double c = c_it == constraint.end() ? 0.0 : c_it->second;
+        const std::string name = fs::path(it->second->path).stem().string();
+        dump << name << ' ' << c << '\n';
+        if (min_constraint > 0.0 && c < min_constraint) {
+            weak.insert(it->second->id_pose);
+            if (weak.size() <= 20) names << ' ' << name << '(' << std::lround(c) << ')';
+            it = sfm_data.scans.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (weak.empty()) return;
+    for (ba::PlaneFeature& plane : *planes)
+        plane.clus.erase(std::remove_if(plane.clus.begin(), plane.clus.end(),
+                                        [&](const ba::FrameCluster& o) { return weak.count(o.xid) > 0; }),
+                         plane.clus.end());
+    for (const ba::IndexT id : weak) sfm_data.poses.erase(id);
+    size_t removed_images = 0;
+    for (auto it = sfm_data.rgb_images.begin(); it != sfm_data.rgb_images.end();) {
+        if (weak.count(it->second->id_pose)) {
+            it = sfm_data.rgb_images.erase(it);
+            ++removed_images;
+        } else {
+            ++it;
+        }
+    }
+    LOG(INFO) << "removed " << weak.size() << " frames (" << removed_images << " images) with a plane constraint below " << min_constraint << ":"
+              << names.str() << (weak.size() > 20 ? " ..." : "");
+}
+
 /// Optimize the poses associated to a laser frame (Scan::id_pose) with the point-to-plane bundle adjustment of
 /// BALM3.  Only these poses move; false, with the poses untouched, if no plane ties two scans together.
-bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm) {
+bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm, const fs::path& out) {
     // Plane association.  The map is only needed to find the planes, and is the largest thing in memory, so it
     // is gone before the optimization.
     ba::BundleAdjuster adjuster;
@@ -128,7 +235,9 @@ bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm) {
         }
         LOG(INFO) << "inserted " << total_pts << " points from " << scans.size() << " laser frames into "
                   << plane_map.NumVoxels() << " voxels";
-        adjuster.Load(plane_map.ExtractPlanes(sfm_data.poses));
+        std::vector<ba::PlaneFeature> planes = plane_map.ExtractPlanes(sfm_data.poses);
+        RemoveWeakScans(sfm_data, &planes, prm.min_constraint, out);
+        adjuster.Load(std::move(planes));
     }
     LOG(INFO) << "plane features: " << adjuster.NumFeatures() << ", observations: " << adjuster.NumObservations()
               << ", poses in the BA: " << adjuster.Nx << "/" << sfm_data.poses.size();
@@ -270,7 +379,7 @@ int main(int argc, char** argv) {
     }
 
     // Optimize the poses associated to a laser frame
-    if (!BAOptimize(ba_data, prm)) LOG(WARNING) << "poses unchanged";
+    if (!BAOptimize(ba_data, prm, out)) LOG(WARNING) << "poses unchanged";
 
     const fs::path traj = out / "traj_ba.txt";
     if (!ba_data.SaveTumPoses(traj.string())) LOG(FATAL) << "cannot write " << traj;
@@ -283,8 +392,18 @@ int main(int argc, char** argv) {
         const fs::path sparse = images.parent_path() / "sparse";
         if (!ba_data.SaveCOLMAP(sparse.string()))
             LOG(FATAL) << "cannot write " << sparse;
-        if (!ba_data.SavePairList(images.parent_path() / "pair_list.txt"))
-            LOG(FATAL) << "cannot write " << images.parent_path() / "pair_list.txt";
+        // the camera's own field of view, and a pyramid as deep as the scene: an indoor robot sees ~10 m, a
+        // drone 80-130 m, and SavePairList pairs two images only if each sees the other's optical axis within it
+        double hfov = 73.8, vfov = 58.8;
+        if (ba_data.cameras.count(1)) std::tie(hfov, vfov) = CameraFov(*ba_data.cameras.at(1));
+        const double scene_depth = MedianRange(ba_data);
+        const double radius = scene_depth > 0.0 ? 1.5 * scene_depth : 10.0;
+        const fs::path pair_list = images.parent_path() / "pair_list.txt";
+        if (!ba_data.SavePairList(pair_list.string(), hfov, vfov, radius)) LOG(FATAL) << "cannot write " << pair_list;
+        std::ifstream pairs_in(pair_list);
+        const long num_pairs = std::count(std::istreambuf_iterator<char>(pairs_in), std::istreambuf_iterator<char>(), '\n');
+        LOG(INFO) << "wrote " << pair_list << ": " << num_pairs << " pairs (fov " << hfov << " x " << vfov
+                  << " deg, median scene depth " << scene_depth << " m, radius " << radius << " m)";
         LOG(INFO) << "wrote " << sparse << ": cameras.txt (" << ba_data.cameras.size() << " cameras), images.txt ("
                   << ba_data.rgb_images.size() << " images) and an empty points3D.txt";
     }
