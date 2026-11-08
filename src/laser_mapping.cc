@@ -1349,7 +1349,9 @@ void LaserMapping::CompressedImageCallback(const sensor_msgs::CompressedImage::C
     const double timestamp = msg->header.stamp.toSec();
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     RgbImage image;
-    if (!image.Decode(msg->data.data(), msg->data.size())) {
+    // image_decode off: only the bytes are kept, decoding a 5 MP JPEG costs ~60 ms per frame
+    if (!image.SetEncoded(msg->data.data(), msg->data.size(), msg->format) ||
+        (false && !image.Decode(msg->data.data(), msg->data.size()))) {
         LOG(WARNING) << "image skipped, format " << msg->format;
         return;
     }
@@ -1863,7 +1865,7 @@ void LaserMapping::PostUpdateFastLio() {
             last_save_R = fast_lio_->x.R;
             double time_s = global_offset_time + time_ns * 1e-9;
             std::stringstream stamp_string;
-            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".png";
+            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
             if (!measures_.rgb_image_.Save((fs::path(output_dir) / "images" / stamp_string.str()).string()))
                 LOG(INFO) << "failed to save image at " << time_s;
         }

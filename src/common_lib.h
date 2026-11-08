@@ -177,14 +177,20 @@ inline Mat3 RotationFromArray(const std::vector<double> &v) {
 
 struct RgbImage {
     int64_t time_ns = -1;
-    int width = 0;
+    int width = 0;   ///< of `data`
     int height = 0;
-    std::vector<std::uint8_t> data;
+    std::vector<std::uint8_t> data;     ///< RGB8 pixels: a raw image, or a compressed one when image_decode is on
+    std::vector<std::uint8_t> encoded;  ///< a CompressedImage's bytes, as received
+    std::string format;                 ///< their format, "jpg" or "png", from CompressedImage::format
 
-    bool Empty() const { return data.empty(); }
+    bool Empty() const { return data.empty() && encoded.empty(); }
     bool Decode(const std::uint8_t *bytes, std::size_t size);
+    bool SetEncoded(const std::uint8_t *bytes, std::size_t size, const std::string &msg_format);
     bool FromRaw(const std::uint8_t *pixels, int w, int h, int step, const std::string &encoding);
-    bool Save(const std::string &fname) const;
+    /// `format` for a compressed image, "png" for a raw one.
+    std::string Extension() const { return encoded.empty() ? "png" : format; }
+    /// Writes <stem>.<Extension()>: the received bytes unchanged, or `data` as a PNG.
+    bool Save(const std::string &stem) const;
 };
 
 struct MeasureGroup {

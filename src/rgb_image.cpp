@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 
 #include "common_lib.h"
 
@@ -49,15 +50,30 @@ bool RgbImage::FromRaw(const std::uint8_t *pixels, int w, int h, int step, const
     return true;
 }
 
-bool RgbImage::Save(const std::string &fname) const {
+bool RgbImage::SetEncoded(const std::uint8_t *bytes, std::size_t size, const std::string &msg_format) {
+    // CompressedImage::format: "jpeg", "png", or image_transport's "<encoding>; jpeg compressed <encoding>"
+    std::string f = msg_format;
+    std::transform(f.begin(), f.end(), f.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (f.find("png") != std::string::npos) {
+        format = "png";
+    } else if (f.find("jpeg") != std::string::npos || f.find("jpg") != std::string::npos) {
+        format = "jpg";
+    } else {
+        return false;
+    }
+    encoded.assign(bytes, bytes + size);
+    return true;
+}
+
+bool RgbImage::Save(const std::string &stem) const {
     if (Empty()) return false;
-    const std::size_t dot = fname.rfind('.');
-    if (dot == std::string::npos) return false;
-    std::string ext = fname.substr(dot + 1);
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (ext == "png") return stbi_write_png(fname.c_str(), width, height, 3, data.data(), width * 3) != 0;
-    if (ext == "jpg" || ext == "jpeg") return stbi_write_jpg(fname.c_str(), width, height, 3, data.data(), 95) != 0;
-    return false;
+    const std::string fname = stem + "." + Extension();
+    if (!encoded.empty()) {  // a compressed image is written as received, decoded or not
+        std::ofstream ofs(fname, std::ios::binary);
+        ofs.write(reinterpret_cast<const char *>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
+        return bool(ofs);
+    }
+    return stbi_write_png(fname.c_str(), width, height, 3, data.data(), width * 3) != 0;
 }
 
 }  // namespace faster_lio
