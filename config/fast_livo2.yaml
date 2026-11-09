@@ -6,6 +6,7 @@ common:
   gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
+  image_time_offset: 0
 
 front_end: resple
 num_threads: 4

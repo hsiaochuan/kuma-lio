@@ -119,6 +119,7 @@ class LaserMappingParam {
     bool gnss_enable_;
     bool acc_ratio_;
     double lidar_time_offset_;
+    double image_time_offset_;
 
     std::string front_end;  // resple or fastlio
     int num_threads;
@@ -186,6 +187,7 @@ class LaserMappingParam {
             gnss_enable_ = ConfigKey<bool>(common, "gnss_enable");
             acc_ratio_ = ConfigKey<bool>(common, "acc_ratio");
             lidar_time_offset_ = ConfigKey<double>(common, "lidar_time_offset");
+            image_time_offset_ = ConfigKey<double>(common, "image_time_offset");
 
             front_end = ConfigKey<std::string>(yaml, "front_end");
             num_threads = ConfigKey<int>(yaml, "num_threads");

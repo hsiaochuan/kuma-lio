@@ -1333,7 +1333,8 @@ void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr&
     AddScanToBuffer(scan);
 }
 void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr& msg) {
-    const double timestamp = msg->header.stamp.toSec();
+    // time offset
+    const double timestamp = msg->header.stamp.toSec() + param->image_time_offset_;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     RgbImage image;
     if (!image.FromRaw(msg->data.data(), msg->width, msg->height, msg->step, msg->encoding)) {
@@ -1346,7 +1347,8 @@ void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr& msg) {
 }
 
 void LaserMapping::CompressedImageCallback(const sensor_msgs::CompressedImage::ConstPtr& msg) {
-    const double timestamp = msg->header.stamp.toSec();
+    // time offset
+    const double timestamp = msg->header.stamp.toSec() + param->image_time_offset_;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     RgbImage image;
     // image_decode off: only the bytes are kept, decoding a 5 MP JPEG costs ~60 ms per frame

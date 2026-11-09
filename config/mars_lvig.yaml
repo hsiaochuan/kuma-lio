@@ -6,6 +6,7 @@ common:
   gnss_enable: true
   acc_ratio: true
   lidar_time_offset: 0
+  image_time_offset: 0
 
 front_end: fastlio
 num_threads: 8
