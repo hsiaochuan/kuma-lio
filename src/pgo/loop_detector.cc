@@ -1,3 +1,25 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "pgo/loop_detector.h"
 
 #include <glog/logging.h>
@@ -5,11 +27,11 @@
 #include <algorithm>
 #include <cmath>
 
-namespace faster_lio {
+namespace kuma_lio {
 namespace pgo {
 namespace {
 
-/// Absolute heading difference between two poses, in degrees.
+// Absolute heading difference between two poses, in degrees.
 double YawDiffDeg(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) {
     const Mat3 Ra = a.linear(), Rb = b.linear();
     const double ya = std::atan2(Ra(1, 0), Ra(0, 0)), yb = std::atan2(Rb(1, 0), Rb(0, 0));
@@ -152,4 +174,4 @@ bool LoopDetector::Verify(const KeyFrames& kfs, const Candidates& cands, LoopSou
 }
 
 }  // namespace pgo
-}  // namespace faster_lio
+}  // namespace kuma_lio

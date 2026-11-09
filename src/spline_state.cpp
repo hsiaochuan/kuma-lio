@@ -1,6 +1,28 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "spline_state.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
 const Eigen::Matrix4d SplineState::base_coefficients = SplineState::computeBaseCoefficients();
 const Eigen::Matrix4d SplineState::blending_matrix = SplineState::computeBlendingMatrix();
@@ -41,7 +63,7 @@ void SplineState::addOneStateKnot(const Eigen::Vector3d& pos, const Eigen::Vecto
     t_knots.push_back(pos);
     ort_delta.push_back(ort_del);
     Eigen::Quaterniond q;
-    Eigen::Quaterniond q_del = faster_lio::ExpQuatHalf(ort_del);
+    Eigen::Quaterniond q_del = kuma_lio::ExpQuatHalf(ort_del);
     if (num_knot == 0) q = q_idle * q_del;
     else
         q = q_knots.back() * q_del;
@@ -183,4 +205,4 @@ Eigen::Matrix4d SplineState::computeBaseCoefficients() {
     return base_coeff;
 }
 
-}  // namespace faster_lio
+}  // namespace kuma_lio

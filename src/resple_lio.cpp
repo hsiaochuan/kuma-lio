@@ -1,12 +1,31 @@
+// MIT License
 //
-// Created by hsiaochuan on 2026/08/23.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "resple_lio.h"
 
 #include <ros/param.h>
 
 #include "rtklib_func.h"
-namespace faster_lio {
+namespace kuma_lio {
 
 void RESPLE_LIO::Init() {
     const double dt_s = param->resple_.dt_ns * 1e-9;
@@ -547,7 +566,7 @@ void RESPLE_LIO::prepIMU(ImuData& imu_data) {
     Eigen::Vector3d a_w = a_w_no_g + gravity;
     Eigen::Matrix3d RT = q_itp.inverse().toRotationMatrix();
     Eigen::Matrix<double, 3, 4> drot;
-    faster_lio::dRotInv(a_w, q_itp, drot);
+    kuma_lio::dRotInv(a_w, q_itp, drot);
     Eigen::Matrix<double, 6, XSIZE> Hi = Eigen::Matrix<double, 6, XSIZE>::Zero();
     // map knot Jacobians into the recursive-window columns; measurements in an
     // older segment touch a knot outside the window, whose column is dropped
@@ -775,7 +794,7 @@ void RESPLE_LIO::UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd) {
         CHECK(knot_id >= 0);
         spl.t_knots[knot_id] = cp_win.segment<3>(i * 6);
         spl.ort_delta[knot_id] = cp_win.segment<3>(i * 6 + 3);
-        Eigen::Quaterniond q_del = faster_lio::ExpQuatHalf(spl.ort_delta[knot_id]);
+        Eigen::Quaterniond q_del = kuma_lio::ExpQuatHalf(spl.ort_delta[knot_id]);
         if (knot_id == 0) {
             spl.q_knots[knot_id] = spl.q_idle * q_del;
         } else {
@@ -789,4 +808,4 @@ void RESPLE_LIO::UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd) {
     t_ecef_enu = xupd.segment<3>(TRANS_OFFSET);
 }
 
-}  // namespace faster_lio
+}  // namespace kuma_lio

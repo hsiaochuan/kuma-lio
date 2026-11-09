@@ -1,5 +1,26 @@
-#ifndef COMMON_LIB_H
-#define COMMON_LIB_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
 
 #include <deque>
 #include <string>
@@ -20,7 +41,7 @@
 #include "rtklib_.h"
 #define S_TO_NS(x) (int64_t((x) * 1e9))
 #define NS_TO_S(x) ((x) * 1e-9)
-namespace faster_lio {
+namespace kuma_lio {
 class VOXEL_LOCATION {
    public:
     int64_t x;
@@ -102,10 +123,10 @@ struct PointWithNormal {
     Eigen::Vector3d xyz;
     Eigen::Vector3d normal;
 };
-}  // namespace faster_lio
+}  // namespace kuma_lio
 
 // clang-format off
-POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
+POINT_CLOUD_REGISTER_POINT_STRUCT(kuma_lio::Point,
                                 (float, x, x)
                                 (float, y, y)
                                 (float, z, z)
@@ -117,7 +138,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::Point,
 // clang-format on
 
 // clang-format off
-POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::ColorPoint,
+POINT_CLOUD_REGISTER_POINT_STRUCT(kuma_lio::ColorPoint,
                                 (float, x, x)
                                 (float, y, y)
                                 (float, z, z)
@@ -131,20 +152,20 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(faster_lio::ColorPoint,
 
 namespace std {
 template <>
-struct hash<faster_lio::VOXEL_LOCATION> {
-    int64_t operator()(const faster_lio::VOXEL_LOCATION &s) const {
+struct hash<kuma_lio::VOXEL_LOCATION> {
+    int64_t operator()(const kuma_lio::VOXEL_LOCATION &s) const {
         using std::hash;
         using std::size_t;
         return size_t(((s.x) * 73856093) ^ ((s.y) * 471943) ^ ((s.z) * 83492791)) % 10000000;
     }
 };
 }  // namespace std
-namespace faster_lio {
+namespace kuma_lio {
 
 
-using PointCloud = pcl::PointCloud<faster_lio::Point>;
-using PointVector = std::vector<faster_lio::Point, Eigen::aligned_allocator<faster_lio::Point>>;
-using ColorPointCloud = pcl::PointCloud<faster_lio::ColorPoint>;
+using PointCloud = pcl::PointCloud<kuma_lio::Point>;
+using PointVector = std::vector<kuma_lio::Point, Eigen::aligned_allocator<kuma_lio::Point>>;
+using ColorPointCloud = pcl::PointCloud<kuma_lio::ColorPoint>;
 
 
 inline Vec3 VecFromArray(const std::vector<double> &v) {
@@ -177,19 +198,19 @@ inline Mat3 RotationFromArray(const std::vector<double> &v) {
 
 struct RgbImage {
     int64_t time_ns = -1;
-    int width = 0;   ///< of `data`
+    int width = 0;   // of `data`
     int height = 0;
-    std::vector<std::uint8_t> data;     ///< RGB8 pixels: a raw image, or a compressed one when image_decode is on
-    std::vector<std::uint8_t> encoded;  ///< a CompressedImage's bytes, as received
-    std::string format;                 ///< their format, "jpg" or "png", from CompressedImage::format
+    std::vector<std::uint8_t> data;     // RGB8 pixels: a raw image, or a compressed one when image_decode is on
+    std::vector<std::uint8_t> encoded;  // a CompressedImage's bytes, as received
+    std::string format;                 // their format, "jpg" or "png", from CompressedImage::format
 
     bool Empty() const { return data.empty() && encoded.empty(); }
     bool Decode(const std::uint8_t *bytes, std::size_t size);
     bool SetEncoded(const std::uint8_t *bytes, std::size_t size, const std::string &msg_format);
     bool FromRaw(const std::uint8_t *pixels, int w, int h, int step, const std::string &encoding);
-    /// `format` for a compressed image, "png" for a raw one.
+    // `format` for a compressed image, "png" for a raw one.
     std::string Extension() const { return encoded.empty() ? "png" : format; }
-    /// Writes <stem>.<Extension()>: the received bytes unchanged, or `data` as a PNG.
+    // Writes <stem>.<Extension()>: the received bytes unchanged, or `data` as a PNG.
     bool Save(const std::string &stem) const;
 };
 
@@ -213,5 +234,4 @@ struct SatTrack {
 
 };
 
-}  // namespace faster_lio
-#endif
+}  // namespace kuma_lio

@@ -1,15 +1,32 @@
+// MIT License
 //
-// Equidistant fisheye models without distortion, after COLMAP src/colmap/sensor/models/fisheye.h.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_FISHEYE_H
-#define CAMERAS_FISHEYE_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// SIMPLE_FISHEYE: f, cx, cy.  Equidistant: (uu, vv) = (u', v') theta / r, theta = atan(r), x = f uu + cx.
+// SIMPLE_FISHEYE: f, cx, cy.  Equidistant: (uu, vv) = (u', v') theta / r, theta = atan(r), x = f uu + cx.
 class SimpleFisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kSimpleFisheye;
@@ -31,7 +48,7 @@ class SimpleFisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(Vec2((uv.x() - c1) / f, (uv.y() - c2) / f));
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         const double f = params_[0], c1 = params_[1], c2 = params_[2];
         *ray = camera_internal::CamRayFromFisheye(Vec2((uv.x() - c1) / f, (uv.y() - c2) / f));
@@ -39,7 +56,7 @@ class SimpleFisheyeCamera : public CamModel {
     }
 };
 
-/// FISHEYE: fx, fy, cx, cy.  Equidistant with two focal lengths.
+// FISHEYE: fx, fy, cx, cy.  Equidistant with two focal lengths.
 class FisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kFisheye;
@@ -61,7 +78,7 @@ class FisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(Vec2((uv.x() - c1) / f1, (uv.y() - c2) / f2));
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         const double f1 = params_[0], f2 = params_[1], c1 = params_[2], c2 = params_[3];
         *ray = camera_internal::CamRayFromFisheye(Vec2((uv.x() - c1) / f1, (uv.y() - c2) / f2));
@@ -69,6 +86,4 @@ class FisheyeCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_FISHEYE_H
+}  // namespace kuma_lio

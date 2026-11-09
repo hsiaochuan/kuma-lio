@@ -2,8 +2,7 @@
 // Created by hsiaochuan on 2026/09/04.
 //
 
-#ifndef FASTER_LIO_RTKLIB_PRANGE_H
-#define FASTER_LIO_RTKLIB_PRANGE_H
+#pragma once
 
 #include "rtklib_.h"
 
@@ -179,5 +178,3 @@ inline double varerr_phase(const prcopt_t *opt, const obsd_t *obs, double el, in
 #undef MIN_EL
 
 }  // namespace rtklib_pntpos
-
-#endif  // FASTER_LIO_RTKLIB_PRANGE_H

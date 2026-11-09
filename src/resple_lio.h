@@ -1,4 +1,27 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #pragma once
+
 #include <glog/logging.h>
 #include <array>
 #include <pcl/common/transforms.h>
@@ -9,13 +32,13 @@
 #include "laser_mapping_param.h"
 #include "spline_state.h"
 #include "timer.h"
-namespace faster_lio {
+namespace kuma_lio {
 // window control points (4 x 6) | ba | bg | receiver clocks (4) | yaw_ecef_enu (1) | t_ecef_enu
 constexpr int XSIZE = 38;
 struct PointData {
     Vec3 point_body;
     Vec3 point_world;
-    faster_lio::Point point;
+    kuma_lio::Point point;
     int64_t time_ns;
     Vec3 ppl_normal;
     double ppl_d;
@@ -23,7 +46,7 @@ struct PointData {
     Eigen::Matrix<double, 1, 24> H;
     bool if_valid = false;
     double pt_wt = 0.01;
-    Mat3 body_cov = Mat3::Zero();  ///< LiDAR return covariance in the body frame
+    Mat3 body_cov = Mat3::Zero();  // LiDAR return covariance in the body frame
 };
 struct ImuData {
     int64_t time_ns;
@@ -151,15 +174,15 @@ class RESPLE_LIO {
     Eigen::Vector3d ba = Eigen::Vector3d::Zero();
     Eigen::Vector3d gravity = Eigen::Vector3d(0, 0, GRAVITY_NORM);
     std::shared_ptr<LaserMappingParam> param;
-    /// Local BA; its voxel map is the local map Match() queries.
+    // Local BA; its voxel map is the local map Match() queries.
     std::unique_ptr<LocalBA> lba;
-    /// Registered raw returns (world frame) waiting for the cut that closes their frame.
+    // Registered raw returns (world frame) waiting for the cut that closes their frame.
     std::deque<std::pair<int64_t, LbaPoint>> lba_points_;
-    /// Close a LiDAR frame every `frame_dt`,
-    /// run the BA and align the spline to it.
+    // Close a LiDAR frame every `frame_dt`,
+    // run the BA and align the spline to it.
     void UpdateLocalBA(const MeasureGroup& measures);
     int64_t lba_last_cut_ns_ = -1;
-    /// EKF update of the window with the refined pose `x` at `t_ns` as a measurement.
+    // EKF update of the window with the refined pose `x` at `t_ns` as a measurement.
     void AlignToBA(int64_t t_ns, const LbaState& x);
     Eigen::aligned_deque<ImuData> imu_meas;
     Eigen::aligned_deque<PointData> pt_meas;
@@ -180,4 +203,4 @@ class RESPLE_LIO {
     std::vector<Vec3> align_locals;
     std::vector<Vec3> align_ecefs;
 };
-}  // namespace faster_lio
+}  // namespace kuma_lio

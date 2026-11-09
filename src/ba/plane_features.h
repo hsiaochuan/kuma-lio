@@ -1,17 +1,26 @@
-#ifndef FASTER_LIO_BA_PLANE_FEATURES_H
-#define FASTER_LIO_BA_PLANE_FEATURES_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-//
-// Plane association for the batch BA (run_ba).  The same three-layer grid and plane test as the local BA
-// map in local_ba.cpp (RefitRoot): layer-0 voxels of voxel_size, each cut into 4 x 4 x 4 finest cells, planes
-// found by walking the layers (voxel_size, /2, /4) from the top -- a node flat enough becomes a plane, one
-// that is not is split, and the walk goes on only below the split nodes.
-//
-// What differs is that this map is batch only: every scan is in the "window", so there are no fixed
-// (marginalized) points, no sliding and no point-to-plane queries.  What the BA needs is which scans see which
-// plane, as body-frame point clusters (BALM3 eq. 2).  Raw points are never stored: a scan's points are folded
-// into the cluster of the cell they land in as soon as they are added.
-//
+#pragma once
 
 #include <omp.h>
 
@@ -24,38 +33,38 @@
 #include "common_lib.h"
 #include "point_cluster.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 namespace ba {
 
 struct VoxelMapOptions {
-    double voxel_size = 1.0;         ///< [m] layer-0 voxel; layers 1 and 2 halve it
-    double plane_eigen_ratio = 0.1;  ///< plane when lambda_0 / lambda_1 is below this; scale free
-    double min_plane_size = 0.05;    ///< smallest in-plane standard deviation of a plane, as a fraction of the
-                                     ///< cell edge of its own layer
-    int min_points = 10;             ///< a node with this many points or fewer is neither a plane nor split
+    double voxel_size = 1.0;         // [m] layer-0 voxel; layers 1 and 2 halve it
+    double plane_eigen_ratio = 0.1;  // plane when lambda_0 / lambda_1 is below this; scale free
+    double min_plane_size = 0.05;    // smallest in-plane standard deviation of a plane, as a fraction of the
+                                     // cell edge of its own layer
+    int min_points = 10;             // a node with this many points or fewer is neither a plane nor split
 };
 
-/// The points scan `xid` put on one plane, in that scan's body frame.
+// The points scan `xid` put on one plane, in that scan's body frame.
 struct FrameCluster {
-    IndexT xid = 0;  ///< pose id, a key of SfmData::poses (a dense index inside the BundleAdjuster)
+    IndexT xid = 0;  // pose id, a key of SfmData::poses (a dense index inside the BundleAdjuster)
     PointCluster clu;
 };
 
-/// One plane: the scans that see it.  Sorted by pose id, one entry per pose.
+// One plane: the scans that see it.  Sorted by pose id, one entry per pose.
 struct PlaneFeature {
     std::vector<FrameCluster> clus;
     int layer = 0;
-    double coeff = 1.0;  ///< weight of the plane in the BA cost, set by BundleAdjuster::Load
+    double coeff = 1.0;  // weight of the plane in the BA cost, set by BundleAdjuster::Load
 };
 
 class PlaneMap {
    public:
-    static constexpr int kLayers = 3;  ///< fixed depth of the voxel grid
-    static constexpr int kCells = 64;  ///< finest cells per layer-0 voxel, 4 per axis
+    static constexpr int kLayers = 3;  // fixed depth of the voxel grid
+    static constexpr int kCells = 64;  // finest cells per layer-0 voxel, 4 per axis
 
     explicit PlaneMap(const VoxelMapOptions& param) : param_(param) {}
 
-    /// Add the points of a scan at pose `id`, given in its body frame.
+    // Add the points of a scan at pose `id`, given in its body frame.
     void AddScan(IndexT id, const Mat3& R, const Vec3& p, const std::vector<Vec3>& body_pts) {
         for (const Vec3& pb : body_pts) {
             const Vec3 pw = R * pb + p;
@@ -86,10 +95,10 @@ class PlaneMap {
 
    private:
     struct Cell {
-        int idx = 0;                    ///< 16 ix + 4 iy + iz, each in [0, 4)
-        std::vector<FrameCluster> obs;  ///< sorted by scan
+        int idx = 0;                    // 16 ix + 4 iy + iz, each in [0, 4)
+        std::vector<FrameCluster> obs;  // sorted by scan
     };
-    struct Root {  ///< a layer-0 voxel
+    struct Root {  // a layer-0 voxel
         std::vector<Cell> cells;
     };
 
@@ -171,6 +180,4 @@ class PlaneMap {
 };
 
 }  // namespace ba
-}  // namespace faster_lio
-
-#endif  // FASTER_LIO_BA_PLANE_FEATURES_H
+}  // namespace kuma_lio

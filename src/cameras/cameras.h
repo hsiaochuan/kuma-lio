@@ -1,10 +1,26 @@
+// MIT License
 //
-// Every camera model of COLMAP (src/colmap/sensor/models), one class per model deriving directly from CamModel,
-// and the COLMAP cameras.txt file that the program takes as its camera parameter file: read and write.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_CAMERAS_H
-#define CAMERAS_CAMERAS_H
+#pragma once
 
 #include <fstream>
 #include <iomanip>
@@ -25,11 +41,11 @@
 #include "spherical.h"
 #include "thin_prism.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
 namespace camera_internal {
-/// The camera if `name` is Model's COLMAP name; *matched tells whether it was, so that a wrong parameter count
-/// (nullptr with *matched) can be told apart from another model.
+// The camera if `name` is Model's COLMAP name; *matched tells whether it was, so that a wrong parameter count
+// (nullptr with *matched) can be told apart from another model.
 template <typename Model>
 CamModel::Ptr MakeIfNamed(const std::string& name, unsigned int w, unsigned int h, const std::vector<double>& params,
                           bool* matched) {
@@ -108,7 +124,7 @@ inline std::map<uint32_t, CamModel::Ptr> ReadCamerasFromCamerasText(std::istream
     return cameras;
 }
 
-/// Same as ReadCamerasFromCamerasText(std::istream&), from a cameras.txt file; empty if it cannot be opened.
+// Same as ReadCamerasFromCamerasText(std::istream&), from a cameras.txt file; empty if it cannot be opened.
 inline std::map<uint32_t, CamModel::Ptr> ReadCamerasFromCamerasText(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -118,13 +134,13 @@ inline std::map<uint32_t, CamModel::Ptr> ReadCamerasFromCamerasText(const std::s
     return ReadCamerasFromCamerasText(file);
 }
 
-/// The camera with the smallest CAMERA_ID of a cameras.txt stream, nullptr if there is none.
+// The camera with the smallest CAMERA_ID of a cameras.txt stream, nullptr if there is none.
 inline CamModel::Ptr ReadCameraFromCamerasText(std::istream& stream) {
     const std::map<uint32_t, CamModel::Ptr> cameras = ReadCamerasFromCamerasText(stream);
     return cameras.empty() ? nullptr : cameras.begin()->second;
 }
 
-/// The camera with the smallest CAMERA_ID of a cameras.txt file, nullptr if there is none.
+// The camera with the smallest CAMERA_ID of a cameras.txt file, nullptr if there is none.
 inline CamModel::Ptr ReadCameraFromCamerasText(const std::string& path) {
     const std::map<uint32_t, CamModel::Ptr> cameras = ReadCamerasFromCamerasText(path);
     return cameras.empty() ? nullptr : cameras.begin()->second;
@@ -153,11 +169,9 @@ inline bool WriteCamerasToCamerasText(const std::string& path, const std::map<ui
     return file.good();
 }
 
-/// Writes one camera, CAMERA_ID `camera_id`, as a COLMAP cameras.txt.
+// Writes one camera, CAMERA_ID `camera_id`, as a COLMAP cameras.txt.
 inline bool WriteCameraToCamerasText(const std::string& path, const CamModel::Ptr& cam, uint32_t camera_id = 1) {
     return WriteCamerasToCamerasText(path, {{camera_id, cam}});
 }
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_CAMERAS_H
+}  // namespace kuma_lio

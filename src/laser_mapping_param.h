@@ -1,9 +1,27 @@
+// MIT License
 //
-// Created by hsiaochuan on 2026/05/09.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef FASTER_LIO_LASER_MAPPING_PARAM_H
-#define FASTER_LIO_LASER_MAPPING_PARAM_H
+#pragma once
+
 #include <glog/logging.h>
 #include <yaml-cpp/yaml.h>
 
@@ -12,8 +30,8 @@
 #include "cameras/cameras.h"
 #include "pose3.h"
 #include "local_ba.h"
-using namespace faster_lio;
-/// The `resple:` block: the spline filter of `front_end: resple`, and its feedback from the BA.
+using namespace kuma_lio;
+// The `resple:` block: the spline filter of `front_end: resple`, and its feedback from the BA.
 struct RespleParam {
     int64_t dt_ns;             // 1 / knot_hz [s]
     double ds_scan_voxel;      // per-scan uniform-sampling leaf [m]
@@ -43,7 +61,7 @@ struct RespleParam {
     bool fb_keep_cov;          // leave the filter covariance alone: the BA reuses the filter's own data
 };
 
-/// The `fastlio:` block: the FAST-LIO2 style front end, with the noises of Voxel-SLAM.
+// The `fastlio:` block: the FAST-LIO2 style front end, with the noises of Voxel-SLAM.
 enum class FastLioMode {
     LIO = 1,
     LIVO,
@@ -74,7 +92,7 @@ struct FastLioParam {
     double sub_std_gyr = 0.0;  // [rad/s] the same for the gyroscope; both <= 0: always sub_max
 };
 
-/// A key every config has: the configs all list the same keys.
+// A key every config has: the configs all list the same keys.
 template <typename T>
 T ConfigKey(const YAML::Node& node, const char* key) {
     const YAML::Node value = node[key];
@@ -141,7 +159,7 @@ class LaserMappingParam {
 
     RespleParam resple_;
     FastLioParam fast_lio_;
-    faster_lio::LbaParam lba_;
+    kuma_lio::LbaParam lba_;
 
     Vec3 level_arm;
     double max_gap;
@@ -162,8 +180,8 @@ class LaserMappingParam {
     prcopt_t prcopt;
     solopt_t solopt;
 
-    /// The camera (--camera_fname): extrin_ic_ (T_imu_cam) and cam_model_ (the smallest CAMERA_ID) from a camera
-    /// calibration yaml, see LoadCameraCalib in cameras/camera_calib.h for its two extrinsic forms.
+    // The camera (--camera_fname): extrin_ic_ (T_imu_cam) and cam_model_ (the smallest CAMERA_ID) from a camera
+    // calibration yaml, see LoadCameraCalib in cameras/camera_calib.h for its two extrinsic forms.
     void LoadCameraFromYaml(const std::string& fname) {
         const CameraCalib calib = LoadCameraCalib(fname);
         extrin_ic_ = Pose3(calib.T_imu_cam);
@@ -290,5 +308,3 @@ class LaserMappingParam {
             CHECK(!img_topic_.empty());
     }
 };
-
-#endif  // FASTER_LIO_LASER_MAPPING_PARAM_H

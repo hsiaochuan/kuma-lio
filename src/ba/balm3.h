@@ -1,44 +1,40 @@
-#ifndef FASTER_LIO_BA_BALM3_H
-#define FASTER_LIO_BA_BALM3_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-//
-// BALM3.0 -- Efficient and Distributed Large-Scale Point Cloud Bundle Adjustment via Majorization-Minimization
-// (Li et al., 2025).  The single-device optimizer; the plane features come from plane_features.h.
-//
-// Cost (paper eq. 1):   c(T) = sum_i coeff_i lambda_min( P_i/N_i - v_i v_i^T / N_i^2 ),  with the world-frame
-// cluster of plane i summed over the scans that see it, P_ij = R P_fij R^T + ... (PointCluster::Transform).
-// lambda_min couples every pose that sees a plane, which is what makes the BALM2 Hessian dense.
-//
-// Upper surrogate (eq. 8): with u the eigenvector of lambda_min at the current iterate and q = u^T mean,
-//     c_Mi(T | T^k) = (1/N_i) sum_points ( u^T x - q )^2
-// the mean squared point-to-plane distance to the plane (u, q) held FIXED.  At T^k it equals lambda_min (the
-// majorization is tight) and every term depends on one pose only, so the Hessian is block diagonal and the
-// normal equations split into independent 6x6 solves (eq. 19).  It is evaluated in cluster form, no point loop.
-//
-// Derivatives (left perturbation of eq. 10: T |+ d = (exp(dphi) R, exp(dphi) t + dt)), s := P_ij u - q v_ij:
-//     g_phi    = (2/N_i) s x u                          g_t   = (2/N_i)(u^T v_ij - N_ij q) u
-//     H_phiphi = (2/N_i) [ -^u P_ij ^u + (u s^T + s u^T)/2 - (u^T s) I ]
-//     H_phit   = -(2/N_i) ^u v_ij u^T                   H_tt  = (2 N_ij / N_i) u u^T
-// This is the exact Hessian (eq. 14); VerifyDerivatives() checks it against central finite differences.
-//
-// Two choices the paper leaves open: each plane carries the weight sum_j N_ij (the cost becomes the sum of
-// total, not mean, squared distances), and no pose is held -- the damping keeps every block solve well posed
-// and the trajectory may move rigidly.
-//
+#pragma once
 
 #include <glog/logging.h>
 
 #include "ba/plane_features.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 namespace ba {
 
 using VecVec6 = Eigen::aligned_vector<Vec6>;
 using VecMat6 = Eigen::aligned_vector<Mat6>;
-/// The poses seen by the planes, by dense index (the order of BundleAdjuster::ids)
+// The poses seen by the planes, by dense index (the order of BundleAdjuster::ids)
 using DensePoses = Eigen::aligned_vector<Eigen::Isometry3d>;
 
-/// T |+ dT, paper eq. (10).
+// T |+ dT, paper eq. (10).
 inline Eigen::Isometry3d Boxplus(const Eigen::Isometry3d& x, const Vec6& d) {
     const Mat3 dR = ExpMat(Vec3(d.head<3>()));
     Eigen::Isometry3d y = Eigen::Isometry3d::Identity();
@@ -48,21 +44,21 @@ inline Eigen::Isometry3d Boxplus(const Eigen::Isometry3d& x, const Vec6& d) {
 }
 
 struct BAOptions {
-    int max_outer = 300;  ///< k_max: surrogate rebuilds
-    int max_inner = 5;    ///< j_max: LM steps per surrogate (the paper caps this)
-    double eps = 1e-5;    ///< epsilon of Algorithm 1, on || dT || and || T^k - T^(k-1) ||
+    int max_outer = 300;  // k_max: surrogate rebuilds
+    int max_inner = 5;    // j_max: LM steps per surrogate (the paper caps this)
+    double eps = 1e-5;    // epsilon of Algorithm 1, on || dT || and || T^k - T^(k-1) ||
     bool verbose = true;
 };
 
-/// A plane frozen at the current iterate: u = u_min^(k), q = u^T mean^(k), N = N_i.
+// A plane frozen at the current iterate: u = u_min^(k), q = u^T mean^(k), N = N_i.
 struct PlaneAnchor {
     Vec3 u = Vec3::Zero();
     double q = 0.0;
     int N = 0;
 };
 
-/// The block-diagonal normal equations of the surrogate and its cost; J[j], H[j] are the 6x1 / 6x6 blocks of
-/// pose j.  Summed across threads by an OpenMP reduction.
+// The block-diagonal normal equations of the surrogate and its cost; J[j], H[j] are the 6x1 / 6x6 blocks of
+// pose j.  Summed across threads by an OpenMP reduction.
 struct NormalEq {
     VecVec6 J;
     VecMat6 H;
@@ -83,11 +79,11 @@ class BundleAdjuster {
    public:
     std::vector<PlaneFeature> feats;
     int Nx = 0;                // number of poses seen by the planes
-    std::vector<IndexT> ids;   ///< dense index (0..Nx-1) -> pose id
+    std::vector<IndexT> ids;   // dense index (0..Nx-1) -> pose id
     BAOptions opt;
 
-    /// Take the plane features (whose clusters are indexed by pose id).  The poses seen by at least one
-    /// plane are numbered 0..Nx-1; a pose seen by no plane is not optimized and stays where it is.
+    // Take the plane features (whose clusters are indexed by pose id).  The poses seen by at least one
+    // plane are numbered 0..Nx-1; a pose seen by no plane is not optimized and stays where it is.
     void Load(std::vector<PlaneFeature>&& planes) {
         feats.clear();
         feats.reserve(planes.size());
@@ -117,7 +113,7 @@ class BundleAdjuster {
         return n;
     }
 
-    /// How many plane features each pose (in the order of ids[]) participates in.
+    // How many plane features each pose (in the order of ids[]) participates in.
     std::vector<int> PlanesPerPose() const {
         std::vector<int> cnt(Nx, 0);
         for (const PlaneFeature& f : feats)
@@ -125,7 +121,7 @@ class BundleAdjuster {
         return cnt;
     }
 
-    /// Optimize, in place, the poses seen by the planes (the others are untouched).
+    // Optimize, in place, the poses seen by the planes (the others are untouched).
     void Optimize(Poses& poses) {
         Vec3 shift;
         DensePoses xs = Gather(poses, &shift);
@@ -151,8 +147,8 @@ class BundleAdjuster {
     }
 
    private:
-    /// The poses seen by the planes, densely (the order of ids[]), the translation centered on their mean
-    /// for numerical conditioning; `shift` is the vector to add back.
+    // The poses seen by the planes, densely (the order of ids[]), the translation centered on their mean
+    // for numerical conditioning; `shift` is the vector to add back.
     DensePoses Gather(const Poses& poses, Vec3* shift) const {
         DensePoses xs(Nx);
         *shift = Vec3::Zero();
@@ -165,7 +161,7 @@ class BundleAdjuster {
         return xs;
     }
 
-    /// The world-frame cluster of one feature at poses xs.
+    // The world-frame cluster of one feature at poses xs.
     static void Accumulate(const PlaneFeature& fea, const DensePoses& xs, PointCluster* total) {
         total->SetZero();
         PointCluster tr;
@@ -175,7 +171,7 @@ class BundleAdjuster {
         }
     }
 
-    /// The plane of feature `a` at poses xs (u and q only if `axes`); returns lambda_min.
+    // The plane of feature `a` at poses xs (u and q only if `axes`); returns lambda_min.
     double EvalPlane(long a, const DensePoses& xs, bool axes, PlaneAnchor* plane) const {
         PointCluster sig;
         Accumulate(feats[a], xs, &sig);
@@ -190,7 +186,7 @@ class BundleAdjuster {
         return saes.eigenvalues()[0];
     }
 
-    /// All the planes at poses xs; returns c(xs), paper eq. (1).
+    // All the planes at poses xs; returns c(xs), paper eq. (1).
     double EvalPlanes(const DensePoses& xs, bool axes, Eigen::aligned_vector<PlaneAnchor>* planes) const {
         planes->resize(feats.size());
         double cost = 0.0;
@@ -204,10 +200,10 @@ class BundleAdjuster {
         return EvalPlanes(xs, false, &planes);
     }
 
-    /// Freeze the planes at xs; returns c(xs) = c_M(xs | xs).
+    // Freeze the planes at xs; returns c(xs) = c_M(xs | xs).
     double BuildSurrogate(const DensePoses& xs) { return EvalPlanes(xs, true, &anc_); }
 
-    /// Surrogate cost, paper eq. (8) in the point-to-plane form.
+    // Surrogate cost, paper eq. (8) in the point-to-plane form.
     double SurrogateCost(const DensePoses& xs) const {
         double cost = 0.0;
 #pragma omp parallel for schedule(static) reduction(+ : cost)
@@ -223,7 +219,7 @@ class BundleAdjuster {
         return cost;
     }
 
-    /// The normal equations of the surrogate and, in the same pass, its cost.
+    // The normal equations of the surrogate and, in the same pass, its cost.
     void BuildNormalEquations(const DensePoses& xs, VecVec6* J, VecMat6* H, double* cost) const {
         NormalEq ne(Nx);
 #pragma omp parallel for schedule(dynamic, 32) reduction(neq_sum : ne)
@@ -266,8 +262,8 @@ class BundleAdjuster {
         *cost = ne.cost;
     }
 
-    /// Algorithm 1 of the paper: the outer loop rebuilds the surrogate, the inner loop runs LM on it with the
-    /// decoupled 6x6 solves of eq. (19).
+    // Algorithm 1 of the paper: the outer loop rebuilds the surrogate, the inner loop runs LM on it with the
+    // decoupled 6x6 solves of eq. (19).
     void OptimizeDense(DensePoses& xs) {
         VecVec6 J;
         VecMat6 H;
@@ -335,8 +331,8 @@ class BundleAdjuster {
         if (opt.verbose && c_init > 0) LOG(INFO) << "[ba] final cost " << c << " (" << 100.0 * c / c_init << "% of initial)";
     }
 
-    /// Central finite-difference check of J and H against the surrogate cost.  Second differences divide
-    /// roundoff by h^2, so the Hessian needs a much larger step than the gradient.
+    // Central finite-difference check of J and H against the surrogate cost.  Second differences divide
+    // roundoff by h^2, so the Hessian needs a much larger step than the gradient.
     double VerifyDerivativesDense(const DensePoses& xs, int n_check, double h = 1e-6, double h2 = 1e-4) {
         BuildSurrogate(xs);
         VecVec6 J;
@@ -403,10 +399,8 @@ class BundleAdjuster {
         *step_sq = s;
     }
 
-    Eigen::aligned_vector<PlaneAnchor> anc_;  ///< surrogate anchors, frozen for one outer iteration
+    Eigen::aligned_vector<PlaneAnchor> anc_;  // surrogate anchors, frozen for one outer iteration
 };
 
 }  // namespace ba
-}  // namespace faster_lio
-
-#endif  // FASTER_LIO_BA_BALM3_H
+}  // namespace kuma_lio

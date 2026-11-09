@@ -1,5 +1,26 @@
-#ifndef FASTER_LIO_SO3_MATH_H
-#define FASTER_LIO_SO3_MATH_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -7,7 +28,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace faster_lio {
+namespace kuma_lio {
 template <typename Scalar>
 struct Constants {
     static Scalar Epsilon() {
@@ -314,5 +335,4 @@ inline Eigen::Matrix3d EulerZYXToRot(const Eigen::Vector3d& euler) {
     Eigen::Matrix3d x_rot = Eigen::AngleAxisd(euler(2), Eigen::Vector3d::UnitX()).toRotationMatrix();
     return z_rot * y_rot * x_rot;
 }
-}  // namespace faster_lio
-#endif
+}  // namespace kuma_lio

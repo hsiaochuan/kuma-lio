@@ -1,12 +1,35 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #pragma once
+
 #include <Eigen/Eigen>
 #include <optional>
 #include <string>
 #include <vector>
-namespace faster_lio {
+namespace kuma_lio {
 struct StampedPose {
     double time;
-    Eigen::Isometry3d pose;  ///< T_world_body
+    Eigen::Isometry3d pose;  // T_world_body
     StampedPose();
     StampedPose(double t, const Eigen::Isometry3d &p);
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -56,8 +79,8 @@ class TrajectoryInterpolator {
     double t_start() const;
     double t_end() const;
 
-    /// Pose at `t`, interpolated between the two poses around it (clamped to the ends outside the
-    /// trajectory); nullopt when the pose stamp nearest to `t` is more than `thr` [s] away.
+    // Pose at `t`, interpolated between the two poses around it (clamped to the ends outside the
+    // trajectory); nullopt when the pose stamp nearest to `t` is more than `thr` [s] away.
     std::optional<Eigen::Isometry3d> query(double t, double thr) const;
 
     const Trajectory &trajectory() const;
@@ -65,4 +88,4 @@ class TrajectoryInterpolator {
    private:
     Trajectory traj_;
 };
-}  // namespace faster_lio
+}  // namespace kuma_lio

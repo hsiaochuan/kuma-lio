@@ -21,10 +21,10 @@ extrin_R_il: [1, 0, 0,
               0, 1, 0,
               0, 0, 1]
 pcd_save_en: false
-pcd_save_interval: 1.0
+pcd_save_interval: 0
 bag_save_en: false
 image_save_en: false
-image_save_interval: 1.5
+image_save_interval: 10.0  # [m] the drone flies 80-130 m up: 10 m is a 4-7 deg view change, enough overlap for COLMAP
 resple:
   knot_hz: 100
   ds_scan_voxel: 0.5

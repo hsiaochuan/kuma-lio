@@ -1,17 +1,34 @@
+// MIT License
 //
-// Pinhole models with OpenCV radial-tangential distortion, after COLMAP src/colmap/sensor/models/opencv.h.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_OPENCV_H
-#define CAMERAS_OPENCV_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// OPENCV: fx, fy, cx, cy, k1, k2, p1, p2.
-///   du = u (k1 r^2 + k2 r^4) + 2 p1 u v + p2 (r^2 + 2 u^2)
-///   dv = v (k1 r^2 + k2 r^4) + 2 p2 u v + p1 (r^2 + 2 v^2)
+// OPENCV: fx, fy, cx, cy, k1, k2, p1, p2.
+//   du = u (k1 r^2 + k2 r^4) + 2 p1 u v + p2 (r^2 + 2 u^2)
+//   dv = v (k1 r^2 + k2 r^4) + 2 p2 u v + p1 (r^2 + 2 v^2)
 class OpenCVCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kOpenCV;
@@ -45,9 +62,9 @@ class OpenCVCamera : public CamModel {
     }
 };
 
-/// FULL_OPENCV: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6.  The rational radial term
-///   (1 + k1 r^2 + k2 r^4 + k3 r^6) / (1 + k4 r^2 + k5 r^4 + k6 r^6)
-/// plus the tangential terms of OPENCV.
+// FULL_OPENCV: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6.  The rational radial term
+//   (1 + k1 r^2 + k2 r^4 + k3 r^6) / (1 + k4 r^2 + k5 r^4 + k6 r^6)
+// plus the tangential terms of OPENCV.
 class FullOpenCVCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kFullOpenCV;
@@ -83,6 +100,4 @@ class FullOpenCVCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_OPENCV_H
+}  // namespace kuma_lio

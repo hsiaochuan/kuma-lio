@@ -1,5 +1,27 @@
-#ifndef FASTER_LIO_LASER_MAPPING_H
-#define FASTER_LIO_LASER_MAPPING_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
+
 #include "laser_mapping_param.h"
 #include "livox_ros_driver/CustomMsg.h"
 #include <ros/ros.h>
@@ -15,7 +37,7 @@
 #include "resple_lio.h"
 #include "stamp_pose.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
 
 class LaserMapping {
@@ -28,7 +50,7 @@ class LaserMapping {
         LOG(INFO) << "laser mapping deconstruct";
     }
 
-    /// init without ros
+    // init without ros
     bool Init(const std::string &config_fname, const std::string& camera_fname);
     void RunRESPLE();
     void RunFastLio();
@@ -48,7 +70,7 @@ class LaserMapping {
     bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     bool CollectMeasures(const std::int64_t& meas_end);
-    /// The next frame of the FAST-LIO front end: lba.frame_dt long, or up to the next image.
+    // The next frame of the FAST-LIO front end: lba.frame_dt long, or up to the next image.
     bool CollectMeasuresFastLio();
     void PublishOdometry(const Eigen::Isometry3d& pub_pose, std::int64_t time_ns);
     void PublishFrameWorld();
@@ -61,7 +83,7 @@ class LaserMapping {
     void InitialSubscribers(ros::NodeHandle& nh);
     void InitialPublishers(ros::NodeHandle& nh);
    public:
-    /// modules
+    // modules
     std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;  // front_end: resple
     std::shared_ptr<FastLio> fast_lio_ = nullptr;       // front_end: fast_lio
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
@@ -99,6 +121,4 @@ class LaserMapping {
     bool dynamic_init_ = false;
 };
 
-}  // namespace faster_lio
-
-#endif  // FASTER_LIO_LASER_MAPPING_H
+}  // namespace kuma_lio

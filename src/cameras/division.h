@@ -1,19 +1,34 @@
+// MIT License
 //
-// One-parameter division models (Fitzgibbon, "Simultaneous linear estimation of multiple view geometry and
-// lens distortion", 2001), after COLMAP src/colmap/sensor/models/division.h.  Projection and unprojection
-// are both closed form: a pixel p (normalized) is the ray (p, 1 + k |p|^2).
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_DIVISION_H
-#define CAMERAS_DIVISION_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
 namespace camera_internal {
-/// Normalized pixel of the ray (u, v, w): r p with r = 2 / (w + sqrt(w^2 - 4 k rho^2)), the root of
-/// rho k r^2 - w r + rho = 0.  No cheirality test, as in COLMAP.  False if the discriminant is negative.
+// Normalized pixel of the ray (u, v, w): r p with r = 2 / (w + sqrt(w^2 - 4 k rho^2)), the root of
+// rho k r^2 - w r + rho = 0.  No cheirality test, as in COLMAP.  False if the discriminant is negative.
 inline bool DivisionFromCam(double k, const Vec3& X, Vec2* p) {
     const double rho2 = X.x() * X.x() + X.y() * X.y();
     const double disc_sq = X.z() * X.z() - 4.0 * rho2 * k;
@@ -24,7 +39,7 @@ inline bool DivisionFromCam(double k, const Vec3& X, Vec2* p) {
 }
 }  // namespace camera_internal
 
-/// SIMPLE_DIVISION: f, cx, cy, k.
+// SIMPLE_DIVISION: f, cx, cy, k.
 class SimpleDivisionCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kSimpleDivision;
@@ -49,7 +64,7 @@ class SimpleDivisionCamera : public CamModel {
     }
 };
 
-/// DIVISION: fx, fy, cx, cy, k.
+// DIVISION: fx, fy, cx, cy, k.
 class DivisionCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kDivision;
@@ -74,6 +89,4 @@ class DivisionCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_DIVISION_H
+}  // namespace kuma_lio

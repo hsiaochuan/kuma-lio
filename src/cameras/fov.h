@@ -1,16 +1,32 @@
+// MIT License
 //
-// FOV model (Devernay & Faugeras, "Straight lines have to be straight", 2001), after COLMAP
-// src/colmap/sensor/models/fov.h.  Distortion and undistortion are both closed form.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_FOV_H
-#define CAMERAS_FOV_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// FOV: fx, fy, cx, cy, omega.  r_d = atan(2 r tan(omega / 2)) / omega.
+// FOV: fx, fy, cx, cy, omega.  r_d = atan(2 r tan(omega / 2)) / omega.
 class FOVCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kFOV;
@@ -33,8 +49,8 @@ class FOVCamera : public CamModel {
         return true;
     }
 
-    /// The distorted point itself (COLMAP FOVCameraModel::Distortion), with its Taylor expansions near
-    /// omega = 0 and r = 0.
+    // The distorted point itself (COLMAP FOVCameraModel::Distortion), with its Taylor expansions near
+    // omega = 0 and r = 0.
     static Vec2 Distort(double omega, const Vec2& p) {
         constexpr double kEpsilon = 1e-4;  // chosen arbitrarily, as in COLMAP
         const double radius2 = p.squaredNorm();
@@ -51,7 +67,7 @@ class FOVCamera : public CamModel {
         }
         return p * factor;
     }
-    /// The inverse of Distort (COLMAP FOVCameraModel::Undistortion).
+    // The inverse of Distort (COLMAP FOVCameraModel::Undistortion).
     static Vec2 Undistort(double omega, const Vec2& p) {
         constexpr double kEpsilon = 1e-4;
         const double radius2 = p.squaredNorm();
@@ -69,6 +85,4 @@ class FOVCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_FOV_H
+}  // namespace kuma_lio

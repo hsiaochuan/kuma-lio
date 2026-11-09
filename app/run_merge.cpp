@@ -1,3 +1,25 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include <pcl/common/transforms.h>
 #include <pcl/filters/uniform_sampling.h>
 #include <pcl/filters/voxel_grid.h>
@@ -87,12 +109,12 @@ int main(int argc, char** argv) {
     }
 
     // load stamped poses
-    faster_lio::Trajectory stamped_poses = faster_lio::TrajectoryGenerator::load_from_tumtxt(trajectory_fname);
+    kuma_lio::Trajectory stamped_poses = kuma_lio::TrajectoryGenerator::load_from_tumtxt(trajectory_fname);
     std::cout << "Loaded trajectory with " << stamped_poses.size() << " poses from " << trajectory_fname << std::endl;
 
     // if the poses and pcd is not match, try to extract the stamp
     bool try_use_pcd_stamp = false;
-    faster_lio::TrajectoryInterpolator interpolator(stamped_poses);
+    kuma_lio::TrajectoryInterpolator interpolator(stamped_poses);
     if (stamped_poses.size() != points_fnames.size()) {
         std::cout
             << "The number of poses and PCD files do not match. Trying to extract the stamp from the PCD file names."

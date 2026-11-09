@@ -1,18 +1,33 @@
+// MIT License
 //
-// Fisheye models with radial distortion of the fisheye angle, after COLMAP
-// src/colmap/sensor/models/fisheye_radial.h.  The distortion acts on (uu, vv) = (u', v') theta / r with
-// theta = atan(r), so theta^2 = uu^2 + vv^2.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_FISHEYE_RADIAL_H
-#define CAMERAS_FISHEYE_RADIAL_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// OPENCV_FISHEYE (Kannala-Brandt): fx, fy, cx, cy, k1, k2, k3, k4.
-///   theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8)
+// OPENCV_FISHEYE (Kannala-Brandt): fx, fy, cx, cy, k1, k2, k3, k4.
+//   theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8)
 class OpenCVFisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kOpenCVFisheye;
@@ -36,14 +51,14 @@ class OpenCVFisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(pp);
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         Vec2 pp;
         if (!FisheyeFromImg(uv, &pp)) return false;
         *ray = camera_internal::CamRayFromFisheye(pp);
         return true;
     }
-    /// The undistorted fisheye point (uu, vv) of a pixel.
+    // The undistorted fisheye point (uu, vv) of a pixel.
     bool FisheyeFromImg(const Vec2& uv, Vec2* pp) const {
         const double f1 = params_[0], f2 = params_[1], c1 = params_[2], c2 = params_[3];
         *pp = Vec2((uv.x() - c1) / f1, (uv.y() - c2) / f2);
@@ -58,7 +73,7 @@ class OpenCVFisheyeCamera : public CamModel {
     }
 };
 
-/// SIMPLE_RADIAL_FISHEYE: f, cx, cy, k.  theta_d = theta (1 + k theta^2).
+// SIMPLE_RADIAL_FISHEYE: f, cx, cy, k.  theta_d = theta (1 + k theta^2).
 class SimpleRadialFisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kSimpleRadialFisheye;
@@ -82,14 +97,14 @@ class SimpleRadialFisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(pp);
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         Vec2 pp;
         if (!FisheyeFromImg(uv, &pp)) return false;
         *ray = camera_internal::CamRayFromFisheye(pp);
         return true;
     }
-    /// The undistorted fisheye point (uu, vv) of a pixel.
+    // The undistorted fisheye point (uu, vv) of a pixel.
     bool FisheyeFromImg(const Vec2& uv, Vec2* pp) const {
         const double f = params_[0], c1 = params_[1], c2 = params_[2];
         *pp = Vec2((uv.x() - c1) / f, (uv.y() - c2) / f);
@@ -102,7 +117,7 @@ class SimpleRadialFisheyeCamera : public CamModel {
     }
 };
 
-/// RADIAL_FISHEYE: f, cx, cy, k1, k2.  theta_d = theta (1 + k1 theta^2 + k2 theta^4).
+// RADIAL_FISHEYE: f, cx, cy, k1, k2.  theta_d = theta (1 + k1 theta^2 + k2 theta^4).
 class RadialFisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kRadialFisheye;
@@ -126,14 +141,14 @@ class RadialFisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(pp);
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         Vec2 pp;
         if (!FisheyeFromImg(uv, &pp)) return false;
         *ray = camera_internal::CamRayFromFisheye(pp);
         return true;
     }
-    /// The undistorted fisheye point (uu, vv) of a pixel.
+    // The undistorted fisheye point (uu, vv) of a pixel.
     bool FisheyeFromImg(const Vec2& uv, Vec2* pp) const {
         const double f = params_[0], c1 = params_[1], c2 = params_[2];
         *pp = Vec2((uv.x() - c1) / f, (uv.y() - c2) / f);
@@ -147,6 +162,4 @@ class RadialFisheyeCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_FISHEYE_RADIAL_H
+}  // namespace kuma_lio

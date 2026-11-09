@@ -1,3 +1,25 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "pgo/btc.h"
 
 #include <glog/logging.h>
@@ -9,7 +31,7 @@
 #include <numeric>
 #include <unordered_set>
 
-namespace faster_lio {
+namespace kuma_lio {
 namespace pgo {
 namespace {
 
@@ -22,7 +44,7 @@ struct RefPlane {
 };
 using RefPlanes = std::vector<RefPlane, Eigen::aligned_allocator<RefPlane>>;
 
-/// A plane normal has no sign, so either orientation counts as the same.
+// A plane normal has no sign, so either orientation counts as the same.
 bool SameNormal(const Vec3& a, const Vec3& b, double tol) { return (a - b).norm() < tol || (a + b).norm() < tol; }
 
 int Find(std::vector<int>& parent, int i) {
@@ -37,9 +59,9 @@ void MakeTree(const std::vector<Vec3>& pts, pcl::KdTreeFLANN<pcl::PointXYZ>* tre
     tree->setInputCloud(cloud);
 }
 
-/// Paper IV-B2: plane cells that are coplanar (eq. 2) are merged into one plane (eq. 3), and the
-/// `btc_ref_planes` merged planes with the most points become the reference planes.  A cell that
-/// merged with nothing is not a candidate, as upstream.
+// Paper IV-B2: plane cells that are coplanar (eq. 2) are merged into one plane (eq. 3), and the
+// `btc_ref_planes` merged planes with the most points become the reference planes.  A cell that
+// merged with nothing is not a candidate, as upstream.
 RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
     const int n = static_cast<int>(cells.size());
     std::vector<int> parent(n);
@@ -58,7 +80,7 @@ RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
     struct Group {
         PointCluster pc;
         int cells = 0;
-        int first = 0;  ///< lowest cell index, a deterministic tie-break
+        int first = 0;  // lowest cell index, a deterministic tie-break
     };
     std::unordered_map<int, Group> groups;
     for (int i = 0; i < n; ++i) {
@@ -91,8 +113,8 @@ RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
     return out;
 }
 
-/// Paper IV-B3/4: the height-encoded image of `cloud` on one reference plane, and its keypoints,
-/// the strongest pixel of each 5x5 block that is bright enough and not on a line.
+// Paper IV-B3/4: the height-encoded image of `cloud` on one reference plane, and its keypoints,
+// the strongest pixel of each 5x5 block that is bright enough and not on a line.
 void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, const PgoParam& prm, Keypoints* out_kps) {
     const int layers = static_cast<int>(std::lround((prm.btc_height_max - prm.btc_height_min) / prm.btc_layer_height));
     CHECK(layers > 0 && layers <= 64) << "btc height band must be 1-64 layers, got " << layers;
@@ -172,8 +194,8 @@ void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, c
     }
 }
 
-/// A keypoint survives when every other keypoint within btc_nms_radius is weaker, or equally
-/// strong and later in the list.
+// A keypoint survives when every other keypoint within btc_nms_radius is weaker, or equally
+// strong and later in the list.
 Keypoints SuppressNonMaxima(const Keypoints& kps, const PgoParam& prm) {
     if (kps.empty()) return kps;
     std::vector<Vec3> pts;
@@ -198,8 +220,8 @@ Keypoints SuppressNonMaxima(const Keypoints& kps, const PgoParam& prm) {
     return out;
 }
 
-/// Paper IV-C2/3: a triangle from every keypoint and two of its K nearest, sides within
-/// [btc_side_min, btc_side_max], not degenerate, each vertex set once.
+// Paper IV-C2/3: a triangle from every keypoint and two of its K nearest, sides within
+// [btc_side_min, btc_side_max], not degenerate, each vertex set once.
 std::vector<BtcTriangle> MakeTriangles(const Keypoints& kps, const PgoParam& prm) {
     std::vector<BtcTriangle> out_triangles;
     const int Nkp = static_cast<int>(kps.size());
@@ -248,13 +270,13 @@ std::vector<BtcTriangle> MakeTriangles(const Keypoints& kps, const PgoParam& prm
     return out_triangles;
 }
 
-/// Paper eq. 6, one vertex.
+// Paper eq. 6, one vertex.
 double BitSimilarity(const BtcKeypoint& a, const BtcKeypoint& b) {
     if (a.count + b.count == 0) return 0.0;
     return 2.0 * __builtin_popcountll(a.bits & b.bits) / (a.count + b.count);
 }
 
-/// Least-squares rigid transform with dst = T * src.
+// Least-squares rigid transform with dst = T * src.
 Eigen::Isometry3d Kabsch(const std::vector<Vec3>& src, const std::vector<Vec3>& dst) {
     Vec3 cs = Vec3::Zero(), cd = Vec3::Zero();
     for (size_t i = 0; i < src.size(); ++i) cs += src[i], cd += dst[i];
@@ -407,4 +429,4 @@ std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Q
 }
 
 }  // namespace pgo
-}  // namespace faster_lio
+}  // namespace kuma_lio

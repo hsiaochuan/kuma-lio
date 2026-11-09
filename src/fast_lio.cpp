@@ -1,3 +1,25 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "fast_lio.h"
 
 #include <Eigen/Eigenvalues>
@@ -6,7 +28,7 @@
 
 #include "timer.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 namespace {
 constexpr int kMinParallelPoints = 2048;
 constexpr int kMaxIter = 4;
@@ -272,10 +294,10 @@ void FastLio::ProcessSubFrames(MeasureGroup& measures, int n) {
     using VecN = FastLioState::VecN;
     struct Node {
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-        FastLioState prior;  ///< after the propagation to the end of the slice, cov = P-
-        FastLioState post;   ///< after its update
-        MatN phi;            ///< error-state transition from the previous slice's end
-        Eigen::aligned_vector<FastLioPoint> pts;  ///< body frame at the end of the slice
+        FastLioState prior;  // after the propagation to the end of the slice, cov = P-
+        FastLioState post;   // after its update
+        MatN phi;            // error-state transition from the previous slice's end
+        Eigen::aligned_vector<FastLioPoint> pts;  // body frame at the end of the slice
     };
     Eigen::aligned_vector<Node> nodes(n);
     const FastLioParam& fast_opt = param->fast_lio_;
@@ -396,4 +418,4 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
               << x.ba.transpose();
 }
 
-}  // namespace faster_lio
+}  // namespace kuma_lio

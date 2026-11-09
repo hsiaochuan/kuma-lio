@@ -1,19 +1,36 @@
+// MIT License
 //
-// Equirectangular (full spherical) model, after COLMAP src/colmap/sensor/models/spherical.h.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_SPHERICAL_H
-#define CAMERAS_SPHERICAL_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// EQUIRECTANGULAR: w, h (the image size; no focal length).
-///   azimuth theta = atan2(u, w) in (-pi, pi], from +Z (forward), +X is +pi/2
-///   elevation phi = atan2(-v, sqrt(u^2 + w^2)) in [-pi/2, pi/2], -Y (up) is +pi/2
-///   x = (theta / 2 pi + 1/2) W,  y = (1/2 - phi / pi) H
-/// Every non-zero direction projects, behind the camera too.
+// EQUIRECTANGULAR: w, h (the image size; no focal length).
+//   azimuth theta = atan2(u, w) in (-pi, pi], from +Z (forward), +X is +pi/2
+//   elevation phi = atan2(-v, sqrt(u^2 + w^2)) in [-pi/2, pi/2], -Y (up) is +pi/2
+//   x = (theta / 2 pi + 1/2) W,  y = (1/2 - phi / pi) H
+// Every non-zero direction projects, behind the camera too.
 class EquirectangularCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kEquirectangular;
@@ -32,8 +49,8 @@ class EquirectangularCamera : public CamModel {
         *uv = Vec2((theta / (2.0 * EIGEN_PI) + 0.5) * width, (0.5 - phi / EIGEN_PI) * height);
         return true;
     }
-    /// The normalized plane point of a pixel, only for rays in front of the camera (Z > 0); CamRayFromImg
-    /// covers the whole sphere.
+    // The normalized plane point of a pixel, only for rays in front of the camera (Z > 0); CamRayFromImg
+    // covers the whole sphere.
     bool CamFromImg(const Vec2& uv, Vec2* xy) const override {
         Vec3 ray;
         CamRayFromImg(uv, &ray);
@@ -51,6 +68,4 @@ class EquirectangularCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_SPHERICAL_H
+}  // namespace kuma_lio

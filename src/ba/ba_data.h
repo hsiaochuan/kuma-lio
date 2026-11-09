@@ -1,11 +1,26 @@
-#ifndef FASTER_LIO_BA_SFM_DATA_H
-#define FASTER_LIO_BA_SFM_DATA_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-//
-// The scene of run_ba, the lidar part of openMVG's SfM_Data (sfm_data.hpp, sfm_scan.hpp) that main_BALVM
-// optimizes: the poses, and the laser frames that hang on them.  A scan names its pose by Scan::id_pose, a
-// plane cluster names it by FrameCluster::xid, both keys of BaData::poses.
-//
+#pragma once
 
 #include <Eigen/Geometry>
 #include <cmath>
@@ -20,27 +35,27 @@
 
 #include "common_lib.h"
 #include "cameras/cameras.h"
-namespace faster_lio {
+namespace kuma_lio {
 namespace ba {
 
 using IndexT = uint32_t;
 constexpr IndexT kUndefinedIndex = static_cast<IndexT>(-1);
 
-/// T_world_body, indexed by Scan::id_pose
+// T_world_body, indexed by Scan::id_pose
 using Poses = std::map<IndexT, Eigen::Isometry3d, std::less<IndexT>,
                        Eigen::aligned_allocator<std::pair<const IndexT, Eigen::Isometry3d>>>;
 
-/// One laser frame
+// One laser frame
 struct Scan {
-    std::string path;             ///< its point cloud file
+    std::string path;             // its point cloud file
     IndexT id_pose = kUndefinedIndex;
-    std::vector<Vec3> points;     ///< body frame
+    std::vector<Vec3> points;     // body frame
 };
 
-/// All the laser frames, indexed by scan id
+// All the laser frames, indexed by scan id
 using Scans = std::map<IndexT, std::shared_ptr<Scan>>;
 
-/// One image; only its file is known, its pose is BaData::poses[id_pose] * BaData::extrin.
+// One image; only its file is known, its pose is BaData::poses[id_pose] * BaData::extrin.
 struct RgbImage {
     std::string path;
     IndexT id_pose = kUndefinedIndex;
@@ -53,13 +68,13 @@ struct BaData {
     Scans scans;
     RgbImages rgb_images;
     Cameras cameras;
-    /// T_body_cam, the camera in the body frame of the poses: P_body = R P_cam + t
+    // T_body_cam, the camera in the body frame of the poses: P_body = R P_cam + t
     Eigen::Isometry3d extrin = Eigen::Isometry3d::Identity();
 
-    /// Write `dir` as the --input_path of `colmap point_triangulator`: cameras.txt (the cameras, by CAMERA_ID;
-    /// left out when there is none), images.txt and an empty points3D.txt.  Every image uses camera 1, is named by
-    /// its file name (the name the database has under --image_path) and has cam_from_world = (pose * extrin)^-1,
-    /// with no 2D point.  False if a file cannot be written.
+    // Write `dir` as the --input_path of `colmap point_triangulator`: cameras.txt (the cameras, by CAMERA_ID;
+    // left out when there is none), images.txt and an empty points3D.txt.  Every image uses camera 1, is named by
+    // its file name (the name the database has under --image_path) and has cam_from_world = (pose * extrin)^-1,
+    // with no 2D point.  False if a file cannot be written.
     bool SaveCOLMAP(const std::string& dir) const {
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
@@ -164,6 +179,4 @@ struct BaData {
 };
 
 }  // namespace ba
-}  // namespace faster_lio
-
-#endif  // FASTER_LIO_BA_SFM_DATA_H
+}  // namespace kuma_lio

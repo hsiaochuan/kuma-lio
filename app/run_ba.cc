@@ -1,20 +1,24 @@
+// MIT License
 //
-// Offline LiDAR bundle adjustment of the scan poses, BALM3.0 (Li et al., 2025): the poses are refined so that
-// the planes the scans see together are as thin as possible.  The lidar part of openMVG's main_BALVM, laid out
-// the same way: the poses and the laser frames are loaded into a BaData, associated by name, and
-// BAOptimize refines the poses that hold a laser frame.
+// Copyright (c) 2026 hsiaochuan
 //
-//   run_ba --scans_dir <dir> --pose_fname <file> [--config ba.yaml] [--out dir]  (-c/-o, -h for help)
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-// The inputs are those of run_pgo and run_clean: <scans_dir>/<name>.ply are the scans in the sensor's own
-// frame and <pose_fname> holds a line "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's
-// traj_pgo.txt.  The output <out>/traj_ba.txt is in TUM format, one line "<name> x y z qx qy qz qw" per laser
-// frame, in the order of the file names; a pose without a readable scan is left out.  A scan that no plane ties
-// to another scan keeps its pose, so do all of them if no plane is found.  A frame the planes do not hold in place
-// (min_constraint, see PlaneConstraint) is removed with its pose and images: no line in traj_ba.txt, no image in
-// the COLMAP model and the pair list.  The refined poses are written as
-// the optimizer left them.
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 //
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <glog/logging.h>
 #include <pcl/console/print.h>
@@ -43,7 +47,7 @@
 
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
-using namespace faster_lio;
+using namespace kuma_lio;
 
 namespace {
 
@@ -73,7 +77,7 @@ void LoadParam(const std::string& file, BaParam* p) {
     get("verbose", &p->opt.verbose);
 }
 
-/// The points of a .ply file; false if it cannot be read.
+// The points of a .ply file; false if it cannot be read.
 bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     pcl::PointCloud<pcl::PointXYZ> cloud;
     if (pcl::io::loadPLYFile(file.string(), cloud) < 0) return false;
@@ -83,8 +87,8 @@ bool LoadPly(const fs::path& file, std::vector<Vec3>* points) {
     return true;
 }
 
-/// ba_data.extrin (T_body_cam: the poses are IMU poses) and ba_data.cameras from a camera calibration yaml, see
-/// LoadCameraCalib in cameras/camera_calib.h for its two extrinsic forms.
+// ba_data.extrin (T_body_cam: the poses are IMU poses) and ba_data.cameras from a camera calibration yaml, see
+// LoadCameraCalib in cameras/camera_calib.h for its two extrinsic forms.
 void LoadCalib(const std::string& file, ba::BaData* ba_data) {
     const CameraCalib calib = LoadCameraCalib(file);
     ba_data->extrin = calib.T_imu_cam;
@@ -92,8 +96,8 @@ void LoadCalib(const std::string& file, ba::BaData* ba_data) {
     if (calib.from_lidar) LOG(INFO) << "extrin from T_cam_lidar and T_imu_lidar";
 }
 
-/// Horizontal and vertical field of view [deg] of a camera: the angles between the rays through the middles of
-/// opposite image borders, so it holds for any camera model.  The SavePairList defaults if a ray is missing.
+// Horizontal and vertical field of view [deg] of a camera: the angles between the rays through the middles of
+// opposite image borders, so it holds for any camera model.  The SavePairList defaults if a ray is missing.
 std::pair<double, double> CameraFov(const CamModel& cam) {
     const double w = cam.w(), h = cam.h();
     Vec3 left, right, top, bottom;
@@ -120,7 +124,7 @@ double MedianRange(const ba::BaData& ba_data) {
     return *mid;
 }
 
-/// A file whose extension (any case) is one of the common image formats.
+// A file whose extension (any case) is one of the common image formats.
 bool IsImageFile(const fs::path& file) {
     std::string ext = file.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -129,7 +133,7 @@ bool IsImageFile(const fs::path& file) {
     return kImageExts.count(ext) > 0;
 }
 
-/// The points of a scan that go into the BA: the far enough ones, thinned.
+// The points of a scan that go into the BA: the far enough ones, thinned.
 std::vector<Vec3> PreprocessScan(const ba::Scan& scan, const BaParam& prm) {
     std::vector<Vec3> kept;
     kept.reserve(scan.points.size());
@@ -138,11 +142,11 @@ std::vector<Vec3> PreprocessScan(const ba::Scan& scan, const BaParam& prm) {
     return prm.downsample > 0 ? pgo::UniformSample(kept, prm.downsample) : kept;
 }
 
-/// How firmly the planes hold each scan in place, by pose id: the smallest eigenvalue of sum N_ij u u^T over
-/// the planes the scan shares with another scan, N_ij its points on plane i and u the plane normal at the input
-/// poses.  It counts the plane points that push back along the scan's weakest direction, so it is 0 when every
-/// plane it sees is parallel (a drone sitting on the apron sees the ground only) or it shares no plane, and such
-/// a scan slides freely in the BA.  A scan in no shared plane is absent, i.e. 0.
+// How firmly the planes hold each scan in place, by pose id: the smallest eigenvalue of sum N_ij u u^T over
+// the planes the scan shares with another scan, N_ij its points on plane i and u the plane normal at the input
+// poses.  It counts the plane points that push back along the scan's weakest direction, so it is 0 when every
+// plane it sees is parallel (a drone sitting on the apron sees the ground only) or it shares no plane, and such
+// a scan slides freely in the BA.  A scan in no shared plane is absent, i.e. 0.
 std::map<ba::IndexT, double> PlaneConstraint(const std::vector<ba::PlaneFeature>& planes, const ba::Poses& poses) {
     std::map<ba::IndexT, Mat3> info;
     PointCluster world, tr;
@@ -166,10 +170,10 @@ std::map<ba::IndexT, double> PlaneConstraint(const std::vector<ba::PlaneFeature>
     return constraint;
 }
 
-/// Remove the frames that the planes do not hold, PlaneConstraint below min_constraint: the scan, its plane
-/// observations, its pose and the images at that pose all leave sfm_data.  Left in, the BA moves them along their
-/// free directions, tens of meters for a drone taking off.
-/// <out>/scan_constraint.txt gets "<name> <PlaneConstraint>" for every scan, to choose the threshold.
+// Remove the frames that the planes do not hold, PlaneConstraint below min_constraint: the scan, its plane
+// observations, its pose and the images at that pose all leave sfm_data.  Left in, the BA moves them along their
+// free directions, tens of meters for a drone taking off.
+// <out>/scan_constraint.txt gets "<name> <PlaneConstraint>" for every scan, to choose the threshold.
 void RemoveWeakScans(ba::BaData& sfm_data, std::vector<ba::PlaneFeature>* planes, double min_constraint,
                      const fs::path& out) {
     const std::map<ba::IndexT, double> constraint = PlaneConstraint(*planes, sfm_data.poses);
@@ -208,8 +212,8 @@ void RemoveWeakScans(ba::BaData& sfm_data, std::vector<ba::PlaneFeature>* planes
               << min_constraint << ":" << names.str() << (weak.size() > 20 ? " ..." : "");
 }
 
-/// Optimize the poses associated to a laser frame (Scan::id_pose) with the point-to-plane bundle adjustment of
-/// BALM3.  Only these poses move; false, with the poses untouched, if no plane ties two scans together.
+// Optimize the poses associated to a laser frame (Scan::id_pose) with the point-to-plane bundle adjustment of
+// BALM3.  Only these poses move; false, with the poses untouched, if no plane ties two scans together.
 bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm, const fs::path& out) {
     // Plane association.  The map is only needed to find the planes, and is the largest thing in memory, so it
     // is gone before the optimization.

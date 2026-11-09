@@ -82,7 +82,6 @@ add_library(${PROJECT_NAME}
         src/pose3.cpp
         src/rgb_image.cpp
         src/stamp_pose.cpp
-        src/voxel_map.cpp
         src/local_ba.cpp
         src/spline_state.cpp
         src/resple_lio.cpp

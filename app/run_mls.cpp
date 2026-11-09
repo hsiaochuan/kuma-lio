@@ -1,28 +1,24 @@
-// run_mls.cpp
+// MIT License
 //
-// Point cloud smoothing by RIMLS projection: every point is moved onto the robust implicit MLS surface of the
-// cloud (Oztireli, Guennebaud, Gross, "Feature Preserving Point Set Surfaces based on Non-Linear Kernel
-// Regression", Eurographics 2009), after MeshLab's "MLS projection (RIMLS)" filter
-// (src/meshlabplugins/filter_mls/rimls.tpp and mlssurface.tpp of https://github.com/cnr-isti-vclab/meshlab).
+// Copyright (c) 2026 hsiaochuan
 //
-//   run_mls -i map.ply -o map_post.ply  (-h for help; every other parameter is the RimlsParam / SOR default)
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-// What is the same as MeshLab: the per-point radius h = 2 sqrt(d2_max / k) over the k nearest neighbours, the
-// spatial weight (1 - d^2 / (scale h_j)^2)^4 and its gradient, the refitting loop with the normal weight
-// exp(-|n_j - grad|^2 / sigma_n^2), and the projection x <- x - f(x) grad / |grad|.
-// What differs:
-//  - MeshLab takes the normals of the input mesh; a LiDAR map has none, so they are fitted by PCA over the same
-//    k neighbours (pcl::NormalEstimationOMP).  Their sign is arbitrary, and RIMLS only needs it consistent inside one
-//    neighbourhood, so each neighbour's normal is flipped to agree with the current surface direction before it is
-//    used;
-//  - MeshLab's ball tree returns every point j with |x - p_j| < scale h_j.  Here a radius search of
-//    2 scale h_i around the point i being projected is filtered by that test, so a neighbour whose radius is more
-//    than twice h_i can be missed;
-//  - the projection threshold is scaled by the mean point radius (MeshLab leaves mAveragePointSpacing unset);
-//  - points are projected in parallel, and intensity is kept;
-//  - the output is pcl::PointXYZINormal: the normal is the RIMLS gradient direction at the projected point (the
-//    PCA normal where the projection failed, NaN where that failed too), curvature is PCA's surface variation.
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 //
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <omp.h>
 
@@ -54,8 +50,8 @@ using OutPoint = pcl::PointXYZINormal;
 using OutCloud = pcl::PointCloud<OutPoint>;
 using Search = pcl::search::KdTree<pcl::PointXYZI>;
 
-/// boost::progress_display is not thread safe: the loops below advance it once per kProgressBlock points, under a
-/// critical section, from inside `omp for schedule(dynamic, kProgressBlock)` (whose chunks start at multiples of it).
+// boost::progress_display is not thread safe: the loops below advance it once per kProgressBlock points, under a
+// critical section, from inside `omp for schedule(dynamic, kProgressBlock)` (whose chunks start at multiples of it).
 constexpr long kProgressBlock = 1024;
 inline void Tick(boost::progress_display& bar, long i) {
     if (i % kProgressBlock == kProgressBlock - 1) {
@@ -65,21 +61,21 @@ inline void Tick(boost::progress_display& bar, long i) {
 }
 
 struct RimlsParam {
-    int k = 16;                 ///< neighbours of the per-point radius and of the PCA normal
-    double filter_scale = 2.0;  ///< support radius of point j is filter_scale * h_j
-    double sigma_n = 0.75;      ///< width of the normal refitting weight: 0.5 sharp ... 2 smooth
+    int k = 16;                 // neighbours of the per-point radius and of the PCA normal
+    double filter_scale = 2.0;  // support radius of point j is filter_scale * h_j
+    double sigma_n = 0.75;      // width of the normal refitting weight: 0.5 sharp ... 2 smooth
     int min_refitting_iters = 1;
-    int max_refitting_iters = 3;  ///< 0 or 1 is plain IMLS
+    int max_refitting_iters = 3;  // 0 or 1 is plain IMLS
     double refitting_threshold = 1e-3;
     int max_projection_iters = 15;
-    double projection_accuracy = 1e-4;  ///< stop when |f| < projection_accuracy * mean radius
+    double projection_accuracy = 1e-4;  // stop when |f| < projection_accuracy * mean radius
 };
 
-/// The robust implicit MLS surface of a point set with normals (MeshLab's GaelMls::RIMLS).
+// The robust implicit MLS surface of a point set with normals (MeshLab's GaelMls::RIMLS).
 class Rimls {
    public:
-    /// `tree` searches `cloud`; `normals` holds the PCA normals (only its normal fields are read, so the caller may
-    /// write the others while projecting).
+    // `tree` searches `cloud`; `normals` holds the PCA normals (only its normal fields are read, so the caller may
+    // write the others while projecting).
     Rimls(const Cloud::ConstPtr& cloud, const Search::ConstPtr& tree, const OutCloud::ConstPtr& normals,
           const std::vector<double>& radii, const RimlsParam& prm)
         : cloud_(cloud), tree_(tree), normals_(normals), radii_(radii), prm_(prm) {
@@ -88,8 +84,8 @@ class Rimls {
         epsilon_ = prm_.projection_accuracy * sum / std::max<size_t>(radii_.size(), 1);
     }
 
-    /// Point i moved onto the surface, with the surface normal there; false (point unchanged, normal the PCA one,
-    /// NaN if none) if it has no normal or no neighbour.
+    // Point i moved onto the surface, with the surface normal there; false (point unchanged, normal the PCA one,
+    // NaN if none) if it has no normal or no neighbour.
     bool Project(int i, Eigen::Vector3d* out, Eigen::Vector3d* normal) const {
         const auto& q = cloud_->points[i];
         const Eigen::Vector3d x(q.x, q.y, q.z);
@@ -113,14 +109,14 @@ class Rimls {
     }
 
    private:
-    /// PCL leaves NaN where the fit failed (fewer than 3 neighbours, or all of them on a line).
+    // PCL leaves NaN where the fit failed (fewer than 3 neighbours, or all of them on a line).
     bool HasNormal(int i) const {
         const OutPoint& n = normals_->points[i];
         return std::isfinite(n.normal_x) && std::isfinite(n.normal_y) && std::isfinite(n.normal_z);
     }
     Eigen::Vector3d Normal(int i) const { return normals_->points[i].getNormalVector3fMap().cast<double>(); }
 
-    /// rimls.tpp computePotentialAndGradient: f(x) and its gradient; `ref` orients the neighbours' normals.
+    // rimls.tpp computePotentialAndGradient: f(x) and its gradient; `ref` orients the neighbours' normals.
     bool PotentialAndGradient(const Eigen::Vector3d& x, double search_radius, const Eigen::Vector3d& ref,
                               double* potential, Eigen::Vector3d* grad) const {
         pcl::PointXYZI qp;
@@ -196,9 +192,9 @@ class Rimls {
     double epsilon_ = 0;
 };
 
-/// Binary little-endian PLY with pcl::PointXYZINormal's field names (what pcl::io::savePLYFile writes, so
-/// pcl::io::loadPLYFile reads it back), streamed in blocks: savePLYFile would first copy the whole cloud into a
-/// PCLPointCloud2.
+// Binary little-endian PLY with pcl::PointXYZINormal's field names (what pcl::io::savePLYFile writes, so
+// pcl::io::loadPLYFile reads it back), streamed in blocks: savePLYFile would first copy the whole cloud into a
+// PCLPointCloud2.
 bool SavePly(const std::string& fname, const OutCloud& cloud) {
     std::ofstream ofs(fname, std::ios::binary);
     if (!ofs) return false;

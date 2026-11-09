@@ -1,9 +1,26 @@
+// MIT License
 //
-// Refactored by hsiaochuan on 2026/03/30; camera models after COLMAP src/colmap/sensor/models (2026/11/08).
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_CAMERA_BASE_H
-#define CAMERAS_CAMERA_BASE_H
+#pragma once
 
 #include <glog/logging.h>
 
@@ -17,9 +34,9 @@
 
 #include "eigen_type.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// COLMAP's CameraModelId, same values, so a model id read from a COLMAP database means the same here.
+// COLMAP's CameraModelId, same values, so a model id read from a COLMAP database means the same here.
 enum class CameraModelId {
     kInvalid = -1,
     kSimplePinhole = 0,
@@ -60,18 +77,18 @@ class CamModel {
     // -- Description ---------------------------------------------------------
     CameraModelId model_id() const { return model_id_; }
     const std::string& model_name() const { return model_name_; }
-    const std::string& params_info() const { return params_info_; }  ///< e.g. "fx, fy, cx, cy, k1, k2, p1, p2"
+    const std::string& params_info() const { return params_info_; }  // e.g. "fx, fy, cx, cy, k1, k2, p1, p2"
     const std::vector<double>& params() const { return params_; }
     unsigned int w() const { return w_; }
     unsigned int h() const { return h_; }
 
     // -- Projection, implemented by each model -------------------------------
-    /// Pixel of the camera frame point X; false if X cannot be projected (behind the camera with
-    /// `check_cheirality`, or outside the model's domain).
+    // Pixel of the camera frame point X; false if X cannot be projected (behind the camera with
+    // `check_cheirality`, or outside the model's domain).
     virtual bool ImgFromCam(const Vec3& X, Vec2* uv, bool check_cheirality = true) const = 0;
-    /// Normalized image plane point (X / Z, Y / Z) of a pixel; false if the pixel has none.
+    // Normalized image plane point (X / Z, Y / Z) of a pixel; false if the pixel has none.
     virtual bool CamFromImg(const Vec2& uv, Vec2* xy) const = 0;
-    /// Unit ray of a pixel in the camera frame; false if the pixel has none.
+    // Unit ray of a pixel in the camera frame; false if the pixel has none.
     virtual bool CamRayFromImg(const Vec2& uv, Vec3* ray) const {
         Vec2 xy;
         if (!CamFromImg(uv, &xy)) return false;
@@ -80,17 +97,17 @@ class CamModel {
     }
 
     // -- Convenience ---------------------------------------------------------
-    /// Pixel of X, NaN if it cannot be projected.
+    // Pixel of X, NaN if it cannot be projected.
     Vec2 project(const Vec3& X) const {
         Vec2 uv;
         return ImgFromCam(X, &uv) ? uv : Vec2::Constant(std::numeric_limits<double>::quiet_NaN());
     }
-    /// Unit ray of a pixel, NaN if it has none.
+    // Unit ray of a pixel, NaN if it has none.
     Vec3 bearing(const Vec2& uv) const {
         Vec3 ray;
         return CamRayFromImg(uv, &ray) ? ray : Vec3::Constant(std::numeric_limits<double>::quiet_NaN());
     }
-    /// Inside the image, `border` pixels away from its edges.
+    // Inside the image, `border` pixels away from its edges.
     bool valid(const Vec2& uv, int border = 0) const {
         return std::isfinite(uv.x()) && std::isfinite(uv.y()) && uv.x() >= border && uv.x() < double(w_) - border &&
                uv.y() >= border && uv.y() < double(h_) - border;
@@ -119,11 +136,11 @@ class CamModel {
     std::string params_info_;
     unsigned int w_;
     unsigned int h_;
-    std::vector<double> params_;  ///< COLMAP order
+    std::vector<double> params_;  // COLMAP order
 };
 
 inline bool IsSpherical(CameraModelId m) { return m == CameraModelId::kEquirectangular; }
-/// The models that project through the fisheye angle theta = atan(r) (COLMAP PERSPECTIVE_FISHEYE_CAMERA_MODEL_CASES).
+// The models that project through the fisheye angle theta = atan(r) (COLMAP PERSPECTIVE_FISHEYE_CAMERA_MODEL_CASES).
 inline bool IsFisheye(CameraModelId m) {
     return m == CameraModelId::kSimpleRadialFisheye || m == CameraModelId::kRadialFisheye ||
            m == CameraModelId::kOpenCVFisheye || m == CameraModelId::kThinPrismFisheye ||
@@ -133,28 +150,28 @@ inline bool IsFisheye(CameraModelId m) {
 
 namespace camera_internal {
 
-/// COLMAP HasProjectableDepth.
+// COLMAP HasProjectableDepth.
 inline bool HasProjectableDepth(double w, bool check_cheirality) {
     return check_cheirality ? w >= std::numeric_limits<double>::epsilon()
                             : std::abs(w) >= std::numeric_limits<double>::epsilon();
 }
 
-/// COLMAP BasePerspectiveFisheyeCameraModel::FisheyeFromNormal: (u, v) * theta / r with theta = atan(r).
+// COLMAP BasePerspectiveFisheyeCameraModel::FisheyeFromNormal: (u, v) * theta / r with theta = atan(r).
 inline Vec2 FisheyeFromNormal(const Vec2& p) {
     const double r = p.norm();
     if (r > std::numeric_limits<double>::epsilon()) return p * (std::atan(r) / r);
     return p;
 }
 
-/// FisheyeFromNormal of X / Z, written with theta = atan2(|xy|, z): the same for z > 0, and it also holds for
-/// rays at 90 degrees and beyond, which the normalized plane cannot represent.
+// FisheyeFromNormal of X / Z, written with theta = atan2(|xy|, z): the same for z > 0, and it also holds for
+// rays at 90 degrees and beyond, which the normalized plane cannot represent.
 inline Vec2 FisheyeFromCam(const Vec3& X) {
     const double r = X.head<2>().norm();
     if (r > std::numeric_limits<double>::epsilon()) return X.head<2>() * (std::atan2(r, X.z()) / r);
     return X.head<2>() / X.z();
 }
 
-/// Unit ray of a fisheye point (uu, vv): theta = |(uu, vv)| off the optical axis, for theta up to pi.
+// Unit ray of a fisheye point (uu, vv): theta = |(uu, vv)| off the optical axis, for theta up to pi.
 inline Vec3 CamRayFromFisheye(const Vec2& pp) {
     const double theta = pp.norm();
     if (theta > std::numeric_limits<double>::epsilon()) {
@@ -164,7 +181,7 @@ inline Vec3 CamRayFromFisheye(const Vec2& pp) {
     return pp.homogeneous().normalized();
 }
 
-/// COLMAP BasePerspectiveFisheyeCameraModel::NormalFromFisheye: the inverse, (uu, vv) * tan(theta) / theta.
+// COLMAP BasePerspectiveFisheyeCameraModel::NormalFromFisheye: the inverse, (uu, vv) * tan(theta) / theta.
 inline Vec2 NormalFromFisheye(const Vec2& pp) {
     const double theta = pp.norm();
     const double theta_cos_theta = theta * std::cos(theta);
@@ -214,6 +231,4 @@ bool IterativeUndistortion(const Distortion& distortion, Vec2* p) {
 }
 
 }  // namespace camera_internal
-}  // namespace faster_lio
-
-#endif  // CAMERAS_CAMERA_BASE_H
+}  // namespace kuma_lio

@@ -1,13 +1,24 @@
+// MIT License
 //
-// Offline pose graph optimization: loop closure over the output of any odometry.
+// Copyright (c) 2026 hsiaochuan
 //
-//   run_pgo --scans_dir <dir> --pose_fname <file> [--config pgo.yaml] [--out dir]  (-c/-o, -h for help)
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-// <scans_dir> holds the scans as PLY files in the sensor's own frame, <name>.ply; <pose_fname> is the
-// pose file with a line "<name> x y z qx qy qz qw" (T_world_body) per scan.  <name> is the same string in
-// both and is also the scan's time, in seconds.  The corrected poses come out as <out>/traj_pgo.txt,
-// in the same format, next to the loop diagnostics and <out>/pgo_graph.ply (nodes white, loops red).
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 //
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <glog/logging.h>
 #include <pcl/io/pcd_io.h>
@@ -27,7 +38,7 @@
 #include "pose_io.h"
 
 namespace fs = std::filesystem;
-using namespace faster_lio;
+using namespace kuma_lio;
 
 namespace po = boost::program_options;
 

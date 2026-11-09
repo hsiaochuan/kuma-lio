@@ -1,17 +1,33 @@
+// MIT License
 //
-// Fisheye models with radial, tangential and thin-prism distortion, after COLMAP
-// src/colmap/sensor/models/thin_prism.h.
+// Copyright (c) 2026 hsiaochuan
 //
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef CAMERAS_THIN_PRISM_H
-#define CAMERAS_THIN_PRISM_H
+#pragma once
 
 #include "camera_base.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
-/// THIN_PRISM_FISHEYE: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1.  On the fisheye point (uu, vv):
-///   du = uu (k1 r^2 + k2 r^4 + k3 r^6 + k4 r^8) + 2 p1 uu vv + p2 (r^2 + 2 uu^2) + sx1 r^2, dv likewise with sy1
+// THIN_PRISM_FISHEYE: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1.  On the fisheye point (uu, vv):
+//   du = uu (k1 r^2 + k2 r^4 + k3 r^6 + k4 r^8) + 2 p1 uu vv + p2 (r^2 + 2 uu^2) + sx1 r^2, dv likewise with sy1
 class ThinPrismFisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kThinPrismFisheye;
@@ -35,14 +51,14 @@ class ThinPrismFisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(pp);
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         Vec2 pp;
         if (!FisheyeFromImg(uv, &pp)) return false;
         *ray = camera_internal::CamRayFromFisheye(pp);
         return true;
     }
-    /// The undistorted fisheye point (uu, vv) of a pixel.
+    // The undistorted fisheye point (uu, vv) of a pixel.
     bool FisheyeFromImg(const Vec2& uv, Vec2* pp) const {
         const double f1 = params_[0], f2 = params_[1], c1 = params_[2], c2 = params_[3];
         *pp = Vec2((uv.x() - c1) / f1, (uv.y() - c2) / f2);
@@ -61,8 +77,8 @@ class ThinPrismFisheyeCamera : public CamModel {
     }
 };
 
-/// RAD_TAN_THIN_PRISM_FISHEYE (Project Aria Fisheye624): fx, fy, cx, cy, k0..k5, p0, p1, s0..s3.
-///   (x, y) = (uu, vv) (1 + sum_i k_i theta^(2 i + 2)), then tangential p0, p1 and thin prism s0..s3 on (x, y).
+// RAD_TAN_THIN_PRISM_FISHEYE (Project Aria Fisheye624): fx, fy, cx, cy, k0..k5, p0, p1, s0..s3.
+//   (x, y) = (uu, vv) (1 + sum_i k_i theta^(2 i + 2)), then tangential p0, p1 and thin prism s0..s3 on (x, y).
 class RadTanThinPrismFisheyeCamera : public CamModel {
    public:
     static constexpr CameraModelId kModelId = CameraModelId::kRadTanThinPrismFisheye;
@@ -86,14 +102,14 @@ class RadTanThinPrismFisheyeCamera : public CamModel {
         *xy = camera_internal::NormalFromFisheye(pp);
         return true;
     }
-    /// Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
+    // Unlike COLMAP, which goes through CamFromImg, also the rays at 90 degrees and beyond.
     bool CamRayFromImg(const Vec2& uv, Vec3* ray) const override {
         Vec2 pp;
         if (!FisheyeFromImg(uv, &pp)) return false;
         *ray = camera_internal::CamRayFromFisheye(pp);
         return true;
     }
-    /// The undistorted fisheye point (uu, vv) of a pixel.
+    // The undistorted fisheye point (uu, vv) of a pixel.
     bool FisheyeFromImg(const Vec2& uv, Vec2* pp) const {
         const double f1 = params_[0], f2 = params_[1], c1 = params_[2], c2 = params_[3];
         *pp = Vec2((uv.x() - c1) / f1, (uv.y() - c2) / f2);
@@ -121,6 +137,4 @@ class RadTanThinPrismFisheyeCamera : public CamModel {
     }
 };
 
-}  // namespace faster_lio
-
-#endif  // CAMERAS_THIN_PRISM_H
+}  // namespace kuma_lio

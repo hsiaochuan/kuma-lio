@@ -1,19 +1,24 @@
+// MIT License
 //
-// Offline removal of dynamic points from LiDAR scans, after DUFOMap (Daniel et al., RA-L 2024).
+// Copyright (c) 2026 hsiaochuan
 //
-//   run_clean --scans_dir <dir> --pose_fname <file> [--config clean.yaml] [--out dir]  (-c/-o, -h for help)
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-// <scans_dir>/<name>.ply are the scans in the sensor's own frame and <pose_fname> holds a line
-// "<name> x y z qx qy qz qw" (T_world_body) per scan, e.g. run_pgo's traj_pgo.txt.  The output folder
-// gets one <name>.ply per scan with the dynamic points left out.
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 //
-// Idea: a ray from the sensor to a hit proves every voxel it crosses is empty at that moment.  A
-// voxel that is empty in some scans and holds a point in another cannot be static, so that point
-// is dynamic.  Pass 1 counts, per voxel, the scans that saw it empty and the scans that hit it;
-// pass 2 drops the points whose voxel was seen empty more often than hit.  Ground points are found
-// per scan and always kept, because low rays graze the ground and would clear it.  What rays cannot
-// reach, like the spot behind someone following the sensor, goes by being hit in too few scans.
-//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <glog/logging.h>
 #include <yaml-cpp/yaml.h>
@@ -43,22 +48,22 @@ namespace {
 using Cloud = pcl::PointCloud<pcl::PointXYZI>;
 using Key = uint64_t;
 
-/// The parameters of config/clean.yaml, which documents each of them.
+// The parameters of config/clean.yaml, which documents each of them.
 struct Param {
-    double voxel = 0.2;     ///< [m]
-    double margin = 0.4;    ///< [m] the last stretch of a ray is not called empty (surface thickness, pose error)
-    double max_range = 80;  ///< [m] rays are not cast beyond it
-    int min_free = 3;       ///< scans that must have seen the voxel empty
-    double ratio = 1.0;     ///< ... and at least ratio * (scans that hit it)
-    double ground_dist = 0.3;  ///< [m] a point this close to its patch's plane is ground and always kept; 0 = off
-    int min_hits = 0;          ///< a point within near_range of the sensor needs its voxel hit by more scans than this
-    double near_range = 8;     ///< [m]
-    double up_z = 1;           ///< +1 if the world's z axis points up, -1 if it points down
-    double sensor_height = 1;  ///< [m] above the ground
-    double min_range = 2.0;    ///< [m] points nearer the sensor are dropped from the output (the carrier itself)
+    double voxel = 0.2;     // [m]
+    double margin = 0.4;    // [m] the last stretch of a ray is not called empty (surface thickness, pose error)
+    double max_range = 80;  // [m] rays are not cast beyond it
+    int min_free = 3;       // scans that must have seen the voxel empty
+    double ratio = 1.0;     // ... and at least ratio * (scans that hit it)
+    double ground_dist = 0.3;  // [m] a point this close to its patch's plane is ground and always kept; 0 = off
+    int min_hits = 0;          // a point within near_range of the sensor needs its voxel hit by more scans than this
+    double near_range = 8;     // [m]
+    double up_z = 1;           // +1 if the world's z axis points up, -1 if it points down
+    double sensor_height = 1;  // [m] above the ground
+    double min_range = 2.0;    // [m] points nearer the sensor are dropped from the output (the carrier itself)
 };
 
-/// Keys absent from the yaml keep their defaults; an unknown key is fatal, it is most likely a typo.
+// Keys absent from the yaml keep their defaults; an unknown key is fatal, it is most likely a typo.
 void LoadParam(const std::string& file, Param* p) {
     YAML::Node y;
     try {
@@ -104,7 +109,7 @@ bool LoadScan(const fs::path& file, Cloud* cloud) {
     return fs::exists(file) && pcl::io::loadPLYFile(file.string(), *cloud) >= 0;
 }
 
-/// World-frame points of a scan; invalid ones get NaN so indices stay aligned with the cloud.
+// World-frame points of a scan; invalid ones get NaN so indices stay aligned with the cloud.
 std::vector<Eigen::Vector3d> ToWorld(const Cloud& c, const Eigen::Isometry3d& T) {
     std::vector<Eigen::Vector3d> w(c.size());
     for (size_t i = 0; i < c.size(); ++i) {
@@ -116,7 +121,7 @@ std::vector<Eigen::Vector3d> ToWorld(const Cloud& c, const Eigen::Isometry3d& T)
     return w;
 }
 
-/// Voxels the ray o->e crosses before the last `margin` metres (Amanatides & Woo).
+// Voxels the ray o->e crosses before the last `margin` metres (Amanatides & Woo).
 void Traverse(const Eigen::Vector3d& o, const Eigen::Vector3d& e, const Param& prm, std::vector<Key>* out) {
     const double inv = 1.0 / prm.voxel;
     Eigen::Vector3d d = e - o;
@@ -147,12 +152,12 @@ void Traverse(const Eigen::Vector3d& o, const Eigen::Vector3d& e, const Param& p
     }
 }
 
-/// Ground points of one scan, after Patchwork (Lim et al., RA-L 2021) without its likelihood estimation.
-/// `rel` are the points around the sensor with z up.  Space is cut into concentric zones, rings and
-/// sectors; in each patch a plane is fitted by iterating from the lowest points, and what lies on a
-/// plane that is flat and low enough is ground.  A scan alone decides, so moving objects cannot
-/// disturb it.  The height test matters near the sensor: a LiDAR that cannot see the ground there
-/// would otherwise take the lowest points of whoever walks by for it.
+// Ground points of one scan, after Patchwork (Lim et al., RA-L 2021) without its likelihood estimation.
+// `rel` are the points around the sensor with z up.  Space is cut into concentric zones, rings and
+// sectors; in each patch a plane is fitted by iterating from the lowest points, and what lies on a
+// plane that is flat and low enough is ground.  A scan alone decides, so moving objects cannot
+// disturb it.  The height test matters near the sensor: a LiDAR that cannot see the ground there
+// would otherwise take the lowest points of whoever walks by for it.
 std::vector<char> SegmentGround(const std::vector<Eigen::Vector3d>& rel, const Param& prm) {
     constexpr double kBound[5] = {2.7, 12.3625, 22.025, 41.35, 80.0};
     constexpr int kRings[4] = {2, 4, 4, 4}, kSectors[4] = {16, 32, 54, 32};

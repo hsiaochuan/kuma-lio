@@ -1,15 +1,27 @@
+// MIT License
 //
-// Sliding-window LiDAR-inertial bundle adjustment and the local map it shares with the odometry,
-// after Voxel-SLAM (Liu et al.): every plane voxel contributes the smallest eigenvalue of its point
-// covariance, consecutive frames are tied by IMU preintegration, and the oldest frame is folded into
-// the voxels as fixed points.  The planes are refitted from the window poses after every
-// optimization, and the odometry matches its points against them.
+// Copyright (c) 2026 hsiaochuan
 //
-// Kept minimal on purpose: single threaded, no map release, and a fixed three-layer grid (voxel_size, /2, /4) that is walked layer by layer instead of recursively.
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-#ifndef FASTER_LIO_LOCAL_BA_H
-#define FASTER_LIO_LOCAL_BA_H
+#pragma once
+
 #include <array>
 #include <deque>
 #include <memory>
@@ -20,43 +32,43 @@
 #include "point_cluster.h"
 #include "stamp_pose.h"
 
-namespace faster_lio {
+namespace kuma_lio {
 
 struct LbaParam {
     int win_size = 10;
-    double voxel_size = 1.0;          ///< [m] layer-0 voxel; layers 1 and 2 halve it
-    double plane_eigen_ratio = 0.1;   ///< plane when lambda_0 / lambda_1 is below this; scale free
-    double min_plane_size = 0.1;      ///< smallest in-plane standard deviation a plane may have, as a
-                                      ///< fraction of the cell edge of its own layer
-    int clutter_points = 0;           ///< a cell holding this many points and lying on no plane is
-                                      ///< dropped; 0 disables
-    int min_points = 5;               ///< a node with this many points or fewer is neither a plane nor split
-    int max_fix_points = 20;          ///< a finest cell stops absorbing marginalized points beyond this
-    int max_iter = 3;                 ///< LM iterations per window
-    double imu_coef = 2.5e-5;         ///< weight of the IMU cost against the LiDAR eigenvalue cost
-    double cov_gyr = 1e-4;            ///< [(rad/s)^2] per gyroscope sample
-    double cov_acc = 1.0;             ///< [(m/s^2)^2] per accelerometer sample
-    double rdw_gyr = 1e-4;            ///< [(rad/s)^2 / s] gyroscope bias random walk (Voxel-SLAM rdw_gyr)
-    double rdw_acc = 1e-4;            ///< [(m/s^2)^2 / s] accelerometer bias random walk (Voxel-SLAM rdw_acc)
-    double sigma_num = 3.0;           ///< a plane explains a point within this many standard deviations
-    double pose_var = 1e-4;           ///< [m^2] pose uncertainty added to every map point
-    double range_err = 0.02;          ///< [m] LiDAR range error
-    double angle_err = 0.05;          ///< [deg] LiDAR beam direction error
-    double frame_dt = 0.1;            ///< [s] frame length
-    double map_range = 200.0;         ///< [m] voxels farther than this from the sensor are dropped
-    int num_threads = 4;              ///< for refitting the voxels
+    double voxel_size = 1.0;          // [m] layer-0 voxel; layers 1 and 2 halve it
+    double plane_eigen_ratio = 0.1;   // plane when lambda_0 / lambda_1 is below this; scale free
+    double min_plane_size = 0.1;      // smallest in-plane standard deviation a plane may have, as a
+                                      // fraction of the cell edge of its own layer
+    int clutter_points = 0;           // a cell holding this many points and lying on no plane is
+                                      // dropped; 0 disables
+    int min_points = 5;               // a node with this many points or fewer is neither a plane nor split
+    int max_fix_points = 20;          // a finest cell stops absorbing marginalized points beyond this
+    int max_iter = 3;                 // LM iterations per window
+    double imu_coef = 2.5e-5;         // weight of the IMU cost against the LiDAR eigenvalue cost
+    double cov_gyr = 1e-4;            // [(rad/s)^2] per gyroscope sample
+    double cov_acc = 1.0;             // [(m/s^2)^2] per accelerometer sample
+    double rdw_gyr = 1e-4;            // [(rad/s)^2 / s] gyroscope bias random walk (Voxel-SLAM rdw_gyr)
+    double rdw_acc = 1e-4;            // [(m/s^2)^2 / s] accelerometer bias random walk (Voxel-SLAM rdw_acc)
+    double sigma_num = 3.0;           // a plane explains a point within this many standard deviations
+    double pose_var = 1e-4;           // [m^2] pose uncertainty added to every map point
+    double range_err = 0.02;          // [m] LiDAR range error
+    double angle_err = 0.05;          // [deg] LiDAR beam direction error
+    double frame_dt = 0.1;            // [s] frame length
+    double map_range = 200.0;         // [m] voxels farther than this from the sensor are dropped
+    int num_threads = 4;              // for refitting the voxels
 };
 
 
 Mat3 BodyPointCov(const Vec3& p_body, double range_err, double angle_err);
 
-/// A point's match against the map.
+// A point's match against the map.
 struct PlaneHit {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     Vec3 normal = Vec3::Zero();
     double d = 0.0;
-    double signed_dist = 0.0;  ///< normal . p + d
-    double plane_sigma = 0.0;  ///< variance of the signed distance caused by the plane's own uncertainty
+    double signed_dist = 0.0;  // normal . p + d
+    double plane_sigma = 0.0;  // variance of the signed distance caused by the plane's own uncertainty
 };
 
 
@@ -74,8 +86,8 @@ struct LbaState {
     Vec3 ba = Vec3::Zero();
 };
 
-/// IMU preintegration between two frames (Voxel-SLAM IMU_PRE), integrated at the biases of the first
-/// frame and corrected to first order when the BA moves them.
+// IMU preintegration between two frames (Voxel-SLAM IMU_PRE), integrated at the biases of the first
+// frame and corrected to first order when the BA moves them.
 class ImuPreint {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -87,7 +99,7 @@ class ImuPreint {
               const Eigen::Matrix<double, 6, 6>& noise_walk)
         : bg_(bg), ba_(ba), noise_meas_(noise_meas), noise_walk_(noise_walk) {}
     void Add(const Vec3& gyro, const Vec3& acc, double dt);
-    /// Residual (R p v bg ba) between the two frames, with the Gauss-Newton terms over both (R p v bg ba).
+    // Residual (R p v bg ba) between the two frames, with the Gauss-Newton terms over both (R p v bg ba).
     double Evaluate(const LbaState& s1, const LbaState& s2, const Vec3& g, Mat30* jtj = nullptr,
                     Vec30* gg = nullptr) const;
 
@@ -105,9 +117,9 @@ class ImuPreint {
 class LocalBA {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    static constexpr int kDim = 15;     ///< R p v bg ba
-    static constexpr int kLayers = 3;   ///< fixed depth of the voxel grid
-    static constexpr int kCells = 64;   ///< finest cells per layer-0 voxel, 4 per axis
+    static constexpr int kDim = 15;     // R p v bg ba
+    static constexpr int kLayers = 3;   // fixed depth of the voxel grid
+    static constexpr int kCells = 64;   // finest cells per layer-0 voxel, 4 per axis
 
     explicit LocalBA(const LbaParam& param);
     void InitMap(const std::vector<Vec3>& points, double var);
@@ -135,7 +147,7 @@ class LocalBA {
     };
 
     struct Cell {
-        int idx = 0;       ///< 16 ix + 4 iy + iz, each in [0, 4)
+        int idx = 0;       // 16 ix + 4 iy + iz, each in [0, 4)
         PointCluster fix;
         Mat9 fix_cov = Mat9::Zero();
         std::vector<FrameCluster> clusters;
@@ -145,23 +157,23 @@ class LocalBA {
         int layer = 0, node = 0;
         Vec3 center = Vec3::Zero();
         Vec3 normal = Vec3::Zero();
-        double radius = 0.0;  ///< sqrt of the largest eigenvalue
-        Eigen::Matrix<double, 6, 6> plane_var = Eigen::Matrix<double, 6, 6>::Zero();  ///< (normal, center)
+        double radius = 0.0;  // sqrt of the largest eigenvalue
+        Eigen::Matrix<double, 6, 6> plane_var = Eigen::Matrix<double, 6, 6>::Zero();  // (normal, center)
     };
-    /// A plane seen from the window: the LiDAR BA factor of Voxel-SLAM.
+    // A plane seen from the window: the LiDAR BA factor of Voxel-SLAM.
     struct PlaneFactor {
         PointCluster fix;
-        std::vector<PointCluster> clus;  ///< by window slot, body frame
+        std::vector<PointCluster> clus;  // by window slot, body frame
     };
-    /// A layer-0 voxel.
+    // A layer-0 voxel.
     struct Root {
         std::vector<Cell> cells;
         std::vector<Plane> planes;
-        std::vector<PlaneFactor> factors;  ///< of `planes`, as of the last refit
-        bool active = false;  ///< listed in active_
-        bool dirty = false;   ///< took points since the last refit
+        std::vector<PlaneFactor> factors;  // of `planes`, as of the last refit
+        bool active = false;  // listed in active_
+        bool dirty = false;   // took points since the last refit
     };
-    /// Per-node sums of one layer of one voxel, reused across voxels.
+    // Per-node sums of one layer of one voxel, reused across voxels.
     struct RefitScratch {
         std::vector<PointCluster> win, fix, all;
         Eigen::aligned_vector<Mat9> cov;
@@ -192,7 +204,7 @@ class LocalBA {
     void Optimize();
 
     LbaParam param_;
-    Vec3 g_;  ///< gravity acceleration, world frame
+    Vec3 g_;  // gravity acceleration, world frame
     Eigen::Matrix<double, 6, 6> noise_meas_, noise_walk_;
     std::deque<Imu> imu_buf_;
     std::deque<Frame, Eigen::aligned_allocator<Frame>> frames_;
@@ -201,5 +213,4 @@ class LocalBA {
     std::vector<const PlaneFactor*> factors_;
 };
 
-}  // namespace faster_lio
-#endif  // FASTER_LIO_LOCAL_BA_H
+}  // namespace kuma_lio
