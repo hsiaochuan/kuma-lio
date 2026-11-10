@@ -34,6 +34,8 @@ namespace kuma_lio {
 namespace pgo {
 namespace {
 
+constexpr int kIsamExtraIters = 5;  // extra ISAM2 updates after the first, to converge the relinearization
+
 inline gtsam::Pose3 ToPose3(const Eigen::Isometry3d& T) {
     return gtsam::Pose3(gtsam::Rot3(T.linear()), gtsam::Point3(T.translation()));
 }
@@ -88,7 +90,7 @@ bool PoseGraph::Solve(Isometries* poses) {
     gtsam::Values results;
     try {
         isam.update(impl_->graph, impl_->initial);
-        for (int i = 0; i < prm_.isam_extra_iter; ++i) isam.update();
+        for (int i = 0; i < kIsamExtraIters; ++i) isam.update();
         results = isam.calculateEstimate();
     } catch (const std::exception& e) {
         LOG(WARNING) << "PGO: ISAM2 failed, keeping the odometry poses: " << e.what();

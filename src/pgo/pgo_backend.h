@@ -54,9 +54,9 @@ class PgoBackend {
     void SaveDebug(const std::string& output_dir) const;
 
    private:
-    // Merges the buffered scans into a keyframe anchored at `anchor_pose` and appends it; `merged`
-    // and `cells` come back in its body frame for the loop search.
-    void SealKeyframe(const Eigen::Isometry3d& anchor_pose, std::vector<Vec3>* kf_points, PlaneCells* cells);
+    // Merges the buffered scans into a keyframe at `scan_pose` (the newest scan) and appends it;
+    // `kf_points` and `cells` come back in its body frame for the loop search.
+    void SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Vec3>* kf_points, PlaneCells* cells);
     void Solve();
 
     PgoParam prm_;
@@ -75,10 +75,9 @@ class PgoBackend {
     // What the last solve did to the newest node.  Every later scan comes in as dx_ * odometry, so
     // the graph stays one rigid chain instead of a corrected past glued to an uncorrected future.
     Eigen::Isometry3d dx_ = Eigen::Isometry3d::Identity();
-    double jour_ = 0.0;     // travelled distance [m]
+    double travel_len_ = 0.0;     // travelled distance [m]
     int kf_since_opt_ = 0;  // keyframes since the last solve, the cooldown of Voxel-SLAM
     int num_solves_ = 0;
-    double unsolved_drift_ = 0.0;  // largest drift among loops added since the last solve
     int unsolved_loops_ = 0;       // loops added since the last solve
 };
 

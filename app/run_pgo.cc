@@ -53,7 +53,6 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("kf_min_angle", &p->kf_min_angle);
     get("kf_min_dist", &p->kf_min_dist);
     get("kf_ds_voxel", &p->kf_ds_voxel);
-    get("kf_max_range", &p->kf_max_range);
     get("plane_voxel", &p->plane_voxel);
     get("plane_min_points", &p->plane_min_points);
     get("plane_min_eigen", &p->plane_min_eigen);
@@ -62,7 +61,6 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("loop_min_travel", &p->loop_min_travel);
     get("loop_radius", &p->loop_radius);
     get("loop_max_dz", &p->loop_max_dz);
-    get("loop_max_candidates", &p->loop_max_candidates);
     get("loop_max_yaw_diff", &p->loop_max_yaw_diff);
     get("btc_merge_normal", &p->btc_merge_normal);
     get("btc_merge_dist", &p->btc_merge_dist);
@@ -92,10 +90,8 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("icp_eigval", &p->icp_eigval);
     get("icp_min_match", &p->icp_min_match);
     get("ratio_drift", &p->ratio_drift);
-    get("opt_halt_kf", &p->opt_halt_kf);
+    get("opt_cooldown_kf", &p->opt_cooldown_kf);
     get("opt_min_drift", &p->opt_min_drift);
-    get("isam_extra_iter", &p->isam_extra_iter);
-    get("opt_final_all", &p->opt_final_all);
     get("loop_var", &p->loop_var);
     get("prior_var", &p->prior_var);
     get("odom_var_rot", &p->odom_var_rot);
@@ -146,15 +142,16 @@ int main(int argc, char** argv) {
     std::vector<const PoseLine*> matched_lines;
     for (const PoseLine& pose_line : pose_lines) {
         const fs::path scan_file = dir / (pose_line.name + ".ply");
-        pcl::PointCloud<pcl::PointXYZ> cloud;
-        if (!fs::exists(scan_file) || pcl::io::loadPLYFile(scan_file.string(), cloud) < 0) {
+        pcl::PointCloud<pcl::PointXYZ> scan_points;
+        if (!fs::exists(scan_file) || pcl::io::loadPLYFile(scan_file.string(), scan_points) < 0) {
             LOG(WARNING) << "no readable scan " << scan_file << ", pose skipped";
             continue;
         }
         std::vector<Vec3> pts;
-        pts.reserve(cloud.size());
-        for (const auto& q : cloud.points) {
-            if (std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z)) pts.emplace_back(q.x, q.y, q.z);
+        pts.reserve(scan_points.size());
+        for (const auto& q : scan_points.points) {
+            if (std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z))
+                pts.emplace_back(q.x, q.y, q.z);
         }
         pgo.AddScan(pose_line.time, pose_line.pose, pts);
         matched_lines.push_back(&pose_line);

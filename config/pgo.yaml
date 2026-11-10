@@ -4,7 +4,6 @@ kf_scans: 10
 kf_min_angle: 5.0        # [deg] 同时低于它和 kf_min_dist 才跳过
 kf_min_dist: 0.1         # [m]
 kf_ds_voxel: 0.2         # [m]
-kf_max_range: 0.0        # [m] 关键帧点云裁剪半径，0 关闭；实测不改善回环，仅用于控制内存
 # 平面 cell：回环 ICP、BTC 的参考平面和平面重叠率都用它
 plane_voxel: 1.0         # [m]
 plane_min_points: 10
@@ -17,7 +16,6 @@ loop_min_travel: 30.0    # [m] 两端之间的路程
 # radius
 loop_radius: 20.0        # [m]
 loop_max_dz: 4.0         # [m]
-loop_max_candidates: 3
 loop_max_yaw_diff: 180.0  # [deg]
 # BTC，缺省取 Voxel-SLAM 的 read_parameters（非高空）
 btc_merge_normal: 0.1    # 平面 cell 合并：法向差
@@ -50,10 +48,8 @@ icp_eigval: 3.0          # sum(n n^T) 的最小特征值，论文附录 B；实�
 icp_min_match: 50
 # 接受与触发
 ratio_drift: 0.01        # 漂移 / 路程，论文：<= 1%
-opt_halt_kf: 10          # 两次求解之间的关键帧冷却
+opt_cooldown_kf: 10      # 两次求解之间的关键帧冷却
 opt_min_drift: 0.5       # [m] 低于此值只记录不求解；要高过平面 ICP 自身的噪声水平
-isam_extra_iter: 5
-opt_final_all: true      # 尾部未达 opt_min_drift 的回环也参与最后一次求解
 # 噪声，按 gtsam::Pose3 的 [rot, trans] 给方差
 loop_var: 1.0e-4
 prior_var: 1.0e-9

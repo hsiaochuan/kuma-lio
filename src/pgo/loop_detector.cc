@@ -31,6 +31,8 @@ namespace kuma_lio {
 namespace pgo {
 namespace {
 
+constexpr int kMaxRadiusCands = 3;  // nearest radius candidates handed to the ICP
+
 // Absolute heading difference between two poses, in degrees.
 double YawDiffDeg(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) {
     const Mat3 Ra = a.linear(), Rb = b.linear();
@@ -66,7 +68,8 @@ void LoopDetector::Reject(int from, int to, const char* reason, double value, co
 }
 
 bool LoopDetector::Eligible(const KeyFrames& kfs, int from, int to) const {
-    return from + pgo_param_.loop_min_kf_gap <= to && kfs[to].jour - kfs[from].jour >= pgo_param_.loop_min_travel;
+    return from + pgo_param_.loop_min_kf_gap <= to &&
+           kfs[to].travel_len - kfs[from].travel_len >= pgo_param_.loop_min_travel;
 }
 
 LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
@@ -74,16 +77,15 @@ LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const
     const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
     CHECK_EQ(btc_db_.size(), cur_kf_id) << "Detect must see every keyframe once, in order";
     BtcFrame btc_frame = BuildBtcFrame(kf_points, cells, pgo_param_);
-    const auto btc_cands = btc_db_.Query(btc_frame, [&](int id) {
-        return Eligible(kfs, id, cur_kf_id);
-    });
+    const auto btc_cands = btc_db_.Query(btc_frame, [&](int id) { return Eligible(kfs, id, cur_kf_id); });
     btc_db_.Add(std::move(btc_frame));  // after the query, so a keyframe never finds itself
 
     // paper VI-B: of the candidates RANSAC accepted, the one whose planes overlap best
     int best = -1;
     double best_overlap = 0.0;
     for (size_t i = 0; i < btc_cands.size(); ++i) {
-        const double overlap = PlaneOverlap(kfs[cur_kf_id].planes, kfs[btc_cands[i].frame_id].planes, btc_cands[i].T, pgo_param_);
+        const double overlap =
+            PlaneOverlap(kfs[cur_kf_id].planes, kfs[btc_cands[i].frame_id].planes, btc_cands[i].T, pgo_param_);
         if (overlap > best_overlap) best_overlap = overlap, best = static_cast<int>(i);
     }
     if (best < 0) return {};
@@ -96,28 +98,26 @@ LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const
 }
 
 LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) const {
-    const int cur = static_cast<int>(kfs.size()) - 1;
-    const KeyFrame& kc = kfs[cur];
-    // A brute-force scan is cheaper here than a kd-tree: the candidate set is already cut down by
-    // the index and travel gates, and rebuilding a tree on every keyframe costs more than the
-    // few thousand distance tests it would save.
-    std::vector<std::pair<double, int>> near;
-    for (int i = 0; i < cur; ++i) {
-        if (!Eligible(kfs, i, cur)) continue;
-        const Vec3 d = kc.pose.translation() - kfs[i].pose.translation();
-        if (std::abs(d.z()) > pgo_param_.loop_max_dz) continue;
-        const double r = d.norm();
-        if (r > pgo_param_.loop_radius) continue;
-        if (YawDiffDeg(kfs[i].pose, kc.pose) > pgo_param_.loop_max_yaw_diff) continue;
-        near.emplace_back(r, i);
-    }
-    std::sort(near.begin(), near.end());
-    if (static_cast<int>(near.size()) > pgo_param_.loop_max_candidates) near.resize(pgo_param_.loop_max_candidates);
+    const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
+    const KeyFrame& cur_kf = kfs[cur_kf_id];
 
-    Candidates out;
+    std::vector<std::pair<double, int>> nears;
+    for (int kf_id = 0; kf_id < static_cast<int>(kfs.size()) - 1; ++kf_id) {
+        if (!Eligible(kfs, kf_id, cur_kf_id)) continue;
+        const Vec3 offset = cur_kf.pose.translation() - kfs[kf_id].pose.translation();
+        if (std::abs(offset.z()) > pgo_param_.loop_max_dz) continue;
+        const double r = offset.norm();
+        if (r > pgo_param_.loop_radius) continue;
+        if (YawDiffDeg(kfs[kf_id].pose, cur_kf.pose) > pgo_param_.loop_max_yaw_diff) continue;
+        nears.emplace_back(r, kf_id);
+    }
+    std::sort(nears.begin(), nears.end());
+    if (static_cast<int>(nears.size()) > kMaxRadiusCands) nears.resize(kMaxRadiusCands);
+
+    Candidates cands;
     // seeded with what the odometry currently believes the relative pose is
-    for (const auto& n : near) out.push_back({n.second, kfs[n.second].pose.inverse() * kc.pose});
-    return out;
+    for (const auto& nb_kf : nears) cands.push_back({nb_kf.second, kfs[nb_kf.second].pose.inverse() * cur_kf.pose});
+    return cands;
 }
 
 bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells,
@@ -132,7 +132,7 @@ bool LoopDetector::Verify(const KeyFrames& kfs, const Candidates& cands, LoopSou
     const KeyFrame& cur_kf = kfs[cur_kf_id];
     source_ = source;
     for (const Candidate& cand : cands) {
-        const KeyFrame& ki = kfs[cand.id];
+        const KeyFrame& ki = kfs[cand.kf_id];
         Eigen::Isometry3d T_from_to = cand.T_from_to;
         const IcpResult icp = IcpNormal(cur_kf.planes, ki.planes, pgo_param_, &T_from_to);
         if (!icp.ok) {
@@ -141,13 +141,13 @@ bool LoopDetector::Verify(const KeyFrames& kfs, const Candidates& cands, LoopSou
             // unsettled means the Gauss-Newton never took a small enough step, and the last two
             // mean it aligned but the result is not trustworthy.
             if (icp.starved) {
-                Reject(cand.id, cur_kf_id, "icp_starved", icp.matches, &icp);
+                Reject(cand.kf_id, cur_kf_id, "icp_starved", icp.matches, &icp);
             } else if (!icp.converged) {
-                Reject(cand.id, cur_kf_id, "icp_unsettled", icp.step, &icp);
+                Reject(cand.kf_id, cur_kf_id, "icp_unsettled", icp.step, &icp);
             } else if (icp.matches < pgo_param_.icp_min_match) {
-                Reject(cand.id, cur_kf_id, "icp_matches", icp.matches, &icp);
+                Reject(cand.kf_id, cur_kf_id, "icp_matches", icp.matches, &icp);
             } else {
-                Reject(cand.id, cur_kf_id, "icp_eigval", icp.eigval, &icp);
+                Reject(cand.kf_id, cur_kf_id, "icp_eigval", icp.eigval, &icp);
             }
             continue;
         }
@@ -155,13 +155,13 @@ bool LoopDetector::Verify(const KeyFrames& kfs, const Candidates& cands, LoopSou
         // how far the loop would move the current pose, against how far we drove to get here
         const Vec3 p_loop = ki.pose * T_from_to.translation();
         const double drift = (p_loop - cur_kf.pose.translation()).norm();
-        const double span = cur_kf.jour - ki.jour;
+        const double span = cur_kf.travel_len - ki.travel_len;
         if (drift / span >= pgo_param_.ratio_drift) {
-            Reject(cand.id, cur_kf_id, "ratio_drift", drift / span);
+            Reject(cand.kf_id, cur_kf_id, "ratio_drift", drift / span);
             continue;
         }
 
-        loop->from = cand.id;
+        loop->from = cand.kf_id;
         loop->to = cur_kf_id;
         loop->T_from_to = T_from_to;
         loop->drift = drift;

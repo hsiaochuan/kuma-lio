@@ -47,7 +47,7 @@ class LoopDetector {
    private:
     struct Candidate {
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-        int id;
+        int kf_id;
         Eigen::Isometry3d T_from_to;  // ICP seed
     };
     using Candidates = std::vector<Candidate, Eigen::aligned_allocator<Candidate>>;
