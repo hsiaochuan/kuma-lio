@@ -34,6 +34,11 @@ constexpr int kMinParallelPoints = 2048;
 constexpr int kMaxIter = 4;
 constexpr int kMinScanPoints = 500;     // below this the frame is downsampled at half the size
 constexpr double kMinNormalEigen = 14;  // smallest eigenvalue of sum(n n^T) over a frame's matches
+// error-state blocks of FastLioState; a LiDAR row touches only the pose, ROT and POS, the first POSE entries
+constexpr int ROT = FastLioState::ROT, POS = FastLioState::POS, VEL = FastLioState::VEL, BG = FastLioState::BG,
+              BA = FastLioState::BA;
+constexpr int POSE = 6;
+static_assert(ROT == 0 && POS == 3, "the pose block must be the first POSE entries");
 }  // namespace
 
 void FastLio::Init() {
@@ -92,15 +97,15 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
 
         F.setIdentity();
         cov_w.setZero();
-        F.block<3, 3>(0, 0) = ExpMat(Vec3(-gyr * dt));
-        F.block<3, 3>(0, 9) = -Mat3::Identity() * dt;
-        F.block<3, 3>(3, 6) = Mat3::Identity() * dt;
-        F.block<3, 3>(6, 0) = -rot * Hat(acc) * dt;
-        F.block<3, 3>(6, 12) = -rot * dt;
-        cov_w.block<3, 3>(0, 0).diagonal() = cov_gyr * dt * dt;
-        cov_w.block<3, 3>(6, 6) = rot * cov_acc.asDiagonal() * rot.transpose() * dt * dt;
-        cov_w.block<3, 3>(9, 9).diagonal() = cov_bg * dt * dt;
-        cov_w.block<3, 3>(12, 12).diagonal() = cov_ba * dt * dt;
+        F.block<3, 3>(ROT, ROT) = ExpMat(Vec3(-gyr * dt));
+        F.block<3, 3>(ROT, BG) = -Mat3::Identity() * dt;
+        F.block<3, 3>(POS, VEL) = Mat3::Identity() * dt;
+        F.block<3, 3>(VEL, ROT) = -rot * Hat(acc) * dt;
+        F.block<3, 3>(VEL, BA) = -rot * dt;
+        cov_w.block<3, 3>(ROT, ROT).diagonal() = cov_gyr * dt * dt;
+        cov_w.block<3, 3>(VEL, VEL) = rot * cov_acc.asDiagonal() * rot.transpose() * dt * dt;
+        cov_w.block<3, 3>(BG, BG).diagonal() = cov_bg * dt * dt;
+        cov_w.block<3, 3>(BA, BA).diagonal() = cov_ba * dt * dt;
         x.cov = F * x.cov * F.transpose() + cov_w;
         phi_ = F * phi_;
 
@@ -197,8 +202,8 @@ void FastLio::SetPoints(const std::vector<Vec3>& scan) {
 int FastLio::Match() {
     const Mat3 R = x.R;
     const Vec3 p = x.p;
-    const Mat3 rot_var = x.cov.block<3, 3>(0, 0);
-    const Mat3 tsl_var = x.cov.block<3, 3>(3, 3);
+    const Mat3 rot_var = x.cov.block<3, 3>(ROT, ROT);
+    const Mat3 tsl_var = x.cov.block<3, 3>(POS, POS);
     const double r_base = param->fast_lio_.r_base;
     const int num_pt = static_cast<int>(points.size());
 #pragma omp parallel for num_threads(param->num_threads) schedule(dynamic) if (num_pt > kMinParallelPoints)
@@ -232,29 +237,30 @@ bool FastLio::IteratedUpdate() {
     for (int iter = 0; iter < kMaxIter; ++iter) {
         matched = Match();
 
-        Eigen::Matrix<double, 6, 6> HTH = Eigen::Matrix<double, 6, 6>::Zero();
-        Eigen::Matrix<double, 6, 1> HTz = Eigen::Matrix<double, 6, 1>::Zero();
+        Eigen::Matrix<double, POSE, POSE> HTH = Eigen::Matrix<double, POSE, POSE>::Zero();
+        Eigen::Matrix<double, POSE, 1> HTz = Eigen::Matrix<double, POSE, 1>::Zero();
         nnt.setZero();
         const Mat3 Rt = x.R.transpose();
         for (const FastLioPoint& pt : points) {
             if (!pt.valid) continue;
-            Eigen::Matrix<double, 6, 1> jac;
-            jac.head<3>() = Hat(pt.body) * Rt * pt.normal;
-            jac.tail<3>() = pt.normal;
+            Eigen::Matrix<double, POSE, 1> jac;
+            jac.segment<3>(ROT) = Hat(pt.body) * Rt * pt.normal;
+            jac.segment<3>(POS) = pt.normal;
             HTH += pt.r_inv * jac * jac.transpose();
             HTz -= pt.r_inv * jac * pt.residual;
             nnt += pt.normal * pt.normal.transpose();
         }
 
-        H_T_H.block<6, 6>(0, 0) = HTH;
+        H_T_H.block<POSE, POSE>(ROT, ROT) = HTH;
         const MatN K_1 = (H_T_H + cov_inv).inverse();
-        G.block<DIM, 6>(0, 0) = K_1.block<DIM, 6>(0, 0) * HTH;
+        G.block<DIM, POSE>(0, ROT) = K_1.block<DIM, POSE>(0, ROT) * HTH;
         const VecN vec = x_prop - x;
-        const VecN solution = K_1.block<DIM, 6>(0, 0) * HTz + vec - G.block<DIM, 6>(0, 0) * vec.head<6>();
+        const VecN solution =
+            K_1.block<DIM, POSE>(0, ROT) * HTz + vec - G.block<DIM, POSE>(0, ROT) * vec.segment<POSE>(ROT);
         x += solution;
 
         const bool converged =
-            solution.segment<3>(0).norm() * 57.3 < 0.01 && solution.segment<3>(3).norm() * 100 < 0.015;
+            solution.segment<3>(ROT).norm() * 57.3 < 0.01 && solution.segment<3>(POS).norm() * 100 < 0.015;
         if (converged || (rematch_num == 0 && iter == kMaxIter - 2)) ++rematch_num;
         if (rematch_num >= 2 || iter == kMaxIter - 1) {
             x.cov = (MatN::Identity() - G) * x.cov;
@@ -386,7 +392,7 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     if (param->fast_lio_.mode == FastLioMode::LIGO && measures.obs_id >= 0 && obss.n > 0) {
         CHECK_EQ(measures.obs_time_ns, measures.mea_end_);
         gnss_epoch_ok = ProcessGnssEpoch(obss, nav, *param, sat_tracks_, measures.obs_id, measures.obs_time_ns,
-                                         rtk_state.aligned && param->tdcp_enable, sol, &tdcp_epoch_);
+                                         param->tdcp_enable, sol, &tdcp_epoch_);
     }
 
     const int n_sub = SubFrameCount(measures);
@@ -431,53 +437,51 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
               << x.ba.transpose();
 }
 
-double FastLio::AntennaRange(const Mat3& R, const Vec3& p, const Vec3& sv_pos, bool nav_cols,
+double FastLio::AntennaRange(const Mat3& R, const Vec3& pos, const Vec3& sv_pos, bool if_eval_jaco,
                              Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const {
     const Vec3& lever = param->level_arm;
-    const Vec3 p_ant = R * lever + p;
-    const Mat3 rot = rtk_state.RotEcefEnu();
-    const Vec3 p_ecef = rot * p_ant + rtk_state.t_ecef_enu;
+    const Vec3 ant_pos = R * lever + pos;
+    const Mat3 R_ecef_enu = rtk_state.RotEcefEnu();
+    const Vec3 p_ecef = R_ecef_enu * ant_pos + rtk_state.t_ecef_enu;
     double e[3];
-    const double range = geodist(sv_pos.data(), p_ecef.data(), e);
-    if (!H) return range;
+    const double rho = geodist(sv_pos.data(), p_ecef.data(), e);
+    if (!H)
+        return rho;
 
     // d(range)/d(receiver ECEF), Sagnac term included
-    const Eigen::RowVector3d d_range = -Eigen::Map<const Vec3>(e).transpose() +
+    const Eigen::RowVector3d d_rho_drcv = -Eigen::Map<const Vec3>(e).transpose() +
                                        Eigen::RowVector3d(-OMGE / CLIGHT * sv_pos.y(), OMGE / CLIGHT * sv_pos.x(), 0.0);
-    const Eigen::RowVector3d d_range_local = d_range * rot;
+    const Eigen::RowVector3d d_rho_dant = d_rho_drcv * R_ecef_enu;
     H->setZero();
-    if (nav_cols) {
+    if (if_eval_jaco) {
         // R Exp(d theta) lever = R lever - R [lever]x d theta
-        H->block<1, 3>(0, 0) = -d_range_local * R * Hat(lever);
-        H->block<1, 3>(0, 3) = d_range_local;
+        H->block<1, 3>(0, ROT) = -d_rho_dant * R * Hat(lever);
+        H->block<1, 3>(0, POS) = d_rho_dant;
     }
     // R_init Rz(yaw) v, d/d(yaw) = R (ez x v)
-    (*H)(0, FastLioState::DIM + RTKState::YAW) = (d_range_local * Vec3::UnitZ().cross(p_ant)).value();
-    H->block<1, 3>(0, FastLioState::DIM + RTKState::TRN) = d_range;
-    return range;
+    (*H)(0, FastLioState::DIM + RTKState::YAW) = (d_rho_dant * Vec3::UnitZ().cross(ant_pos)).value();
+    H->block<1, 3>(0, FastLioState::DIM + RTKState::T_ECEF_ENU) = d_rho_drcv;
+    return rho;
 }
 
-double FastLio::TdcpResidual(const TdcpObs& obs,
+double FastLio::TdcpResidual(const TdcpObs& tdcp_obs,
                              Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const {
-    // lambda*dPhi + c*d(dts) = (range_{k+1} - range_k) + (clk_{k+1} - clk_k): the pose and the clocks of epoch k
-    // are held at the anchor, only the extrinsic acts on both ranges
+    // lambda*dPhi + c*d(dts) = (range_{k+1} - range_k) + (clk_{k+1} - clk_k)
     Mat3 R_anchor;
     Vec3 p_anchor;
     Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM> H_anchor;
-    const double range = AntennaRange(x.R, x.p, obs.sv_pos, true, H);
-    const double range_anchor = AntennaRange(R_anchor, p_anchor, obs.sv_pos_anchor, false, H ? &H_anchor : nullptr);
-    const int s = obs.sys_idx;
-    const double pred = range - range_anchor + rtk_state.clk(s) - rtk_state.clk_anchor(s);
+    const double range = AntennaRange(x.R, x.p, tdcp_obs.sv_pos, true, H);
+    const double range_anchor = AntennaRange(R_anchor, p_anchor, tdcp_obs.sv_pos_anchor, false, H ? &H_anchor : nullptr);
+    const int s = tdcp_obs.sys_idx;
+    const double pred_range = range - range_anchor + rtk_state.clk(s) - rtk_state.clk_anchor(s);
     if (H) {
         *H -= H_anchor;
         (*H)(0, FastLioState::DIM + RTKState::CLK + s) = 1.0;
     }
-    return obs.cp_diff + CLIGHT * (obs.sv_dt - obs.sv_dt_anchor) - pred;
+    return tdcp_obs.cp_diff + CLIGHT * (tdcp_obs.sv_dt - tdcp_obs.sv_dt_anchor) - pred_range;
 }
 
 void FastLio::PrepareTdcp() {
-    // Residual without the receiver clock step.  The step is common to every system (the inter-system biases
-    // cancel between epochs), so the median across satellites estimates it.
     constexpr int N = FastLioState::DIM;
     constexpr int NG = RTKState::DIM;
     using RowJ = Eigen::Matrix<double, 1, N + NG>;
@@ -543,9 +547,8 @@ void FastLio::InitGnss(const sol_t& sol) {
     rtk_state.P.block<4, 4>(RTKState::CLK, RTKState::CLK) =
         param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
     rtk_state.P(RTKState::YAW, RTKState::YAW) = param->std_ext_yaw_init * param->std_ext_yaw_init;
-    rtk_state.P.block<3, 3>(RTKState::TRN, RTKState::TRN) =
+    rtk_state.P.block<3, 3>(RTKState::T_ECEF_ENU, RTKState::T_ECEF_ENU) =
         param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
     rtk_state.P_ng.setZero();
-    rtk_state.aligned = true;
 }
 }  // namespace kuma_lio

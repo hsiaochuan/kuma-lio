@@ -41,19 +41,20 @@ namespace kuma_lio {
 struct FastLioState {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     static constexpr int DIM = 15;  // R p v bg ba
+    static constexpr int ROT = 0, POS = 3, VEL = 6, BG = 9, BA = 12;
     using MatN = Eigen::Matrix<double, DIM, DIM>;
     using VecN = Eigen::Matrix<double, DIM, 1>;
 
     FastLioState() {
         cov = MatN::Identity() * 1e-4;
-        cov.block<6, 6>(9, 9) = Eigen::Matrix<double, 6, 6>::Identity() * 1e-5;
+        cov.block<6, 6>(BG, BG) = Eigen::Matrix<double, 6, 6>::Identity() * 1e-5;  // bg and ba
     }
     FastLioState& operator+=(const VecN& dx) {
-        R = R * ExpMat(Vec3(dx.segment<3>(0)));
-        p += dx.segment<3>(3);
-        v += dx.segment<3>(6);
-        bg += dx.segment<3>(9);
-        ba += dx.segment<3>(12);
+        R = R * ExpMat(Vec3(dx.segment<3>(ROT)));
+        p += dx.segment<3>(POS);
+        v += dx.segment<3>(VEL);
+        bg += dx.segment<3>(BG);
+        ba += dx.segment<3>(BA);
         return *this;
     }
     Eigen::Isometry3d Isometry() const {
@@ -65,11 +66,11 @@ struct FastLioState {
     VecN operator-(const FastLioState& b) const {
         VecN dx;
         const Mat3 dR = b.R.transpose() * R;
-        dx.segment<3>(0) = LogMat(dR);
-        dx.segment<3>(3) = p - b.p;
-        dx.segment<3>(6) = v - b.v;
-        dx.segment<3>(9) = bg - b.bg;
-        dx.segment<3>(12) = ba - b.ba;
+        dx.segment<3>(ROT) = LogMat(dR);
+        dx.segment<3>(POS) = p - b.p;
+        dx.segment<3>(VEL) = v - b.v;
+        dx.segment<3>(BG) = bg - b.bg;
+        dx.segment<3>(BA) = ba - b.ba;
         return dx;
     }
 
@@ -84,28 +85,16 @@ struct FastLioState {
 struct RTKState {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     static constexpr int DIM = 8;  // clk (4) | yaw | t_ecef_enu (3)
-    static constexpr int CLK = 0, YAW = 4, TRN = 5;
+    static constexpr int CLK = 0, YAW = 4, T_ECEF_ENU = 5;
     using Vec = Eigen::Matrix<double, DIM, 1>;
 
-    Vec Vector() const {
-        Vec v;
-        v << clk, yaw, t_ecef_enu;
-        return v;
-    }
-    void SetVector(const Vec& v) {
-        clk = v.segment<4>(CLK);
-        yaw = v(YAW);
-        t_ecef_enu = v.segment<3>(TRN);
-    }
-    // R_ecef_enu = R_ecef_enu_init * Rz(yaw)
-    Mat3 RotEcefEnu() const { return R_ecef_enu_init * Eigen::AngleAxisd(yaw, Vec3::UnitZ()).toRotationMatrix(); }
+    Mat3 RotEcefEnu() const { return R_ecef_enu_rollpitch * Eigen::AngleAxisd(yaw, Vec3::UnitZ()).toRotationMatrix(); }
 
-    bool aligned = false;
     Vec4 clk = Vec4::Zero();         // c * receiver clock [m]: GPS, GLO, GAL, BDS
     Vec4 clk_anchor = Vec4::Zero();  // the clocks at the anchor epoch, held fixed
-    double yaw = 0.0;
     Vec3 t_ecef_enu = Vec3::Zero();
-    Mat3 R_ecef_enu_init = Mat3::Identity();
+    Mat3 R_ecef_enu_rollpitch = Mat3::Identity();
+    double yaw = 0.0;
     Eigen::Matrix<double, DIM, DIM> P = Eigen::Matrix<double, DIM, DIM>::Identity();
     Eigen::Matrix<double, FastLioState::DIM, DIM> P_ng = Eigen::Matrix<double, FastLioState::DIM, DIM>::Zero();
 };
@@ -177,10 +166,10 @@ class FastLio {
     // GNSS (LIGO), after RESPLE_LIO::ProcessGnssEpoch, PrepareTdCpEpoch and InitGnssState.
     // Range from the antenna at the IMU pose (R, p) to `sv_pos`; H, when given, is d(range)/d(nav error, GNSS state)
     // with the nav columns only when `nav_cols`.
-    double AntennaRange(const Mat3& R, const Vec3& p, const Vec3& sv_pos, bool nav_cols,
+    double AntennaRange(const Mat3& R, const Vec3& pos, const Vec3& sv_pos, bool if_eval_jaco,
                         Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
     // TDCP residual (measured minus predicted) of one row at the current state, and its Jacobian.
-    double TdcpResidual(const TdcpObs& obs, Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
+    double TdcpResidual(const TdcpObs& tdcp_obs, Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
     // The epoch's clock step from the median clock-free residual of tdcp_epoch_, then the chi-square test on the
     // prior; tdcp_ gets the rows that pass, or stays empty below tdcp_min_sat.  The state must be at the epoch.
     void PrepareTdcp();
