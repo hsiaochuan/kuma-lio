@@ -35,10 +35,11 @@ class LoopDetector {
    public:
     explicit LoopDetector(const PgoParam& prm);
 
-    // Tries to close a loop at kfs.back(); call it once for every keyframe, in order.  `cloud` and
-    // `cells` are that keyframe's merged scan and plane cells in its body frame, which only BTC
-    // reads.  True when `out` was filled.
-    bool Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells, LoopEdge* loop);
+    // Tries to close a loop at kfs.back(); call it once for every keyframe, in order.  `kf_points`
+    // and `cell_pcs` are that keyframe's merged scan in its body frame and the point statistics of
+    // its plane cells, which only BTC reads.  True when `loop` was filled.
+    bool Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const std::vector<PointCluster>& cell_pcs,
+                LoopEdge* loop);
 
     const std::vector<LoopRejection>& rejections() const { return rejections_; }
     // BTC descriptors of keyframe `id`; null with btc_enable off.
@@ -54,7 +55,8 @@ class LoopDetector {
 
     // Far enough back, by keyframes and by path length, to count as a loop.
     bool Eligible(const KeyFrames& kfs, int from, int to) const;
-    Candidates BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells);
+    Candidates BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
+                             const std::vector<PointCluster>& cell_pcs);
     Candidates RadiusCandidates(const KeyFrames& kfs) const;
     // Runs the ICP and drift checks on `cands` in order; true at the first one that passes.
     bool Verify(const KeyFrames& kfs, const Candidates& cands, LoopSource source, LoopEdge* loop);

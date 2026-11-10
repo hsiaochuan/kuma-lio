@@ -55,8 +55,9 @@ class PgoBackend {
 
    private:
     // Merges the buffered scans into a keyframe at `scan_pose` (the newest scan) and appends it;
-    // `kf_points` and `cells` come back in its body frame for the loop search.
-    void SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Vec3>* kf_points, PlaneCells* cells);
+    // `kf_points` (its body frame) and `cell_pcs` (its plane cells' statistics) are for BTC.
+    void SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Vec3>* kf_points,
+                      std::vector<PointCluster>* cell_pcs);
     void Solve();
 
     PgoParam prm_;

@@ -30,19 +30,9 @@
 namespace kuma_lio {
 namespace pgo {
 
-// A flat `plane_voxel` cell: its point statistics, which BTC merges into reference planes, and
-// the centre + normal the loop ICP and the plane overlap use.
-struct PlaneCell {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    PointCluster pc;
-    PlanePoint plane;
-};
-using PlaneCells = std::vector<PlaneCell, Eigen::aligned_allocator<PlaneCell>>;
-
-// Hash `cloud` into `plane_voxel` cells and keep the flat ones.
-PlaneCells ExtractPlaneCells(const std::vector<Vec3>& cloud, const PgoParam& prm);
-
-std::vector<PlanePoint> PlanePoints(const PlaneCells& cells);
+// Hash `cloud` into `plane_voxel` cells and keep the flat ones; `cell_pcs[i]` gets the point
+// statistics of the i-th returned cell.
+PlaneCells ExtractPlaneCells(const std::vector<Vec3>& cloud, const PgoParam& prm, std::vector<PointCluster>* cell_pcs);
 
 std::vector<Vec3> UniformSample(const std::vector<Vec3>& cloud, double leaf);
 

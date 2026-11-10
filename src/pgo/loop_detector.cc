@@ -73,10 +73,10 @@ bool LoopDetector::Eligible(const KeyFrames& kfs, int from, int to) const {
 }
 
 LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
-                                                     const PlaneCells& cells) {
+                                                     const std::vector<PointCluster>& cell_pcs) {
     const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
     CHECK_EQ(btc_db_.size(), cur_kf_id) << "Detect must see every keyframe once, in order";
-    BtcFrame btc_frame = BuildBtcFrame(kf_points, cells, pgo_param_);
+    BtcFrame btc_frame = BuildBtcFrame(kf_points, kfs[cur_kf_id].planes, cell_pcs, pgo_param_);
     const auto btc_cands = btc_db_.Query(btc_frame, [&](int id) { return Eligible(kfs, id, cur_kf_id); });
     btc_db_.Add(std::move(btc_frame));  // after the query, so a keyframe never finds itself
 
@@ -120,10 +120,11 @@ LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) co
     return cands;
 }
 
-bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points, const PlaneCells& cells,
-                          LoopEdge* loop) {
+bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
+                          const std::vector<PointCluster>& cell_pcs, LoopEdge* loop) {
     // BTC runs on every keyframe while enabled: its database has to see each one, in order
-    if (pgo_param_.btc_enable && Verify(kfs, BtcCandidates(kfs, kf_points, cells), LoopSource::kBtc, loop)) return true;
+    if (pgo_param_.btc_enable && Verify(kfs, BtcCandidates(kfs, kf_points, cell_pcs), LoopSource::kBtc, loop))
+        return true;
     return Verify(kfs, RadiusCandidates(kfs), LoopSource::kRadius, loop);
 }
 

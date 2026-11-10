@@ -56,7 +56,7 @@ std::vector<Vec3> UniformSample(const std::vector<Vec3>& cloud, double leaf) {
     return out;
 }
 
-PlaneCells ExtractPlaneCells(const std::vector<Vec3>& cloud, const PgoParam& prm) {
+PlaneCells ExtractPlaneCells(const std::vector<Vec3>& cloud, const PgoParam& prm, std::vector<PointCluster>* cell_pcs) {
     std::unordered_map<VOXEL_LOCATION, PointCluster> cells;
     cells.reserve(cloud.size());
     // PointCluster zeroes itself on construction, so operator[] is safe here
@@ -66,25 +66,20 @@ PlaneCells ExtractPlaneCells(const std::vector<Vec3>& cloud, const PgoParam& prm
 
     PlaneCells out;
     out.reserve(cells.size());
+    cell_pcs->clear();
+    cell_pcs->reserve(cells.size());
     for (const auto& kv : cells) {
         const PointCluster& pc = kv.second;
         if (pc.N < prm.plane_min_points) continue;
         Eigen::SelfAdjointEigenSolver<Mat3> es(pc.Cov());
         if (es.eigenvalues()(0) >= prm.plane_min_eigen) continue;
         PlaneCell c;
-        c.pc = pc;
-        c.plane.p = pc.Mean();
-        c.plane.n = es.eigenvectors().col(0);
-        if (!c.plane.p.allFinite() || !c.plane.n.allFinite()) continue;
+        c.center = pc.Mean();
+        c.normal = es.eigenvectors().col(0);
+        if (!c.center.allFinite() || !c.normal.allFinite()) continue;
         out.push_back(c);
+        cell_pcs->push_back(pc);
     }
-    return out;
-}
-
-std::vector<PlanePoint> PlanePoints(const PlaneCells& cells) {
-    std::vector<PlanePoint> out;
-    out.reserve(cells.size());
-    for (const PlaneCell& c : cells) out.push_back(c.plane);
     return out;
 }
 

@@ -65,7 +65,7 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("btc_merge_normal", &p->btc_merge_normal);
     get("btc_merge_dist", &p->btc_merge_dist);
     get("btc_ref_planes", &p->btc_ref_planes);
-    get("btc_pixel", &p->btc_pixel);
+    get("btc_pixel", &p->btc_pixel_res);
     get("btc_layer_height", &p->btc_layer_height);
     get("btc_height_min", &p->btc_height_min);
     get("btc_height_max", &p->btc_height_max);
@@ -74,9 +74,9 @@ void LoadParam(const std::string& file, pgo::PgoParam* p) {
     get("btc_nms_radius", &p->btc_nms_radius);
     get("btc_max_keypoints", &p->btc_max_keypoints);
     get("btc_near_num", &p->btc_near_num);
-    get("btc_side_min", &p->btc_side_min);
-    get("btc_side_max", &p->btc_side_max);
-    get("btc_side_res", &p->btc_side_res);
+    get("btc_side_min", &p->btc_side_len_min);
+    get("btc_side_max", &p->btc_side_len_max);
+    get("btc_side_res", &p->btc_side_len_res);
     get("btc_side_tol", &p->btc_side_tol);
     get("btc_similarity", &p->btc_similarity);
     get("btc_candidates", &p->btc_candidates);

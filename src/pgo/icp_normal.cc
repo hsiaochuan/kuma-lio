@@ -33,18 +33,17 @@
 namespace kuma_lio {
 namespace pgo {
 
-IcpResult IcpNormal(const std::vector<PlanePoint>& src, const std::vector<PlanePoint>& tar,
-                    const PgoParam& prm, Eigen::Isometry3d* T_tar_src) {
+IcpResult IcpNormal(const PlaneCells& src, const PlaneCells& tar, const PgoParam& prm, Eigen::Isometry3d* T_tar_src) {
     IcpResult res;
     if (src.empty() || tar.size() < 4) return res;
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr tar_xyz(new pcl::PointCloud<pcl::PointXYZ>);
     tar_xyz->reserve(tar.size());
-    std::vector<const PlanePoint*> tar_ref;
+    std::vector<const PlaneCell*> tar_ref;
     tar_ref.reserve(tar.size());
-    for (const PlanePoint& pp : tar) {
-        if (!pp.p.allFinite() || !pp.n.allFinite()) continue;
-        tar_xyz->push_back(pcl::PointXYZ(pp.p.x(), pp.p.y(), pp.p.z()));
+    for (const PlaneCell& pp : tar) {
+        if (!pp.center.allFinite() || !pp.normal.allFinite()) continue;
+        tar_xyz->push_back(pcl::PointXYZ(pp.center.x(), pp.center.y(), pp.center.z()));
         tar_ref.push_back(&pp);
     }
     if (tar_xyz->size() < 4) return res;
@@ -76,30 +75,30 @@ IcpResult IcpNormal(const std::vector<PlanePoint>& src, const std::vector<PlaneP
         mat_norm.setZero();
         match_num = 0;
 
-        for (const PlanePoint& sp : src) {
-            const Vec3 pi = R * sp.p + t;
-            const Vec3 ni = R * sp.n;
+        for (const PlaneCell& sp : src) {
+            const Vec3 pi = R * sp.center + t;
+            const Vec3 ni = R * sp.normal;
             // PCL asserts on a non-finite query rather than returning nothing, and an aborted
             // process is a far worse failure than a skipped correspondence
             if (!pi.allFinite() || !ni.allFinite()) continue;
             if (kd_tree.nearestKSearch(pcl::PointXYZ(pi.x(), pi.y(), pi.z()), 1, idx, dist) <= 0) continue;
-            const PlanePoint& tp = *tar_ref[idx[0]];
+            const PlaneCell& tp = *tar_ref[idx[0]];
             // how far the nearest plane centre is BEFORE any gate: says whether the two clouds
             // overlap at all under the seed, which no gated count can distinguish from a bad fit
-            if (iter == 0) nn0.push_back((pi - tp.p).norm());
+            if (iter == 0) nn0.push_back((pi - tp.center).norm());
             // a plane normal has no sign, so either orientation is a match
-            if ((ni - tp.n).norm() >= paras[0] && (ni + tp.n).norm() >= paras[1]) continue;
-            const Vec3 d = pi - tp.p;
-            const double point_to_plane = std::abs(tp.n.dot(d));
+            if ((ni - tp.normal).norm() >= paras[0] && (ni + tp.normal).norm() >= paras[1]) continue;
+            const Vec3 d = pi - tp.center;
+            const double point_to_plane = std::abs(tp.normal.dot(d));
             if (point_to_plane >= paras[2] || d.norm() >= paras[3]) continue;
 
-            const double r = tp.n.dot(d);
+            const double r = tp.normal.dot(d);
             Vec6 jac;
-            jac.head<3>() = Hat(sp.p) * R.transpose() * tp.n;
-            jac.tail<3>() = tp.n;
+            jac.head<3>() = Hat(sp.center) * R.transpose() * tp.normal;
+            jac.tail<3>() = tp.normal;
             hess += jac * jac.transpose();
             jact += jac * r;
-            mat_norm += tp.n * tp.n.transpose();
+            mat_norm += tp.normal * tp.normal.transpose();
             ++match_num;
         }
 

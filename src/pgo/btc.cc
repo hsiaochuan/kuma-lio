@@ -37,13 +37,6 @@ namespace {
 
 using Keypoints = std::vector<BtcKeypoint, Eigen::aligned_allocator<BtcKeypoint>>;
 
-struct RefPlane {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Vec3 c = Vec3::Zero();
-    Vec3 n = Vec3::Zero();
-};
-using RefPlanes = std::vector<RefPlane, Eigen::aligned_allocator<RefPlane>>;
-
 // A plane normal has no sign, so either orientation counts as the same.
 bool SameNormal(const Vec3& a, const Vec3& b, double tol) { return (a - b).norm() < tol || (a + b).norm() < tol; }
 
@@ -59,20 +52,19 @@ void MakeTree(const std::vector<Vec3>& pts, pcl::KdTreeFLANN<pcl::PointXYZ>* tre
     tree->setInputCloud(cloud);
 }
 
-// Paper IV-B2: plane cells that are coplanar (eq. 2) are merged into one plane (eq. 3), and the
-// `btc_ref_planes` merged planes with the most points become the reference planes.  A cell that
-// merged with nothing is not a candidate, as upstream.
-RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
+// plane cells that are coplanar are merged into one plane
+PlaneCells ReferencePlanes(const PlaneCells& cells, const std::vector<PointCluster>& cell_pcs, const PgoParam& prm) {
     const int n = static_cast<int>(cells.size());
     std::vector<int> parent(n);
     std::iota(parent.begin(), parent.end(), 0);
     for (int i = 0; i < n; ++i) {
-        const PlanePoint& a = cells[i].plane;
+        const PlaneCell& cell = cells[i];
         for (int j = i + 1; j < n; ++j) {
-            const PlanePoint& b = cells[j].plane;
-            if (!SameNormal(a.n, b.n, prm.btc_merge_normal)) continue;
-            const Vec3 d = b.p - a.p;
-            if (std::abs(a.n.dot(d)) >= prm.btc_merge_dist || std::abs(b.n.dot(d)) >= prm.btc_merge_dist) continue;
+            const PlaneCell& b = cells[j];
+            if (!SameNormal(cell.normal, b.normal, prm.btc_merge_normal)) continue;
+            const Vec3 d = b.center - cell.center;
+            if (std::abs(cell.normal.dot(d)) >= prm.btc_merge_dist || std::abs(b.normal.dot(d)) >= prm.btc_merge_dist)
+                continue;
             parent[Find(parent, i)] = Find(parent, j);
         }
     }
@@ -87,7 +79,7 @@ RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
         auto ins = groups.emplace(Find(parent, i), Group());
         Group& g = ins.first->second;
         if (ins.second) g.first = i;
-        g.pc += cells[i].pc;
+        g.pc += cell_pcs[i];
         ++g.cells;
     }
     std::vector<const Group*> merged;
@@ -98,16 +90,16 @@ RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
         return a->pc.N != b->pc.N ? a->pc.N > b->pc.N : a->first < b->first;
     });
 
-    RefPlanes out;
+    PlaneCells out;
     for (const Group* g : merged) {
         if (static_cast<int>(out.size()) >= prm.btc_ref_planes) break;
         Eigen::SelfAdjointEigenSolver<Mat3> es(g->pc.Cov());
-        RefPlane r;
-        r.c = g->pc.Mean();
-        r.n = es.eigenvectors().col(0);
+        PlaneCell r;
+        r.center = g->pc.Mean();
+        r.normal = es.eigenvectors().col(0);
         // upstream flips the normal to +z; facing the sensor instead keeps the height band on the
         // side the scene was seen from whichever way the body z axis points
-        if (r.n.dot(-r.c) < 0.0) r.n = -r.n;
+        if (r.normal.dot(-r.center) < 0.0) r.normal = -r.normal;
         out.push_back(r);
     }
     return out;
@@ -115,11 +107,12 @@ RefPlanes ReferencePlanes(const PlaneCells& cells, const PgoParam& prm) {
 
 // Paper IV-B3/4: the height-encoded image of `cloud` on one reference plane, and its keypoints,
 // the strongest pixel of each 5x5 block that is bright enough and not on a line.
-void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, const PgoParam& prm, Keypoints* out_kps) {
+void ExtractKeypoints(const std::vector<Vec3>& kf_points, const PlaneCell& ref, const PgoParam& prm,
+                      Keypoints* out_kps) {
     const int layers = static_cast<int>(std::lround((prm.btc_height_max - prm.btc_height_min) / prm.btc_layer_height));
     CHECK(layers > 0 && layers <= 64) << "btc height band must be 1-64 layers, got " << layers;
-    const Vec3 ax = ref.n.unitOrthogonal();
-    const Vec3 ay = ref.n.cross(ax);
+    const Vec3 ax = ref.normal.unitOrthogonal();
+    const Vec3 ay = ref.normal.cross(ax);
 
     struct ProjPoint {
         double u, v;
@@ -128,8 +121,8 @@ void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, c
     std::vector<ProjPoint> proj_points;
     double umin = 1e18, vmin = 1e18, umax = -1e18, vmax = -1e18;
     for (const Vec3& p : kf_points) {
-        const Vec3 d = p - ref.c;
-        const double h = ref.n.dot(d);
+        const Vec3 d = p - ref.center;
+        const double h = ref.normal.dot(d);
         if (h < prm.btc_height_min || h >= prm.btc_height_max) continue;
         const int layer = std::min(layers - 1, static_cast<int>((h - prm.btc_height_min) / prm.btc_layer_height));
         const ProjPoint pj{ax.dot(d), ay.dot(d), layer};
@@ -140,7 +133,7 @@ void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, c
     if (proj_points.size() <= 5) return;
 
     constexpr int kBlock = 5;
-    const double res = prm.btc_pixel;
+    const double res = prm.btc_pixel_res;
     const int bw = static_cast<int>((umax - umin) / (kBlock * res)) + 1;
     const int bh = static_cast<int>((vmax - vmin) / (kBlock * res)) + 1;
     const int W = bw * kBlock, H = bh * kBlock;
@@ -186,7 +179,7 @@ void ExtractKeypoints(const std::vector<Vec3>& kf_points, const RefPlane& ref, c
             const size_t k = at(px, py);
             BtcKeypoint kp;
             // the mean in-plane position of the pixel's points, not its centre: sub-pixel accuracy
-            kp.p = ref.c + (su[k] / cnt[k]) * ax + (sv[k] / cnt[k]) * ay;
+            kp.p = ref.center + (su[k] / cnt[k]) * ax + (sv[k] / cnt[k]) * ay;
             kp.bits = bits[k];
             kp.count = best;
             out_kps->push_back(kp);
@@ -249,7 +242,7 @@ std::vector<BtcTriangle> MakeTriangles(const Keypoints& kps, const PgoParam& prm
                                                          {(pts[vs[0]] - pts[vs[1]]).norm(), vs[2]}}};
                 bool ok = true;
                 for (const auto& sl_v : sl_vs)
-                    ok &= sl_v.first >= prm.btc_side_min && sl_v.first <= prm.btc_side_max;
+                    ok &= sl_v.first >= prm.btc_side_len_min && sl_v.first <= prm.btc_side_len_max;
                 if (!ok) continue;
                 std::sort(sl_vs.begin(), sl_vs.end());
                 if (std::abs(sl_vs[2].first - (sl_vs[0].first + sl_vs[1].first)) < 0.2)
@@ -261,7 +254,7 @@ std::vector<BtcTriangle> MakeTriangles(const Keypoints& kps, const PgoParam& prm
                     continue;
 
                 BtcTriangle tri;
-                tri.side_len = Eigen::Vector3f(sl_vs[0].first, sl_vs[1].first, sl_vs[2].first);
+                tri.side_lens = Eigen::Vector3f(sl_vs[0].first, sl_vs[1].first, sl_vs[2].first);
                 tri.v = {{sl_vs[2].second, sl_vs[1].second, sl_vs[0].second}};
                 out_triangles.push_back(tri);
             } // for nb
@@ -296,50 +289,59 @@ Eigen::Isometry3d Kabsch(const std::vector<Vec3>& src, const std::vector<Vec3>& 
 
 }  // namespace
 
-BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cells, const PgoParam& prm) {
+BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cells,
+                       const std::vector<PointCluster>& cell_pcs, const PgoParam& prm) {
     Keypoints kps;
-    for (const RefPlane& ref_plane : ReferencePlanes(cells, prm))
+    for (const PlaneCell& ref_plane : ReferencePlanes(cells, cell_pcs, prm))
         ExtractKeypoints(kf_points, ref_plane, prm, &kps);
     kps = SuppressNonMaxima(kps, prm);
-    std::stable_sort(kps.begin(), kps.end(), [](const BtcKeypoint& a, const BtcKeypoint& b) { return a.count > b.count; });
+    std::stable_sort(kps.begin(), kps.end(), [](const BtcKeypoint& kp_a, const BtcKeypoint& kp_b) {
+        return kp_a.count > kp_b.count;
+    });
     if (static_cast<int>(kps.size()) > prm.btc_max_keypoints) kps.resize(prm.btc_max_keypoints);
 
-    BtcFrame f;
-    f.triangles = MakeTriangles(kps, prm);
-    f.keypoints = std::move(kps);
-    return f;
+    BtcFrame btc_frm;
+    btc_frm.triangles = MakeTriangles(kps, prm);
+    btc_frm.keypoints = std::move(kps);
+    return btc_frm;
 }
 
-double PlaneOverlap(const std::vector<PlanePoint>& src, const std::vector<PlanePoint>& tar,
-                    const Eigen::Isometry3d& T_tar_src, const PgoParam& prm) {
+double PlaneOverlap(const PlaneCells& src, const PlaneCells& tar, const Eigen::Isometry3d& T_tar_src,
+                    const PgoParam& prm) {
     if (src.empty() || tar.empty()) return 0.0;
     std::vector<Vec3> centres;
-    for (const PlanePoint& p : tar) centres.push_back(p.p);
+    for (const PlaneCell& c : tar) centres.push_back(c.center);
     pcl::KdTreeFLANN<pcl::PointXYZ> tree;
     MakeTree(centres, &tree);
     std::vector<int> idx(1);
     std::vector<float> d2(1);
     int hit = 0;
-    for (const PlanePoint& sp : src) {
-        const Vec3 p = T_tar_src * sp.p;
-        const Vec3 n = T_tar_src.linear() * sp.n;
+    for (const PlaneCell& sp : src) {
+        const Vec3 p = T_tar_src * sp.center;
+        const Vec3 n = T_tar_src.linear() * sp.normal;
         if (tree.nearestKSearch(pcl::PointXYZ(p.x(), p.y(), p.z()), 1, idx, d2) <= 0) continue;
-        const PlanePoint& tp = tar[idx[0]];
-        if (SameNormal(n, tp.n, prm.btc_overlap_normal) && std::abs(tp.n.dot(p - tp.p)) < prm.btc_overlap_dist) ++hit;
+        const PlaneCell& tp = tar[idx[0]];
+        if (SameNormal(n, tp.normal, prm.btc_overlap_normal) &&
+            std::abs(tp.normal.dot(p - tp.center)) < prm.btc_overlap_dist)
+            ++hit;
     }
     return static_cast<double>(hit) / src.size();
 }
 
 namespace {
-VOXEL_LOCATION SideKey(const Eigen::Vector3f& side, double res) {
-    return VOXEL_LOCATION(std::llround(side.x() / res), std::llround(side.y() / res), std::llround(side.z() / res));
+VOXEL_LOCATION SideLenKey(const Eigen::Vector3f& side_lens, double res) {
+    return VOXEL_LOCATION(
+        std::llround(side_lens.x() / res),
+        std::llround(side_lens.y() / res),
+        std::llround(side_lens.z() / res));
 }
 }  // namespace
 
 void BtcDatabase::Add(BtcFrame btc_f) {
     const int frame_id = size();
     for (size_t ti = 0; ti < btc_f.triangles.size(); ++ti)
-        table_[SideKey(btc_f.triangles[ti].side_len, prm_.btc_side_res)].push_back({frame_id, static_cast<int>(ti)});
+        sl_table_[SideLenKey(btc_f.triangles[ti].side_lens, prm_.btc_side_len_res)].push_back({
+            frame_id, static_cast<int>(ti)});
     btc_frames_.push_back(std::move(btc_f));
 }
 
@@ -351,22 +353,22 @@ std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Q
     std::unordered_map<int, std::vector<std::pair<int, int>>> pairs;  // frame -> (query tri, its tri)
     for (size_t qt = 0; qt < q.triangles.size(); ++qt) {
         const BtcTriangle& tq = q.triangles[qt];
-        const VOXEL_LOCATION key = SideKey(tq.side_len, prm_.btc_side_res);
-        const double tol = tq.side_len.norm() * prm_.btc_side_tol;
+        const VOXEL_LOCATION key = SideLenKey(tq.side_lens, prm_.btc_side_len_res);
+        const double tol = tq.side_lens.norm() * prm_.btc_side_tol;
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
                 for (int dz = -1; dz <= 1; ++dz) {
-                    const auto it = table_.find(VOXEL_LOCATION(key.x + dx, key.y + dy, key.z + dz));
-                    if (it == table_.end()) continue;
-                    for (const Entry& e : it->second) {
-                        if (!ok[e.frame]) continue;
-                        const BtcFrame& f = btc_frames_[e.frame];
-                        const BtcTriangle& tc = f.triangles[e.tri];
-                        if ((tc.side_len - tq.side_len).norm() >= tol) continue;
+                    const auto it = sl_table_.find(VOXEL_LOCATION(key.x + dx, key.y + dy, key.z + dz));
+                    if (it == sl_table_.end()) continue;
+                    for (const FrameTri& frm_tri : it->second) {
+                        if (!ok[frm_tri.frame]) continue;
+                        const BtcFrame& f = btc_frames_[frm_tri.frame];
+                        const BtcTriangle& tc = f.triangles[frm_tri.tri];
+                        if ((tc.side_lens - tq.side_lens).norm() >= tol) continue;
                         double sim = 0.0;
                         for (int k = 0; k < 3; ++k) sim += BitSimilarity(q.keypoints[tq.v[k]], f.keypoints[tc.v[k]]);
                         if (sim / 3.0 <= prm_.btc_similarity) continue;
-                        pairs[e.frame].emplace_back(static_cast<int>(qt), e.tri);
+                        pairs[frm_tri.frame].emplace_back(static_cast<int>(qt), frm_tri.tri);
                     }
                 }
             }

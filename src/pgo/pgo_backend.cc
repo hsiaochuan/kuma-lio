@@ -69,12 +69,12 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& init_pose, const 
     }
 
     std::vector<Vec3> kf_points;
-    PlaneCells cells;
-    SealKeyframe(cor_pose, &kf_points, &cells);
+    std::vector<PointCluster> cell_pcs;
+    SealKeyframe(cor_pose, &kf_points, &cell_pcs);
     ++kf_since_opt_;
 
     LoopEdge loop;
-    if (!detector_.Detect(kfs_, kf_points, cells, &loop)) return;
+    if (!detector_.Detect(kfs_, kf_points, cell_pcs, &loop)) return;
     graph_.AddLoop(kfs_[loop.from].scan_id, kfs_[loop.to].scan_id, loop.T_from_to);
     loops_.push_back(loop);
     LOG(INFO) << "PGO: " << LoopSourceName(loop.source) << " loop kf " << loop.from << " -> " << loop.to << " drift "
@@ -85,7 +85,8 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& init_pose, const 
     if (kf_since_opt_ > prm_.opt_cooldown_kf && loop.drift > prm_.opt_min_drift) Solve();
 }
 
-void PgoBackend::SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Vec3>* kf_points, PlaneCells* cells) {
+void PgoBackend::SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Vec3>* kf_points,
+                              std::vector<PointCluster>* cell_pcs) {
     const size_t first_buf_scan = scan_nodes_.size() - buf_scans_.size();
     for (size_t i = 0; i < buf_scans_.size(); ++i) {
         const Eigen::Isometry3d rel = scan_pose.inverse() * scan_nodes_[first_buf_scan + i].pose;
@@ -102,10 +103,9 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Ve
     kf.travel_len = travel_len_;
     kf.pose = scan_pose;
     const std::vector<Vec3> cloud = UniformSample(*kf_points, prm_.kf_ds_voxel);
-    *cells = ExtractPlaneCells(cloud, prm_);
+    kf.planes = ExtractPlaneCells(cloud, prm_, cell_pcs);
     kf.points = static_cast<int>(cloud.size());
-    kf.planes = PlanePoints(*cells);
-    kfs_.push_back(kf);
+    kfs_.push_back(std::move(kf));
 }
 
 void PgoBackend::Finish() {

@@ -65,7 +65,7 @@ struct PgoParam {
     double btc_merge_normal = 0.1;  // |n1 -+ n2| below which two plane cells may merge
     double btc_merge_dist = 0.3;    // [m] and the largest centre-to-plane distance either way
     int btc_ref_planes = 2;         // M, the largest merged planes the cloud is projected onto
-    double btc_pixel = 0.5;         // [m] pixel of the height-encoded image
+    double btc_pixel_res = 0.5;         // [m] pixel of the height-encoded image
     double btc_layer_height = 0.1;  // [m] one bit of the binary descriptor
     double btc_height_min = 0.0;    // [m] height band above the reference plane, at most 64 layers
     double btc_height_max = 5.0;    // [m]
@@ -74,9 +74,9 @@ struct PgoParam {
     double btc_nms_radius = 2.0;    // [m] 3D non-maximum suppression among keypoints
     int btc_max_keypoints = 100;    // strongest keypoints kept per keyframe
     int btc_near_num = 15;          // K, nearest keypoints a triangle is formed from
-    double btc_side_min = 2.0;      // [m]
-    double btc_side_max = 50.0;     // [m]
-    double btc_side_res = 0.2;      // [m] hash quantization of the sides
+    double btc_side_len_min = 2.0;      // [m]
+    double btc_side_len_max = 50.0;     // [m]
+    double btc_side_len_res = 0.2;      // [m] hash quantization of the sides
     double btc_side_tol = 0.01;     // sides match within this fraction of |side|
     double btc_similarity = 0.7;    // sigma_s, mean bit similarity of the three vertices
     int btc_candidates = 20;        // kappa, top-voted keyframes RANSACed
@@ -114,12 +114,14 @@ struct PgoParam {
     double odom_var_trans = 1e-5;  // [m^2]
 };
 
-// A plane centre and its normal, in the keyframe's own body frame.
-struct PlanePoint {
+// A flat `plane_voxel` cell in the keyframe's own body frame: the centre + normal the loop ICP and
+// the plane overlap use.  Its point statistics are not kept: only BTC needs them, once, at sealing.
+struct PlaneCell {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Vec3 p = Vec3::Zero();
-    Vec3 n = Vec3::Zero();
+    Vec3 center = Vec3::Zero();
+    Vec3 normal = Vec3::Zero();
 };
+using PlaneCells = std::vector<PlaneCell, Eigen::aligned_allocator<PlaneCell>>;
 
 // One scan: a node of the pose graph.
 struct ScanNode {
@@ -139,7 +141,7 @@ struct KeyFrame {
     double travel_len = 0.0;  // travelled distance at this keyframe [m]
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     int points = 0;                  // in the downsampled cloud the planes came from
-    std::vector<PlanePoint> planes;  // keyframe body frame, so a pose change costs nothing
+    PlaneCells planes;               // keyframe body frame, so a pose change costs nothing
 };
 
 struct LoopEdge {

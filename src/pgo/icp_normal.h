@@ -43,8 +43,7 @@ struct IcpResult {
 };
 
 // Refines `T_tar_src` so that `src` lands on `tar`, both in their own keyframe frames.
-IcpResult IcpNormal(const std::vector<PlanePoint>& src, const std::vector<PlanePoint>& tar,
-                    const PgoParam& prm, Eigen::Isometry3d* T_tar_src);
+IcpResult IcpNormal(const PlaneCells& src, const PlaneCells& tar, const PgoParam& prm, Eigen::Isometry3d* T_tar_src);
 
 }  // namespace pgo
 }  // namespace kuma_lio

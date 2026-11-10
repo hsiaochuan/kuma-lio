@@ -46,7 +46,7 @@ struct BtcKeypoint {
 // Three keypoints, sides sorted l1 <= l2 <= l3; v[k] is the vertex opposite side 2-k, so the
 // vertices of two triangles with the same sides correspond index by index.
 struct BtcTriangle {
-    Eigen::Vector3f side_len = Eigen::Vector3f::Zero();  // [m]
+    Eigen::Vector3f side_lens = Eigen::Vector3f::Zero();  // [m]
     std::array<int, 3> v{{0, 0, 0}};                 // indices into the frame's keypoints
 };
 
@@ -55,12 +55,14 @@ struct BtcFrame {
     std::vector<BtcTriangle> triangles;
 };
 
-// Builds the descriptors of one keyframe from its merged cloud and the plane cells of that cloud.
-BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cells, const PgoParam& prm);
+// Builds the descriptors of one keyframe from its merged cloud and the plane cells of that cloud,
+// with their point statistics `cell_pcs` (ExtractPlaneCells).
+BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cells,
+                       const std::vector<PointCluster>& cell_pcs, const PgoParam& prm);
 
 // Fraction of `src` planes that, moved by T_tar_src, land on a `tar` plane (paper eq. 8-9).
-double PlaneOverlap(const std::vector<PlanePoint>& src, const std::vector<PlanePoint>& tar,
-                    const Eigen::Isometry3d& T_tar_src, const PgoParam& prm);
+double PlaneOverlap(const PlaneCells& src, const PlaneCells& tar, const Eigen::Isometry3d& T_tar_src,
+                    const PgoParam& prm);
 
 struct BtcCandidate {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -85,14 +87,14 @@ class BtcDatabase {
     const BtcFrame& frame(int id) const { return btc_frames_[id]; }
 
    private:
-    struct Entry {
+    struct FrameTri {
         int frame;
         int tri;  // index into frames_[frame].triangles
     };
 
     PgoParam prm_;
     std::vector<BtcFrame> btc_frames_;
-    std::unordered_map<VOXEL_LOCATION, std::vector<Entry>> table_;
+    std::unordered_map<VOXEL_LOCATION, std::vector<FrameTri>> sl_table_;
 };
 
 }  // namespace pgo
