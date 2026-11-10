@@ -22,7 +22,9 @@
 
 #pragma once
 
-#include <memory>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/Values.h>
+
 #include <vector>
 
 #include "pgo/pgo_types.h"
@@ -32,8 +34,7 @@ namespace pgo {
 
 class PoseGraph {
    public:
-    explicit PoseGraph(const PgoParam& prm);
-    ~PoseGraph();
+    explicit PoseGraph(const PgoParam& prm) : prm_(prm) {}
 
     // Appends node `index` at `pose`.  The first node also gets the prior; every later one gets
     // the sequential edge from its predecessor, weighted by that predecessor's `v6`.
@@ -47,9 +48,9 @@ class PoseGraph {
     int num_loops() const { return num_loops_; }
 
    private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
     PgoParam prm_;
+    gtsam::NonlinearFactorGraph graph_;
+    gtsam::Values initial_;  // every node; after a solve, the solved poses
     int num_loops_ = 0;
 };
 

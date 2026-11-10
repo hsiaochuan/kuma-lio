@@ -121,7 +121,6 @@ void PgoBackend::Solve() {
 
     if (!graph_.Solve(&poses)) return;
 
-    // write the solved poses back to the scan nodes and the keyframes riding on them
     for (size_t i = 0; i < scan_nodes_.size(); ++i) scan_nodes_[i].pose = poses[i];
     dx_ = scan_nodes_.back().pose * init_poses_.back().inverse();
     for (KeyFrame& kf : kfs_) kf.pose = scan_nodes_[kf.scan_id].pose;
