@@ -1426,7 +1426,7 @@ void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr& 
     sol.type = 0;
 }
 bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& nav_fname, const std::string& sol_fname) {
-    gtime_t ts{}, te{};  // zero epochs disable the time window filter
+    gtime_t ts{}, te{};  // zero disable the time window filter
 
     // rcv index 1 for the observation file; the navigation file carries no receiver data.
     if (readrnxt(obs_fname.c_str(), 1, ts, te, 0.0, "", &obss, &nav, nullptr) <= 0) {
@@ -1445,6 +1445,10 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
         resple_lio_->obss = obss;
         resple_lio_->nav = nav;
     }
+    if (fast_lio_) {
+        fast_lio_->obss = obss;
+        fast_lio_->nav = nav;
+    }
 
     LOG(INFO) << "read " << obss.n << " observations, " << nav.n << " eph, " << nav.ng << " geph, " << nav.ns
               << " seph";
@@ -1454,22 +1458,22 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
     }
     CHECK(!std::isnan(global_offset_time));
     for (int i = 0; i < obss.n;) {
-        obss_id_buffer_.push_back(i);
+        obss_id_buff_.push_back(i);
         gtime_t utc = gpst2utc(obss.data[i].time);
         double utc_d = double(utc.time) + utc.sec;
-        obss_time_buffer_.push_back(S_TO_NS(utc_d - global_offset_time));
+        obss_time_ns_buff_.push_back(S_TO_NS(utc_d - global_offset_time));
         int j = i;
         while (std::abs(timediff(obss.data[j].time, obss.data[i].time)) < DTTOL && j < obss.n) ++j;
         i = j;
     }
     std::vector<std::string> files{obs_fname, nav_fname};
-    std::vector<const char*> infile;
-    for (const auto& f : files) infile.push_back(f.c_str());
+    std::vector<const char*> infiles;
+    for (const auto& f : files) infiles.push_back(f.c_str());
 
     // position
     filopt_t filopt{};
-    const int ret = postpos(ts, te, 0.0, 0.0, &param->prcopt, &param->solopt, &filopt, infile.data(),
-                            static_cast<int>(infile.size()), sol_fname.c_str(), "", "");
+    const int ret = postpos(ts, te, 0.0, 0.0, &param->prcopt, &param->solopt, &filopt, infiles.data(),
+                            static_cast<int>(infiles.size()), sol_fname.c_str(), "", "");
     if (ret != 0) {
         LOG(ERROR) << "postpos failed with status " << ret;
         return false;
@@ -1479,8 +1483,6 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
 
 bool LaserMapping::Init(const std::string& config_fname, const std::string& camera_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
-    // Eigen would otherwise split every large product over all cores (the build has -fopenmp): a thread-team
-    // fork/join per filter iteration, which costs far more than the product itself at a few hundred rows
     Eigen::setNbThreads(1);
     param = std::make_shared<LaserMappingParam>();
     param->LoadFromYaml(config_fname);
@@ -1569,9 +1571,9 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
     // GNSS
     std::vector<int> obss_ids;
     std::vector<std::int64_t> obss_time_ns;
-    for (int i = 0; i < obss_id_buffer_.size(); ++i) {
-        int obs_id = obss_id_buffer_[i];
-        std::int64_t obs_time_ns = obss_time_buffer_[i];
+    for (int i = 0; i < obss_id_buff_.size(); ++i) {
+        int obs_id = obss_id_buff_[i];
+        std::int64_t obs_time_ns = obss_time_ns_buff_[i];
         if (obs_time_ns < window_begin_ns) continue;
         if (obs_time_ns >= window_end_ns) break;
         obss_ids.push_back(obs_id);
@@ -1625,9 +1627,9 @@ LaserMapping::DynamicInitResult LaserMapping::TryDynamicInit(std::int64_t window
     while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < consumed_until) {
         imu_buffer_.pop_front();
     }
-    while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < consumed_until) {
-        obss_time_buffer_.pop_front();
-        obss_id_buffer_.pop_front();
+    while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() < consumed_until) {
+        obss_time_ns_buff_.pop_front();
+        obss_id_buff_.pop_front();
     }
 
     if_inertial_initialized = true;
@@ -1713,8 +1715,8 @@ void LaserMapping::RunRESPLE() {
         std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
         std::int64_t first_imu_time_ns = imu_buffer_.front().time_ns;
         std::int64_t first_time_ns = std::max(first_point_time_ns, first_imu_time_ns);
-        if (!obss_time_buffer_.empty()) {
-            first_time_ns = std::max(first_time_ns, obss_time_buffer_.front());
+        if (!obss_time_ns_buff_.empty()) {
+            first_time_ns = std::max(first_time_ns, obss_time_ns_buff_.front());
         }
         // clear the data before the first time
         while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < first_time_ns) {
@@ -1723,9 +1725,9 @@ void LaserMapping::RunRESPLE() {
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < first_time_ns) {
             imu_buffer_.pop_front();
         }
-        while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < first_time_ns) {
-            obss_time_buffer_.pop_front();
-            obss_id_buffer_.pop_front();
+        while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() < first_time_ns) {
+            obss_time_ns_buff_.pop_front();
+            obss_id_buff_.pop_front();
         }
         if (points_buffer_.empty() || imu_buffer_.empty()) {
             LOG(INFO) << "dynamic init buffer is empty";
@@ -1752,9 +1754,9 @@ void LaserMapping::RunRESPLE() {
                 while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < drop_until) {
                     imu_buffer_.pop_front();
                 }
-                while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < drop_until) {
-                    obss_time_buffer_.pop_front();
-                    obss_id_buffer_.pop_front();
+                while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() < drop_until) {
+                    obss_time_ns_buff_.pop_front();
+                    obss_id_buff_.pop_front();
                 }
                 while (!image_buff_.empty() && image_buff_.front().time_ns < drop_until) {
                     image_buff_.pop_front();
@@ -1808,9 +1810,9 @@ void LaserMapping::RunRESPLE() {
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < resple_lio_->spl.maxTimeNs()) {
             imu_buffer_.pop_front();
         }
-        while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < resple_lio_->spl.maxTimeNs()) {
-            obss_time_buffer_.pop_front();
-            obss_id_buffer_.pop_front();
+        while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() < resple_lio_->spl.maxTimeNs()) {
+            obss_time_ns_buff_.pop_front();
+            obss_id_buff_.pop_front();
         }
         while (!image_buff_.empty() && image_buff_.front().time_ns < resple_lio_->spl.maxTimeNs()) {
             image_buff_.pop_front();
@@ -1933,14 +1935,30 @@ void LaserMapping::PublishROSMsgFastLio() {
     }
     PublishFrustrum(time_ns);
 }
+void LaserMapping::ClearMeasuresBefore(const std::int64_t& time_ns) {
+    while (!image_buff_.empty() && image_buff_.front().time_ns <= time_ns) {
+        image_buff_.pop_front();
+    }
+    while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() <= time_ns) {
+        points_buffer_.pop_front();
+    }
+    while (!imu_buffer_.empty() && imu_buffer_.front().time_ns <= time_ns) {
+        imu_buffer_.pop_front();
+    }
+    while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() <= time_ns) {
+        obss_time_ns_buff_.pop_front();
+        obss_id_buff_.pop_front();
+    }
+}
 bool LaserMapping::CollectMeasuresFastLio() {
     std::int64_t meas_end;
+    ClearMeasuresBefore(fast_lio_->last_end_ns);
     if (param->fast_lio_.mode == FastLioMode::LIVO) {
-        while (!image_buff_.empty() && image_buff_.front().time_ns <= fast_lio_->last_end_ns) {
-            image_buff_.pop_front();
-        }
         if (image_buff_.empty()) return false;
         meas_end = image_buff_.front().time_ns;
+    } else if (param->fast_lio_.mode == FastLioMode::LIGO && !obss_time_ns_buff_.empty() &&
+               obss_time_ns_buff_.front() - fast_lio_->last_end_ns <= S_TO_NS(1.5 * param->lba_.frame_dt)) {
+        meas_end = obss_time_ns_buff_.front();
     } else {
         meas_end = fast_lio_->last_end_ns + S_TO_NS(param->lba_.frame_dt);
     }
@@ -1960,7 +1978,13 @@ bool LaserMapping::CollectMeasuresFastLio() {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
     }
-    // no image processing yet, the frame only carries it
+    measures_.obs_id = -1;
+    if (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() <= meas_end) {
+        measures_.obs_id = obss_id_buff_.front();
+        measures_.obs_time_ns = obss_time_ns_buff_.front();
+        obss_id_buff_.pop_front();
+        obss_time_ns_buff_.pop_front();
+    }
     measures_.rgb_image_ = RgbImage();
     while (!image_buff_.empty() && image_buff_.front().time_ns <= meas_end) {
         measures_.rgb_image_ = std::move(image_buff_.front());
@@ -1991,11 +2015,11 @@ bool LaserMapping::CollectMeasures(const std::int64_t& meas_end) {
     }
     // process the raw measurement
     measures_.obs_id = -1;
-    while (!obss_time_buffer_.empty() && obss_time_buffer_.front() < meas_end) {
-        measures_.obs_id = obss_id_buffer_.front();
-        measures_.obs_time_ns = obss_time_buffer_.front();
-        obss_id_buffer_.pop_front();
-        obss_time_buffer_.pop_front();
+    while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() < meas_end) {
+        measures_.obs_id = obss_id_buff_.front();
+        measures_.obs_time_ns = obss_time_ns_buff_.front();
+        obss_id_buff_.pop_front();
+        obss_time_ns_buff_.pop_front();
     }
     // the latest image up to the window's end; an image can arrive after its window, so its time may be older
     measures_.rgb_image_ = RgbImage();

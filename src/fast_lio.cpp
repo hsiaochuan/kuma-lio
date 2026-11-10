@@ -324,6 +324,7 @@ void FastLio::ProcessSubFrames(MeasureGroup& measures, int n) {
         std::vector<Vec3> down = UniformSample(scan, fast_opt.down_size);
         if (static_cast<int>(down.size()) < kMinScanPoints / n) down = UniformSample(scan, fast_opt.down_size / 2);
         SetPoints(down);
+        if (last && !tdcp_epoch_.empty()) PrepareTdcp();
         if (!points.empty()) {
             if (IteratedUpdate()) {
                 if (degrade_cnt_ > 0) degrade_cnt_--;
@@ -377,6 +378,17 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     Timer timer;
     for (const Imu& imu : measures.imu_) lba->AddImu(imu.time_ns, imu.angular_velocity, imu.linear_acceleration);
 
+    // LIGO: the frame ends on a GNSS epoch; its TDCP rows join the update at the frame end
+    sol_t sol{};
+    bool gnss_epoch_ok = false;
+    tdcp_epoch_.clear();
+    tdcp_.clear();
+    if (param->fast_lio_.mode == FastLioMode::LIGO && measures.obs_id >= 0 && obss.n > 0) {
+        CHECK_EQ(measures.obs_time_ns, measures.mea_end_);
+        gnss_epoch_ok = ProcessGnssEpoch(obss, nav, *param, sat_tracks_, measures.obs_id, measures.obs_time_ns,
+                                         rtk_state.aligned && param->tdcp_enable, sol, &tdcp_epoch_);
+    }
+
     const int n_sub = SubFrameCount(measures);
     if (n_sub <= 1) {
         std::vector<Vec3> scan;
@@ -386,6 +398,7 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
         std::vector<Vec3> down = UniformSample(scan, down_size);
         if (static_cast<int>(down.size()) < kMinScanPoints) down = UniformSample(scan, down_size / 2);
         SetPoints(down);
+        if (!tdcp_epoch_.empty()) PrepareTdcp();
 
         if (!points.empty()) {
             if (IteratedUpdate()) {
@@ -418,4 +431,121 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
               << x.ba.transpose();
 }
 
+double FastLio::AntennaRange(const Mat3& R, const Vec3& p, const Vec3& sv_pos, bool nav_cols,
+                             Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const {
+    const Vec3& lever = param->level_arm;
+    const Vec3 p_ant = R * lever + p;
+    const Mat3 rot = rtk_state.RotEcefEnu();
+    const Vec3 p_ecef = rot * p_ant + rtk_state.t_ecef_enu;
+    double e[3];
+    const double range = geodist(sv_pos.data(), p_ecef.data(), e);
+    if (!H) return range;
+
+    // d(range)/d(receiver ECEF), Sagnac term included
+    const Eigen::RowVector3d d_range = -Eigen::Map<const Vec3>(e).transpose() +
+                                       Eigen::RowVector3d(-OMGE / CLIGHT * sv_pos.y(), OMGE / CLIGHT * sv_pos.x(), 0.0);
+    const Eigen::RowVector3d d_range_local = d_range * rot;
+    H->setZero();
+    if (nav_cols) {
+        // R Exp(d theta) lever = R lever - R [lever]x d theta
+        H->block<1, 3>(0, 0) = -d_range_local * R * Hat(lever);
+        H->block<1, 3>(0, 3) = d_range_local;
+    }
+    // R_init Rz(yaw) v, d/d(yaw) = R (ez x v)
+    (*H)(0, FastLioState::DIM + RTKState::YAW) = (d_range_local * Vec3::UnitZ().cross(p_ant)).value();
+    H->block<1, 3>(0, FastLioState::DIM + RTKState::TRN) = d_range;
+    return range;
+}
+
+double FastLio::TdcpResidual(const TdcpObs& obs,
+                             Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const {
+    // lambda*dPhi + c*d(dts) = (range_{k+1} - range_k) + (clk_{k+1} - clk_k): the pose and the clocks of epoch k
+    // are held at the anchor, only the extrinsic acts on both ranges
+    Mat3 R_anchor;
+    Vec3 p_anchor;
+    Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM> H_anchor;
+    const double range = AntennaRange(x.R, x.p, obs.sv_pos, true, H);
+    const double range_anchor = AntennaRange(R_anchor, p_anchor, obs.sv_pos_anchor, false, H ? &H_anchor : nullptr);
+    const int s = obs.sys_idx;
+    const double pred = range - range_anchor + rtk_state.clk(s) - rtk_state.clk_anchor(s);
+    if (H) {
+        *H -= H_anchor;
+        (*H)(0, FastLioState::DIM + RTKState::CLK + s) = 1.0;
+    }
+    return obs.cp_diff + CLIGHT * (obs.sv_dt - obs.sv_dt_anchor) - pred;
+}
+
+void FastLio::PrepareTdcp() {
+    // Residual without the receiver clock step.  The step is common to every system (the inter-system biases
+    // cancel between epochs), so the median across satellites estimates it.
+    constexpr int N = FastLioState::DIM;
+    constexpr int NG = RTKState::DIM;
+    using RowJ = Eigen::Matrix<double, 1, N + NG>;
+    Eigen::Matrix<double, N + NG, N + NG> cov;
+    cov.topLeftCorner<N, N>() = x.cov;
+    cov.topRightCorner<N, NG>() = rtk_state.P_ng;
+    cov.bottomLeftCorner<NG, N>() = rtk_state.P_ng.transpose();
+    cov.bottomRightCorner<NG, NG>() = rtk_state.P;
+
+    std::vector<TdcpObs> rows;
+    std::vector<double> res, var_innov;
+    Mat3 R_anchor;
+    Vec3 p_anchor;
+    for (TdcpObs& obs : tdcp_epoch_) {
+        // the phase noise alone ignores multipath, the anchor pose error and the antenna-to-IMU mismatch:
+        // tdcp_std at zenith for each of the two epochs, scaled by 1/sin(el), as the offline graph weighs them
+        if (param->tdcp_std > 0.0) obs.var = 2.0 * (param->tdcp_std / obs.sin_el) * (param->tdcp_std / obs.sin_el);
+        RowJ H_cur, H_anchor;
+        const double range = AntennaRange(x.R, x.p, obs.sv_pos, true, &H_cur);
+        const double range_anchor = AntennaRange(R_anchor, p_anchor, obs.sv_pos_anchor, false, &H_anchor);
+        rows.push_back(obs);
+        res.push_back(obs.cp_diff + CLIGHT * (obs.sv_dt - obs.sv_dt_anchor) - (range - range_anchor));
+        // innovation variance without the clock column: the median below takes the clock step out
+        const RowJ h = H_cur - H_anchor;
+        var_innov.push_back((h * cov * h.transpose())(0) + obs.var);
+    }
+    const int num = static_cast<int>(rows.size());
+    tdcp_.clear();
+    if (num == 0) return;
+    std::vector<double> sorted = res;
+    std::nth_element(sorted.begin(), sorted.begin() + num / 2, sorted.end());
+    const double clk_step = sorted[num / 2];
+
+    // hold the clocks of epoch k as the anchor and predict epoch k+1 from the median step
+    rtk_state.clk_anchor = rtk_state.clk;
+    rtk_state.clk.array() += clk_step;
+
+    // LIVO-prior chi-square test (FAST-LIVGO eq. 14) on each clock-free innovation
+    double sq_sum = 0.0;
+    for (int i = 0; i < num; ++i) {
+        const double r = res[i] - clk_step;
+        if (r * r / var_innov[i] < param->tdcp_chi2 && std::abs(r) < param->tdcp_outlier) {
+            tdcp_.push_back(rows[i]);
+            sq_sum += r * r;
+        }
+    }
+    const int num_valid = static_cast<int>(tdcp_.size());
+    LOG(INFO) << "TDCP: " << num_valid << "/" << num << " valid, rms " << std::sqrt(sq_sum / std::max(num_valid, 1))
+              << " m, clock step " << clk_step << " m, yaw_ecef_enu " << rtk_state.yaw;
+    if (num_valid < param->tdcp_min_sat) tdcp_.clear();
+}
+
+void FastLio::InitGnss(const sol_t& sol) {
+    // pntpos reports the GPS clock and the GLO/GAL/BDS offsets from it
+    rtk_state.clk(0) = CLIGHT * sol.dtr[0];
+    rtk_state.clk(1) = CLIGHT * (sol.dtr[0] + sol.dtr[1]);
+    rtk_state.clk(2) = CLIGHT * (sol.dtr[0] + sol.dtr[2]);
+    rtk_state.clk(3) = CLIGHT * (sol.dtr[0] + sol.dtr[3]);
+    rtk_state.clk_anchor = rtk_state.clk;
+    rtk_state.yaw = 0.0;
+
+    rtk_state.P.setZero();
+    rtk_state.P.block<4, 4>(RTKState::CLK, RTKState::CLK) =
+        param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
+    rtk_state.P(RTKState::YAW, RTKState::YAW) = param->std_ext_yaw_init * param->std_ext_yaw_init;
+    rtk_state.P.block<3, 3>(RTKState::TRN, RTKState::TRN) =
+        param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
+    rtk_state.P_ng.setZero();
+    rtk_state.aligned = true;
+}
 }  // namespace kuma_lio

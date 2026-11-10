@@ -26,8 +26,12 @@
 #include <memory>
 #include <vector>
 
+#include <deque>
+#include <unordered_map>
+
 #include "common_lib.h"
 #include "eigen_type.h"
+#include "gnss_epoch.h"
 #include "laser_mapping_param.h"
 #include "local_ba.h"
 
@@ -77,6 +81,35 @@ struct FastLioState {
     MatN cov;
 };
 
+struct RTKState {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    static constexpr int DIM = 8;  // clk (4) | yaw | t_ecef_enu (3)
+    static constexpr int CLK = 0, YAW = 4, TRN = 5;
+    using Vec = Eigen::Matrix<double, DIM, 1>;
+
+    Vec Vector() const {
+        Vec v;
+        v << clk, yaw, t_ecef_enu;
+        return v;
+    }
+    void SetVector(const Vec& v) {
+        clk = v.segment<4>(CLK);
+        yaw = v(YAW);
+        t_ecef_enu = v.segment<3>(TRN);
+    }
+    // R_ecef_enu = R_ecef_enu_init * Rz(yaw)
+    Mat3 RotEcefEnu() const { return R_ecef_enu_init * Eigen::AngleAxisd(yaw, Vec3::UnitZ()).toRotationMatrix(); }
+
+    bool aligned = false;
+    Vec4 clk = Vec4::Zero();         // c * receiver clock [m]: GPS, GLO, GAL, BDS
+    Vec4 clk_anchor = Vec4::Zero();  // the clocks at the anchor epoch, held fixed
+    double yaw = 0.0;
+    Vec3 t_ecef_enu = Vec3::Zero();
+    Mat3 R_ecef_enu_init = Mat3::Identity();
+    Eigen::Matrix<double, DIM, DIM> P = Eigen::Matrix<double, DIM, DIM>::Identity();
+    Eigen::Matrix<double, FastLioState::DIM, DIM> P_ng = Eigen::Matrix<double, FastLioState::DIM, DIM>::Zero();
+};
+
 struct FastLioPoint {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     Vec3 body = Vec3::Zero();   // undistorted to the end of the frame, IMU frame
@@ -101,11 +134,16 @@ class FastLio {
 
     FastLioState x;
     Vec3 gravity = Vec3(0, 0, GRAVITY_NORM);  // the sign of RESPLE_LIO::gravity: minus the acceleration of gravity
-    int64_t last_end_ns = -1;
+    int64_t last_end_ns = 0;
     Eigen::aligned_vector<FastLioPoint> points;  // of the last frame
     std::shared_ptr<LaserMappingParam> param;
     // Local BA; its voxel map is the local map the EKF matches against.
     std::unique_ptr<LocalBA> lba;
+
+    // LIGO: the RINEX observations and ephemerides (LaserMapping::ReadObsNav), and the GNSS state.
+    obs_t obss{};
+    nav_t nav{};
+    RTKState rtk_state;
 
    private:
     // State of the propagation at an IMU sample, with what holds until the next one.
@@ -131,11 +169,29 @@ class FastLio {
     void ProcessSubFrames(MeasureGroup& measures, int n);
     void SetPoints(const std::vector<Vec3>& scan);
     int Match();
-    // Voxel-SLAM lio_state_estimation; false when the matched planes leave a direction unobserved.
+    // Voxel-SLAM lio_state_estimation: LIO on the nav state, or, once the GNSS is aligned, on the nav and GNSS states
+    // together with the valid TDCP rows in tdcp_ when there are any (LIGO).  False when the matched planes leave a
+    // direction unobserved.
     bool IteratedUpdate();
+
+    // GNSS (LIGO), after RESPLE_LIO::ProcessGnssEpoch, PrepareTdCpEpoch and InitGnssState.
+    // Range from the antenna at the IMU pose (R, p) to `sv_pos`; H, when given, is d(range)/d(nav error, GNSS state)
+    // with the nav columns only when `nav_cols`.
+    double AntennaRange(const Mat3& R, const Vec3& p, const Vec3& sv_pos, bool nav_cols,
+                        Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
+    // TDCP residual (measured minus predicted) of one row at the current state, and its Jacobian.
+    double TdcpResidual(const TdcpObs& obs, Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
+    // The epoch's clock step from the median clock-free residual of tdcp_epoch_, then the chi-square test on the
+    // prior; tdcp_ gets the rows that pass, or stays empty below tdcp_min_sat.  The state must be at the epoch.
+    void PrepareTdcp();
+    void InitGnss(const sol_t& sol);
 
     Imu last_imu_;
     int degrade_cnt_ = 0;
+    std::unordered_map<int, SatTrack> sat_tracks_;
+    std::vector<TdcpObs> tdcp_epoch_;  // this frame's TDCP rows, epoch at the frame end
+    std::vector<TdcpObs> tdcp_;        // the valid ones, set by PrepareTdcp just before the frame-end update
+
     FastLioState::MatN phi_ = FastLioState::MatN::Identity();  // error-state transition of the last Propagate
 };
 

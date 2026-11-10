@@ -71,6 +71,7 @@ class LaserMapping {
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     bool CollectMeasures(const std::int64_t& meas_end);
     // The next frame of the FAST-LIO front end: lba.frame_dt long, or up to the next image.
+    void ClearMeasuresBefore(const std::int64_t& time_ns);
     bool CollectMeasuresFastLio();
     void PublishOdometry(const Eigen::Isometry3d& pub_pose, std::int64_t time_ns);
     void PublishFrameWorld();
@@ -105,8 +106,8 @@ class LaserMapping {
     std::deque<RgbImage> image_buff_;
     obs_t obss{};
     nav_t nav{};
-    std::deque<int64_t> obss_time_buffer_;
-    std::deque<int> obss_id_buffer_;
+    std::deque<int64_t> obss_time_ns_buff_;
+    std::deque<int> obss_id_buff_;
 
     MeasureGroup measures_;
     Trajectory trajectory_;
