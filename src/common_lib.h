@@ -42,6 +42,8 @@
 #define S_TO_NS(x) (int64_t((x) * 1e9))
 #define NS_TO_S(x) ((x) * 1e-9)
 namespace kuma_lio {
+
+extern double global_offset_time;
 class VOXEL_LOCATION {
    public:
     int64_t x;

@@ -87,11 +87,13 @@ add_library(${PROJECT_NAME}
         src/resple_lio.cpp
         src/gnss_epoch.cpp
         src/fast_lio.cpp
+        src/loop_closure.cpp
         src/timer.cpp
         )
 
 target_include_directories(${PROJECT_NAME} PRIVATE third_party/stb)
 target_link_libraries(${PROJECT_NAME}
+        faster_pgo
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
         ${CERES_LIBRARIES}
@@ -109,8 +111,10 @@ target_link_libraries(run_mapping_offline
         ${PROJECT_NAME}
         )
 
-# pose graph optimization: its own library and executable, nothing here depends on the odometry
+# pose graph optimization: its own library and executable, nothing here depends on the odometry;
+# the odometry library links it for the coupled loop closure (src/loop_closure.cpp)
 add_library(faster_pgo STATIC
+        src/pgo/pgo_param.cc
         src/pgo/plane_cloud.cc
         src/pgo/icp_normal.cc
         src/pgo/btc.cc
@@ -120,6 +124,7 @@ add_library(faster_pgo STATIC
         src/stamp_pose.cpp
         src/timer.cpp
         )
+set_target_properties(faster_pgo PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # common_lib.h (VOXEL_LOCATION) includes the RTKLIB headers
 target_link_libraries(faster_pgo
         rtklib

@@ -196,9 +196,9 @@ void LocalBA::AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc) {
     imu_buf_.push_back(imu);
 }
 
-bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points,
-                       const Vec3& gravity) {
+bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, std::vector<LbaPoint> points, const Vec3& gravity) {
     g_ = -gravity;
+    has_marg_ = false;
 
     Frame frame;
     frame.id = frames_.empty() ? 0 : frames_.back().id + 1;
@@ -226,10 +226,11 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
                            NS_TO_S(time_ns - cursor));
         }
     }
+    frame.points = std::move(points);
     frames_.push_back(std::move(frame));
     Frame& cur = frames_.back();
     Timer timer;
-    InsertFrame(cur, points);
+    InsertFrame(cur, cur.points);
     const double t_insert = timer.ElapsedMiniSeconds(true);
 
     Refresh(true);
@@ -238,15 +239,64 @@ bool LocalBA::AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<
     if (full) Optimize();
     const double t_optimize = timer.ElapsedMiniSeconds(true);
     if (full) {
-        Marginalize(frames_.front());
+        Frame& oldest = frames_.front();
+        Marginalize(oldest);
+        marg_.id = oldest.id;
+        marg_.time_ns = oldest.time_ns;
+        marg_.x = oldest.x;
+        marg_.points = std::move(oldest.points);
+        has_marg_ = true;
         frames_.pop_front();
         Refresh();  // the planes the odometry sees follow the refined poses
         if (cur.id % 50 == 0) Slide(frames_.back().x.p);
     }
     LOG(INFO) << "LBA time [ms]: insert " << t_insert << " refresh " << t_refresh << " optimize " << t_optimize
-              << " marginalize+refresh " << timer.ElapsedMiniSeconds() << " points " << points.size() << " active "
-              << active_.size();
+              << " marginalize+refresh " << timer.ElapsedMiniSeconds() << " points " << cur.points.size()
+              << " active " << active_.size();
     return full;
+}
+
+bool LocalBA::TakeMarginalized(MargScan* scan) {
+    if (!has_marg_) return false;
+    *scan = std::move(marg_);
+    marg_ = MargScan();
+    has_marg_ = false;
+    return true;
+}
+
+std::vector<LocalBA::MargScan> LocalBA::WindowScans() const {
+    std::vector<MargScan> scans;
+    scans.reserve(frames_.size());
+    for (const Frame& f : frames_) {
+        MargScan scan;
+        scan.id = f.id;
+        scan.time_ns = f.time_ns;
+        scan.x = f.x;
+        scan.points = f.points;
+        scans.push_back(std::move(scan));
+    }
+    return scans;
+}
+
+void LocalBA::ApplyCorrection(const Eigen::Isometry3d& dx) {
+    const Mat3 R = dx.linear();
+    const Vec3 t = dx.translation();
+    for (Frame& f : frames_) {
+        f.x.R = R * f.x.R;
+        f.x.p = R * f.x.p + t;
+        f.x.v = R * f.x.v;
+    }
+}
+
+void LocalBA::Rebuild(const std::vector<Vec3>& world_points, double var) {
+    std::unordered_map<VOXEL_LOCATION, Root>().swap(map_);
+    active_.clear();
+    factors_.clear();
+    AddFixedPoints(world_points, var);
+    for (const Frame& f : frames_) InsertFrame(f, f.points);
+    Refresh();
+    LOG(INFO) << "LBA: map rebuilt from " << world_points.size() << " fixed points and " << frames_.size()
+              << " window frames: " << map_.size() << " voxels";
 }
 
 LocalBA::Cell& LocalBA::CellAt(const Vec3& pw) {
@@ -268,13 +318,17 @@ LocalBA::Cell& LocalBA::CellAt(const Vec3& pw) {
     return *cell;
 }
 
-void LocalBA::InitMap(const std::vector<Vec3>& points, double var) {
+void LocalBA::AddFixedPoints(const std::vector<Vec3>& points, double var) {
     for (const Vec3& pw : points) {
         Cell& cell = CellAt(pw);
         if (cell.fix.N >= param_.max_fix_points) continue;
         cell.fix.Push(pw);
         AddPointCov(pw, var * Mat3::Identity(), &cell.fix_cov);
     }
+}
+
+void LocalBA::InitMap(const std::vector<Vec3>& points, double var) {
+    AddFixedPoints(points, var);
     Refresh();
 }
 

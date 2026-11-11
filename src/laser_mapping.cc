@@ -39,6 +39,10 @@
 #include "rtklib_func.h"
 namespace fs = boost::filesystem;
 
+namespace kuma_lio {
+double global_offset_time = std::numeric_limits<double>::quiet_NaN();
+}  // namespace kuma_lio
+
 int showmsg(const char* format, ...) { return 0; }
 void settspan(gtime_t ts, gtime_t te) {}
 void settime(gtime_t time) {}
@@ -1481,7 +1485,7 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
     return true;
 }
 
-bool LaserMapping::Init(const std::string& config_fname, const std::string& camera_fname) {
+bool LaserMapping::Init(const std::string& config_fname, const std::string& camera_fname, const std::string& pgo_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
     Eigen::setNbThreads(1);
     param = std::make_shared<LaserMappingParam>();
@@ -1494,8 +1498,9 @@ bool LaserMapping::Init(const std::string& config_fname, const std::string& came
     if (param->front_end == "fastlio") {
         fast_lio_ = std::make_shared<FastLio>();
         fast_lio_->param = param;
-        fast_lio_->Init();
+        fast_lio_->Init(pgo_fname);
     } else {
+        if (!pgo_fname.empty()) LOG(WARNING) << "--pgo_config is only used by front_end: fastlio, ignored";
         resple_lio_ = std::make_shared<RESPLE_LIO>();
         resple_lio_->param = param;
         resple_lio_->Init();
@@ -2187,6 +2192,18 @@ void LaserMapping::Savetrajectory() {
 }
 
 void LaserMapping::Finish() {
+    if (fast_lio_ && fast_lio_->loop) {
+        fast_lio_->loop->Finish(fast_lio_->lba->WindowScans(), global_offset_time);
+        const pgo::ScanNodes& nodes = fast_lio_->loop->backend().nodes();
+        CHECK_EQ(nodes.size(), trajectory_.size());
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            CHECK_LT(std::abs(nodes[i].time - trajectory_[i].time), 1e-6) << "node " << i << " is not frame " << i;
+            trajectory_[i].pose = nodes[i].pose;
+        }
+        const fs::path dir = fs::path(output_dir) / "pgo_coupled";
+        fs::create_directories(dir);
+        fast_lio_->loop->SaveDebug(dir.string());
+    }
     bag_.close();
 }
 }  // namespace kuma_lio

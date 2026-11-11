@@ -39,6 +39,7 @@ DEFINE_double(duration, -1.0, "duration in seconds, -1 means till end");
 DEFINE_bool(dynamic_init, false, "try the dynamic (moving-start) initialization before the stationary one");
 DEFINE_string(camera_fname, "", "camera yaml like config/i2nav_robot_camera.yaml: extrin_R, extrin_t (T_imu_cam) and camera (cameras.txt lines); empty = no camera");
 DEFINE_string(gnss_obs_fname, "", "");
+DEFINE_string(pgo_config, "", "config/pgo.yaml: runs the loop closure coupled to the fastlio front end (Voxel-SLAM); empty = no loop closure");
 DEFINE_string(nav_fname, "", "");
 bool if_exit = false;
 void SigHandle(int sig) {
@@ -65,7 +66,7 @@ int main(int argc, char **argv) {
 
     // laser mapping
     auto laser_mapping = std::make_shared<kuma_lio::LaserMapping>();
-    if (!laser_mapping->Init(config_file,camera_fname)) {
+    if (!laser_mapping->Init(config_file, camera_fname, FLAGS_pgo_config)) {
         LOG(ERROR) << "laser mapping init failed.";
         return -1;
     }
@@ -103,8 +104,8 @@ int main(int argc, char **argv) {
         auto imu_msg = m.instantiate<sensor_msgs::Imu>();
         if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
             double start_offset_time = imu_msg->header.stamp.toSec();
-            CHECK(std::isnan(laser_mapping->global_offset_time));
-            laser_mapping->global_offset_time = start_offset_time;
+            CHECK(std::isnan(kuma_lio::global_offset_time));
+            kuma_lio::global_offset_time = start_offset_time;
             LOG(INFO) << "Offset time: " << std::fixed << start_offset_time;
             break;
         }

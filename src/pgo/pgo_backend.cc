@@ -40,41 +40,39 @@ namespace pgo {
 
 PgoBackend::PgoBackend(const PgoParam& prm) : prm_(prm), graph_(prm), detector_(prm) {}
 
-void PgoBackend::AddScan(double time, const Eigen::Isometry3d& init_pose, const std::vector<Vec3>& scan_points) {
-    const Eigen::Isometry3d cor_pose = dx_ * init_pose;
+bool PgoBackend::AddScan(double time, const Eigen::Isometry3d& pose, const std::vector<Vec3>& scan_points) {
     const bool if_first = scan_nodes_.empty();
-    const Eigen::Isometry3d prev_pose = if_first ? cor_pose : scan_nodes_.back().pose;
-    if (!if_first) travel_len_ += (cor_pose.translation() - prev_pose.translation()).norm();
+    const Eigen::Isometry3d prev_pose = if_first ? pose : scan_nodes_.back().pose;
+    if (!if_first) travel_len_ += (pose.translation() - prev_pose.translation()).norm();
 
     ScanNode scan_node;
     scan_node.time = time;
-    scan_node.pose = cor_pose;
+    scan_node.pose = pose;
     scan_nodes_.push_back(scan_node);
-    init_poses_.push_back(init_pose);
     Vec6 v6;
     v6 << Vec3::Constant(prm_.odom_var_rot), Vec3::Constant(prm_.odom_var_trans);
-    graph_.AddNode(static_cast<int>(scan_nodes_.size()) - 1, cor_pose, prev_pose, v6);
+    graph_.AddNode(static_cast<int>(scan_nodes_.size()) - 1, pose, prev_pose, v6);
 
     buf_scans_.push_back(scan_points);
 
-    if (static_cast<int>(buf_scans_.size()) < prm_.kf_scans) return;
+    if (static_cast<int>(buf_scans_.size()) < prm_.kf_scans) return false;
     if (!kfs_.empty()) {
-        const Eigen::Isometry3d rel = kfs_.back().pose.inverse() * cor_pose;
+        const Eigen::Isometry3d rel = kfs_.back().pose.inverse() * pose;
         const double rel_angle = LogMat(Mat3(rel.linear())).norm() * 180.0 / PI;
         const double len = rel.translation().norm();
         if (rel_angle < prm_.kf_min_angle && len < prm_.kf_min_dist) {
             buf_scans_.pop_front();
-            return;
+            return false;
         }
     }
 
     std::vector<Vec3> kf_points;
     std::vector<PointCluster> cell_pcs;
-    SealKeyframe(cor_pose, &kf_points, &cell_pcs);
+    SealKeyframe(pose, &kf_points, &cell_pcs);
     ++kf_since_opt_;
 
     LoopEdge loop;
-    if (!detector_.Detect(kfs_, kf_points, cell_pcs, &loop)) return;
+    if (!detector_.Detect(kfs_, kf_points, cell_pcs, &loop)) return false;
     graph_.AddLoop(kfs_[loop.from].scan_id, kfs_[loop.to].scan_id, loop.T_from_to);
     loops_.push_back(loop);
     LOG(INFO) << "PGO: " << LoopSourceName(loop.source) << " loop kf " << loop.from << " -> " << loop.to << " drift "
@@ -82,7 +80,7 @@ void PgoBackend::AddScan(double time, const Eigen::Isometry3d& init_pose, const 
 
     // the paper only pays for a solve and a map rebuild once the drift is worth it
     ++unsolved_loops_;
-    if (kf_since_opt_ > prm_.opt_cooldown_kf && loop.drift > prm_.opt_min_drift) Solve();
+    return kf_since_opt_ > prm_.opt_cooldown_kf && loop.drift > prm_.opt_min_drift;
 }
 
 void PgoBackend::SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Vec3>* kf_points,
@@ -105,6 +103,11 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Ve
     const std::vector<Vec3> cloud = UniformSample(*kf_points, prm_.kf_ds_voxel);
     kf.planes = ExtractPlaneCells(cloud, prm_, cell_pcs);
     kf.points = static_cast<int>(cloud.size());
+    if (prm_.keep_kf_points) {
+        const std::vector<Vec3> fine = UniformSample(*kf_points, prm_.kf_voxel);
+        kf.cloud.reserve(fine.size());
+        for (const Vec3& p : fine) kf.cloud.push_back(p.cast<float>());
+    }
     kfs_.push_back(std::move(kf));
 }
 
@@ -113,25 +116,26 @@ void PgoBackend::Finish() {
     if (unsolved_loops_ > 0) Solve();
 }
 
-void PgoBackend::Solve() {
+bool PgoBackend::Solve(Eigen::Isometry3d* dx) {
     Timer timer;
     Isometries poses(scan_nodes_.size());
     for (size_t i = 0; i < scan_nodes_.size(); ++i) poses[i] = scan_nodes_[i].pose;
     const Eigen::Isometry3d old_last = scan_nodes_.back().pose;
 
-    if (!graph_.Solve(&poses)) return;
+    if (!graph_.Solve(&poses)) return false;
 
     for (size_t i = 0; i < scan_nodes_.size(); ++i) scan_nodes_[i].pose = poses[i];
-    dx_ = scan_nodes_.back().pose * init_poses_.back().inverse();
     for (KeyFrame& kf : kfs_) kf.pose = scan_nodes_[kf.scan_id].pose;
 
     kf_since_opt_ = 0;
     unsolved_loops_ = 0;
     ++num_solves_;
     const Eigen::Isometry3d step = scan_nodes_.back().pose * old_last.inverse();
+    if (dx) *dx = step;
     LOG(INFO) << "PGO: solved " << scan_nodes_.size() << " nodes, " << graph_.num_loops() << " loops, dx t "
               << step.translation().norm() << " m r " << LogMat(Mat3(step.linear())).norm() * 180.0 / PI << " deg in "
               << timer.ElapsedMiniSeconds() << " ms";
+    return true;
 }
 
 void PgoBackend::SaveDebug(const std::string& output_dir) const {

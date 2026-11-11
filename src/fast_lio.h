@@ -34,6 +34,7 @@
 #include "gnss_epoch.h"
 #include "laser_mapping_param.h"
 #include "local_ba.h"
+#include "loop_closure.h"
 
 namespace kuma_lio {
 
@@ -115,7 +116,8 @@ class FastLio {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     static constexpr double GRAVITY_NORM = 9.81;
 
-    void Init();
+    // `pgo_config`: config/pgo.yaml to run the loop closure coupled to the front end; empty = none.
+    void Init(const std::string& pgo_config);
     // Start from `state` at `time_ns`; `last_imu` is the last sample before it.
     void Start(const FastLioState& state, const Vec3& gravity_up, int64_t time_ns, const Imu& last_imu);
     // One frame: everything between the last `mea_end_` and this one.
@@ -124,10 +126,13 @@ class FastLio {
     FastLioState x;
     Vec3 gravity = Vec3(0, 0, GRAVITY_NORM);  // the sign of RESPLE_LIO::gravity: minus the acceleration of gravity
     int64_t last_end_ns = 0;
+
     Eigen::aligned_vector<FastLioPoint> points;  // of the last frame
     std::shared_ptr<LaserMappingParam> param;
     // Local BA; its voxel map is the local map the EKF matches against.
     std::unique_ptr<LocalBA> lba;
+    // Loop closure coupled to the BA and the map (--pgo_config); null without.
+    std::unique_ptr<LoopClosure> loop;
 
     // LIGO: the RINEX observations and ephemerides (LaserMapping::ReadObsNav), and the GNSS state.
     obs_t obss{};
@@ -174,6 +179,7 @@ class FastLio {
     // prior; tdcp_ gets the rows that pass, or stays empty below tdcp_min_sat.  The state must be at the epoch.
     void PrepareTdcp();
     void InitGnss(const sol_t& sol);
+
 
     Imu last_imu_;
     int degrade_cnt_ = 0;

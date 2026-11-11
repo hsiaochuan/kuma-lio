@@ -50,8 +50,7 @@ class LaserMapping {
         LOG(INFO) << "laser mapping deconstruct";
     }
 
-    // init without ros
-    bool Init(const std::string &config_fname, const std::string& camera_fname);
+    bool Init(const std::string &config_fname, const std::string& camera_fname, const std::string& pgo_fname = "");
     void RunRESPLE();
     void RunFastLio();
     enum class DynamicInitResult { SUCCESS, STATIONARY, FAIL };
@@ -97,8 +96,6 @@ class LaserMapping {
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
     ros::Publisher pub_frustrum_;
-
-    double global_offset_time = std::numeric_limits<double>::quiet_NaN();
 
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;

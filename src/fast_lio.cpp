@@ -41,11 +41,20 @@ constexpr int POSE = 6;
 static_assert(ROT == 0 && POS == 3, "the pose block must be the first POSE entries");
 }  // namespace
 
-void FastLio::Init() {
+void FastLio::Init(const std::string& pgo_config) {
     param->lba_.num_threads = param->num_threads;
     lba = std::make_unique<LocalBA>(param->lba_);
     LOG(INFO) << "local BA map shared with the odometry: voxel " << param->lba_.voxel_size << " window "
               << param->lba_.win_size;
+    if (!pgo_config.empty()) {
+        CHECK(param->fast_lio_.mode != FastLioMode::LIGO) << "--pgo_config: the GNSS state is not corrected by a loop";
+        pgo::PgoParam pgo_prm;
+        pgo::LoadPgoParam(pgo_config, &pgo_prm);
+        pgo_prm.keep_kf_points = true;
+        const double fixed_var = param->lba_.range_err * param->lba_.range_err + param->lba_.pose_var;
+        loop = std::make_unique<LoopClosure>(pgo_prm, lba.get(), fixed_var);
+        LOG(INFO) << "loop closure parameters from " << pgo_config;
+    }
 }
 
 void FastLio::Start(const FastLioState& state, const Vec3& gravity_up, int64_t time_ns, const Imu& last_imu) {
@@ -427,7 +436,18 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     std::vector<LbaPoint> frame_points;
     frame_points.reserve(points.size());
     for (const FastLioPoint& pt : points) frame_points.push_back(LbaPoint{pt.body, pt.var});
-    if (lba->AddFrame(measures.mea_end_, odom, frame_points, gravity)) {
+    // Voxel-SLAM keyframe_loading, before the frame goes in so one Refresh covers both
+    if (loop)
+        loop->ReloadKeyframe(x.p);
+    if (lba->AddFrame(measures.mea_end_, odom, std::move(frame_points), gravity)) {
+        LocalBA::MargScan scan;
+        Eigen::Isometry3d dx;
+        if (loop && lba->TakeMarginalized(&scan) &&
+            loop->AddScan(scan, global_offset_time + NS_TO_S(scan.time_ns), &dx)) {
+            x.R = dx.linear() * x.R;
+            x.p = dx.linear() * x.p + dx.translation();
+            x.v = dx.linear() * x.v;
+        }
         x.R = lba->Newest().R;
         x.p = lba->Newest().p;
     }

@@ -112,7 +112,17 @@ struct PgoParam {
     // local BA Hessian; a TUM file carries no covariance, so it is a constant here.
     double odom_var_rot = 1e-6;    // [rad^2]
     double odom_var_trans = 1e-5;  // [m^2]
+
+    // ---- the coupled front end only (run_mapping_offline --pgo_config); run_pgo ignores them ----
+    int map_kfs = 5;              // newest keyframes the local map is rebuilt from after a solve (Voxel-SLAM init_num)
+    double reload_radius = 10.0;  // [m] an older keyframe this close to the sensor is loaded into the local map
+    double kf_voxel = 0.1;        // [m] leaf of the keyframe clouds kept for the two above (Voxel-SLAM voxel_size / 10)
+    // Keep every keyframe's merged cloud at kf_voxel for the two above; set by LoopClosure, not a yaml key.
+    bool keep_kf_points = false;
 };
+
+// The flat keys of config/pgo.yaml over the defaults above; a key that is absent keeps its default.
+void LoadPgoParam(const std::string& file, PgoParam* p);
 
 // A flat `plane_voxel` cell in the keyframe's own body frame: the centre + normal the loop ICP and
 // the plane overlap use.  Its point statistics are not kept: only BTC needs them, once, at sealing.
@@ -142,6 +152,8 @@ struct KeyFrame {
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     int points = 0;                  // in the downsampled cloud the planes came from
     PlaneCells planes;               // keyframe body frame, so a pose change costs nothing
+    // the merged cloud at kf_voxel, body frame; empty unless PgoParam::keep_kf_points
+    std::vector<Eigen::Vector3f> cloud;
 };
 
 struct LoopEdge {

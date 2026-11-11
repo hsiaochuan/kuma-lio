@@ -121,12 +121,35 @@ class LocalBA {
     static constexpr int kLayers = 3;   // fixed depth of the voxel grid
     static constexpr int kCells = 64;   // finest cells per layer-0 voxel, 4 per axis
 
+    // A scan the window let go of (Voxel-SLAM ScanPose): what the loop closure builds its pose graph from.
+    struct MargScan {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+        int id = 0;
+        int64_t time_ns = 0;
+        LbaState x;                     // refined by the last BA it was part of
+        std::vector<LbaPoint> points;   // body frame
+    };
+
     explicit LocalBA(const LbaParam& param);
     void InitMap(const std::vector<Vec3>& points, double var);
+    // World points, each with the isotropic variance `var`, into the map as "fix" points (Voxel-SLAM
+    // keyframe_loading).  Their voxels are refit by the next Refresh, i.e. in the next AddFrame.
+    void AddFixedPoints(const std::vector<Vec3>& points, double var);
     void AddImu(int64_t time_ns, const Vec3& gyro, const Vec3& acc);
-    bool AddFrame(int64_t time_ns, const LbaState& odom, const std::vector<LbaPoint>& points, const Vec3& gravity);
+    bool AddFrame(int64_t time_ns, const LbaState& odom, std::vector<LbaPoint> points, const Vec3& gravity);
+    // The scan AddFrame marginalized, once; false when the last AddFrame marginalized nothing.
+    bool TakeMarginalized(MargScan* scan);
+
+    // Loop closure feedback (Voxel-SLAM loop_update).  ApplyCorrection moves every window state by the
+    // rigid `dx` (R, p and v; the biases and gravity stay).  Rebuild throws the map away and builds it
+    // again from `world_points` (variance `var`) and the window frames at their current poses.
+    void ApplyCorrection(const Eigen::Isometry3d& dx);
+    void Rebuild(const std::vector<Vec3>& world_points, double var);
 
     const LbaState& Newest() const { return frames_.back().x; }
+    // The frames still in the window as MargScans, oldest first, at their current poses: at the end of a run
+    // they go into the loop closure's graph after the scans TakeMarginalized handed out (LaserMapping::Finish).
+    std::vector<MargScan> WindowScans() const;
     bool Query(const LbaPoint& pv, PlaneHit* hit) const;
     bool PlaneNormal(const Vec3& p, Vec3* normal) const;
 
@@ -137,6 +160,7 @@ class LocalBA {
         int64_t time_ns = 0;
         LbaState x;
         std::shared_ptr<ImuPreint> imu;
+        std::vector<LbaPoint> points;  // body frame, kept for Rebuild and the marginalized scan
     };
     using Mat9 = Eigen::Matrix<double, 9, 9>;
 
@@ -211,6 +235,9 @@ class LocalBA {
     std::unordered_map<VOXEL_LOCATION, Root> map_;
     std::vector<Root*> active_;
     std::vector<const PlaneFactor*> factors_;
+
+    MargScan marg_;
+    bool has_marg_ = false;
 };
 
 }  // namespace kuma_lio
