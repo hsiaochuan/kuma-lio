@@ -22,9 +22,13 @@
 
 #pragma once
 
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/point_types.h>
+
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -63,6 +67,13 @@ BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cel
 // Fraction of `src` planes that, moved by T_tar_src, land on a `tar` plane (paper eq. 8-9).
 double PlaneOverlap(const PlaneCells& src, const PlaneCells& tar, const Eigen::Isometry3d& T_tar_src,
                     const PgoParam& prm);
+// The KD tree over the centres of `cells` that PlaneOverlap searches; null for no cells.  A keyframe's planes never
+// change (body frame), so one tree per keyframe serves every query against it, from any number of threads.
+using PlaneTree = pcl::KdTreeFLANN<pcl::PointXYZ>;
+std::shared_ptr<const PlaneTree> MakePlaneTree(const PlaneCells& cells);
+// The same with `tar`'s tree already built (MakePlaneTree(tar)).
+double PlaneOverlap(const PlaneCells& src, const PlaneCells& tar, const PlaneTree* tar_tree,
+                    const Eigen::Isometry3d& T_tar_src, const PgoParam& prm);
 
 struct BtcCandidate {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW

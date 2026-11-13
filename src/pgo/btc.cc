@@ -23,6 +23,7 @@
 #include "pgo/btc.h"
 
 #include <glog/logging.h>
+#include <omp.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_types.h>
 
@@ -55,8 +56,9 @@ void MakeTree(const std::vector<Vec3>& pts, pcl::KdTreeFLANN<pcl::PointXYZ>* tre
 // plane cells that are coplanar are merged into one plane
 PlaneCells ReferencePlanes(const PlaneCells& cells, const std::vector<PointCluster>& cell_pcs, const PgoParam& prm) {
     const int n = static_cast<int>(cells.size());
-    std::vector<int> parent(n);
-    std::iota(parent.begin(), parent.end(), 0);
+    // the pair tests (pure) in parallel, row by row; the unions then in the same i, j order as one loop
+    std::vector<std::vector<int>> coplanar(n);
+#pragma omp parallel for schedule(dynamic, 16) if (n > 256)
     for (int i = 0; i < n; ++i) {
         const PlaneCell& cell = cells[i];
         for (int j = i + 1; j < n; ++j) {
@@ -65,8 +67,13 @@ PlaneCells ReferencePlanes(const PlaneCells& cells, const std::vector<PointClust
             const Vec3 d = b.center - cell.center;
             if (std::abs(cell.normal.dot(d)) >= prm.btc_merge_dist || std::abs(b.normal.dot(d)) >= prm.btc_merge_dist)
                 continue;
-            parent[Find(parent, i)] = Find(parent, j);
+            coplanar[i].push_back(j);
         }
+    }
+    std::vector<int> parent(n);
+    std::iota(parent.begin(), parent.end(), 0);
+    for (int i = 0; i < n; ++i) {
+        for (int j : coplanar[i]) parent[Find(parent, i)] = Find(parent, j);
     }
 
     struct Group {
@@ -306,13 +313,25 @@ BtcFrame BuildBtcFrame(const std::vector<Vec3>& kf_points, const PlaneCells& cel
     return btc_frm;
 }
 
+std::shared_ptr<const PlaneTree> MakePlaneTree(const PlaneCells& cells) {
+    if (cells.empty()) return nullptr;
+    std::vector<Vec3> centres;
+    for (const PlaneCell& c : cells) centres.push_back(c.center);
+    auto tree = std::make_shared<PlaneTree>();
+    MakeTree(centres, tree.get());
+    return tree;
+}
+
 double PlaneOverlap(const PlaneCells& src, const PlaneCells& tar, const Eigen::Isometry3d& T_tar_src,
                     const PgoParam& prm) {
+    const std::shared_ptr<const PlaneTree> tree = MakePlaneTree(tar);
+    return PlaneOverlap(src, tar, tree.get(), T_tar_src, prm);
+}
+
+double PlaneOverlap(const PlaneCells& src, const PlaneCells& tar, const PlaneTree* tar_tree,
+                    const Eigen::Isometry3d& T_tar_src, const PgoParam& prm) {
     if (src.empty() || tar.empty()) return 0.0;
-    std::vector<Vec3> centres;
-    for (const PlaneCell& c : tar) centres.push_back(c.center);
-    pcl::KdTreeFLANN<pcl::PointXYZ> tree;
-    MakeTree(centres, &tree);
+    const PlaneTree& tree = *tar_tree;
     std::vector<int> idx(1);
     std::vector<float> d2(1);
     int hit = 0;
@@ -351,7 +370,12 @@ std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Q
     std::vector<char> ok(btc_frames_.size());
     for (size_t i = 0; i < btc_frames_.size(); ++i) ok[i] = eligible(static_cast<int>(i));
     std::unordered_map<int, std::vector<std::pair<int, int>>> pairs;  // frame -> (query tri, its tri)
-    for (size_t qt = 0; qt < q.triangles.size(); ++qt) {
+    // the matches of each query triangle (frame, its tri) in parallel, then into `pairs` in triangle order: the
+    // same lists, in the same order, as one loop
+    const int num_qt = static_cast<int>(q.triangles.size());
+    std::vector<std::vector<std::pair<int, int>>> matches(num_qt);
+#pragma omp parallel for schedule(dynamic, 16) if (num_qt > 64)
+    for (int qt = 0; qt < num_qt; ++qt) {
         const BtcTriangle& tq = q.triangles[qt];
         const VOXEL_LOCATION key = SideLenKey(tq.side_lens, prm_.btc_side_len_res);
         const double tol = tq.side_lens.norm() * prm_.btc_side_tol;
@@ -368,11 +392,14 @@ std::vector<BtcCandidate, Eigen::aligned_allocator<BtcCandidate>> BtcDatabase::Q
                         double sim = 0.0;
                         for (int k = 0; k < 3; ++k) sim += BitSimilarity(q.keypoints[tq.v[k]], f.keypoints[tc.v[k]]);
                         if (sim / 3.0 <= prm_.btc_similarity) continue;
-                        pairs[frm_tri.frame].emplace_back(static_cast<int>(qt), frm_tri.tri);
+                        matches[qt].emplace_back(frm_tri.frame, frm_tri.tri);
                     }
                 }
             }
         }
+    }
+    for (int qt = 0; qt < num_qt; ++qt) {
+        for (const auto& m : matches[qt]) pairs[m.first].emplace_back(qt, m.second);
     }
 
     std::vector<std::pair<int, int>> ranked;  // (votes, frame)

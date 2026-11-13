@@ -1292,8 +1292,6 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr& scan) {
         LOG(INFO) << "empty in scan, no points pushed into buffer";
         return;
     }
-    std::sort(scan->points.begin(), scan->points.end(),
-              [](const Point& a, const Point& b) { return a.GetTimeNs() < b.GetTimeNs(); });
     int skip_scan_points = 0;
     for (int i = 0; i < scan->size(); ++i) {
         if (points_buffer_.empty()) {
@@ -1311,16 +1309,30 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr& scan) {
         LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error, " << scan->size()
                   << " points total";
 }
-void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
+namespace {
+void SortByTime(const PointCloud::Ptr& scan) {
+    std::sort(scan->points.begin(), scan->points.end(),
+              [](const Point& a, const Point& b) { return a.GetTimeNs() < b.GetTimeNs(); });
+}
+}  // namespace
 
+void LaserMapping::PushScan(const PointCloud::Ptr& scan) {
+    if (!scan) return;
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    AddScanToBuffer(scan);
+}
+
+void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) { PushScan(ScanFromPCL(msg)); }
+
+void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) { PushScan(ScanFromLivox(msg)); }
+
+PointCloud::Ptr LaserMapping::ScanFromPCL(const sensor_msgs::PointCloud2::ConstPtr& msg) const {
     double timestamp = msg->header.stamp.toSec();
 
     // time offset
     timestamp += param->lidar_time_offset_;
-    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return nullptr;
     timestamp = timestamp - global_offset_time;
-    // push to buffer
     PointCloud::Ptr scan(new PointCloud());
     switch (LidarTypeFromString(param->lidar_type)) {
         case LidarType::OUSTER:
@@ -1335,24 +1347,20 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr&
         default:
             throw std::logic_error("unknown lidar type");
     }
-    AddScanToBuffer(scan);
+    SortByTime(scan);
+    return scan;
 }
 
-void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-
+PointCloud::Ptr LaserMapping::ScanFromLivox(const livox_ros_driver::CustomMsg::ConstPtr& msg) const {
     double timestamp = msg->header.stamp.toSec();
 
     // time offset
     timestamp += param->lidar_time_offset_;
-    if (std::isnan(global_offset_time) || timestamp < global_offset_time) {
-        return;
-    }
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return nullptr;
     timestamp = timestamp - global_offset_time;
-    // push to buffer
-    PointCloud::Ptr scan;
-    scan = preprocess_->LivoxHandler(msg, S_TO_NS(timestamp));
-    AddScanToBuffer(scan);
+    PointCloud::Ptr scan = preprocess_->LivoxHandler(msg, S_TO_NS(timestamp));
+    SortByTime(scan);
+    return scan;
 }
 void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr& msg) {
     // time offset

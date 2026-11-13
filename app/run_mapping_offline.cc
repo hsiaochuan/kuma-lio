@@ -24,12 +24,54 @@
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 #include <unistd.h>
+#include <atomic>
+#include <condition_variable>
 #include <csignal>
+#include <deque>
+#include <mutex>
+#include <thread>
 
 #include <boost/filesystem.hpp>
 #include "laser_mapping.h"
 
 namespace fs = boost::filesystem;
+
+namespace {
+// One message of the bag, read and decoded by the reader thread: the lidar ones already turned into their scan.
+struct BagItem {
+    enum Kind { kLidar, kImu, kImage, kCompressedImage, kEnd } kind = kEnd;
+    kuma_lio::PointCloud::Ptr scan;  // kLidar: null when the message is older than the offset time
+    sensor_msgs::Imu::ConstPtr imu;
+    sensor_msgs::Image::ConstPtr image;
+    sensor_msgs::CompressedImage::ConstPtr compressed;
+};
+
+// FIFO between the reader and the processing thread; the reader blocks once `capacity` items wait.
+class BagQueue {
+   public:
+    explicit BagQueue(size_t capacity) : capacity_(capacity) {}
+    void Push(BagItem item) {
+        std::unique_lock<std::mutex> lock(mtx_);
+        not_full_.wait(lock, [this] { return items_.size() < capacity_; });
+        items_.push_back(std::move(item));
+        not_empty_.notify_one();
+    }
+    BagItem Pop() {
+        std::unique_lock<std::mutex> lock(mtx_);
+        not_empty_.wait(lock, [this] { return !items_.empty(); });
+        BagItem item = std::move(items_.front());
+        items_.pop_front();
+        not_full_.notify_one();
+        return item;
+    }
+
+   private:
+    const size_t capacity_;
+    std::mutex mtx_;
+    std::condition_variable not_full_, not_empty_;
+    std::deque<BagItem> items_;
+};
+}  // namespace
 
 DEFINE_string(config_file, "./config/avia.yaml", "path to config file");
 DEFINE_string(bag_file, "", "path to the ros bag");
@@ -41,7 +83,7 @@ DEFINE_string(camera_fname, "", "camera yaml like config/i2nav_robot_camera.yaml
 DEFINE_string(gnss_obs_fname, "", "");
 DEFINE_string(pgo_config, "", "config/pgo.yaml: runs the loop closure coupled to the fastlio front end (Voxel-SLAM); empty = no loop closure");
 DEFINE_string(nav_fname, "", "");
-bool if_exit = false;
+std::atomic<bool> if_exit{false};  // set by the signal handler, read by the reader thread
 void SigHandle(int sig) {
     if_exit = true;
     LOG(INFO) << "Catch Kill Signal";
@@ -126,40 +168,56 @@ int main(int argc, char **argv) {
             laser_mapping->RunRESPLE();
         }
     };
-    for (const rosbag::MessageInstance &m : view) {
-        auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>();
-        if (m.getTopic() == laser_mapping->param->lidar_topic_ && livox_msg) {
-            laser_mapping->LivoxPCLCallBack(livox_msg);
-            run_front_end();
-            continue;
-        }
-
-        auto point_cloud_msg = m.instantiate<sensor_msgs::PointCloud2>();
-        if (m.getTopic() == laser_mapping->param->lidar_topic_ && point_cloud_msg) {
-            laser_mapping->StandardPCLCallBack(point_cloud_msg);
-            run_front_end();
-            continue;
-        }
-
-        auto imu_msg = m.instantiate<sensor_msgs::Imu>();
-        if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {
-            laser_mapping->IMUCallBack(imu_msg);
-            continue;
-        }
-
-        if (m.getTopic() == laser_mapping->param->img_topic_) {
-            if (auto compressed = m.instantiate<sensor_msgs::CompressedImage>()) {
-                laser_mapping->CompressedImageCallback(compressed);
-            } else if (auto image = m.instantiate<sensor_msgs::Image>()) {
-                laser_mapping->ImageCallBack(image);
+    // The reader thread reads and decodes the bag and builds the lidar scans (ScanFromPCL / ScanFromLivox depend on
+    // the message and the parameters only); this thread takes the items in bag order and does everything that
+    // touches the state, so the result is the one of a single loop whatever the scheduling.
+    BagQueue queue(64);
+    std::thread reader([&]() {
+        const auto& prm = laser_mapping->param;
+        for (const rosbag::MessageInstance &m : view) {
+            if (if_exit) break;
+            BagItem item;
+            if (m.getTopic() == prm->lidar_topic_) {
+                if (auto livox_msg = m.instantiate<livox_ros_driver::CustomMsg>()) {
+                    item.kind = BagItem::kLidar;
+                    item.scan = laser_mapping->ScanFromLivox(livox_msg);
+                } else if (auto point_cloud_msg = m.instantiate<sensor_msgs::PointCloud2>()) {
+                    item.kind = BagItem::kLidar;
+                    item.scan = laser_mapping->ScanFromPCL(point_cloud_msg);
+                }
+            } else if (m.getTopic() == prm->imu_topic_) {
+                if ((item.imu = m.instantiate<sensor_msgs::Imu>())) item.kind = BagItem::kImu;
+            } else if (m.getTopic() == prm->img_topic_) {
+                if ((item.compressed = m.instantiate<sensor_msgs::CompressedImage>())) {
+                    item.kind = BagItem::kCompressedImage;
+                } else if ((item.image = m.instantiate<sensor_msgs::Image>())) {
+                    item.kind = BagItem::kImage;
+                }
             }
-            continue;
+            if (item.kind != BagItem::kEnd) queue.Push(std::move(item));
         }
-
-        if (if_exit) {
-            break;
+        queue.Push(BagItem());  // kEnd
+    });
+    for (BagItem item = queue.Pop(); item.kind != BagItem::kEnd; item = queue.Pop()) {
+        switch (item.kind) {
+            case BagItem::kLidar:
+                laser_mapping->PushScan(item.scan);
+                run_front_end();
+                break;
+            case BagItem::kImu:
+                laser_mapping->IMUCallBack(item.imu);
+                break;
+            case BagItem::kCompressedImage:
+                laser_mapping->CompressedImageCallback(item.compressed);
+                break;
+            case BagItem::kImage:
+                laser_mapping->ImageCallBack(item.image);
+                break;
+            default:
+                break;
         }
     }
+    reader.join();
 
     LOG(INFO) << "Finish bag iteration";
     laser_mapping->Finish();

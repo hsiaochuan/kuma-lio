@@ -487,8 +487,12 @@ void LocalBA::RefitRoot(Root* root_ptr, RefitScratch* scratch) const {
 }
 
 void LocalBA::Marginalize(const Frame& frame) {
-    PointCluster world;
-    for (Root* root : active_) {
+    // every root only touches its own cells, so the roots run in parallel with the same arithmetic as one loop
+    const int num_roots = static_cast<int>(active_.size());
+#pragma omp parallel for num_threads(param_.num_threads) schedule(dynamic, 32) if (num_roots > 256)
+    for (int r = 0; r < num_roots; ++r) {
+        Root* root = active_[r];
+        PointCluster world;
         for (Cell& cell : root->cells) {
             if (cell.clusters.empty() || cell.clusters.front().id != frame.id) continue;
             if (cell.fix.N < param_.max_fix_points) {

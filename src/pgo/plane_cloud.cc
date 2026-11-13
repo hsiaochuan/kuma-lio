@@ -22,6 +22,9 @@
 
 #include "pgo/plane_cloud.h"
 
+#include <omp.h>
+
+#include <algorithm>
 #include <unordered_map>
 
 #include "common_lib.h"
@@ -30,29 +33,47 @@ namespace kuma_lio {
 namespace pgo {
 
 std::vector<Vec3> UniformSample(const std::vector<Vec3>& cloud, double leaf) {
+    // Per voxel: the first point that fell in it (the output is in that order) and the point nearest its centre
+    // (the earlier one on a tie).  Each thread owns the voxels whose hash falls on it and walks the whole cloud in
+    // order for them, so every voxel sees its points in the same order as one loop; sorting the voxels by their
+    // first point then gives the single-loop output exactly.
     struct Best {
+        size_t first;
         size_t idx;
         double d2;
     };
-    std::unordered_map<VOXEL_LOCATION, size_t> slot;  // voxel -> index in `best`
-    slot.reserve(cloud.size());
-    std::vector<Best> best;
-    for (size_t i = 0; i < cloud.size(); ++i) {
-        const Vec3& p = cloud[i];
-        if (!p.allFinite()) continue;
-        const VOXEL_LOCATION loc(p, leaf);
-        const Vec3 center = (Vec3(loc.x, loc.y, loc.z) + Vec3::Constant(0.5)) * leaf;
-        const double d2 = (p - center).squaredNorm();
-        const auto ins = slot.emplace(loc, best.size());
-        if (ins.second) {
-            best.push_back({i, d2});
-        } else if (d2 < best[ins.first->second].d2) {
-            best[ins.first->second] = {i, d2};
+    constexpr size_t kMinParallel = 20000;
+    const int num_threads = cloud.size() >= kMinParallel ? omp_get_max_threads() : 1;
+    std::vector<std::vector<Best>> per_thread(num_threads);
+#pragma omp parallel num_threads(num_threads)
+    {
+        const int tid = omp_get_thread_num();
+        std::unordered_map<VOXEL_LOCATION, size_t> slot;  // voxel -> index in `best`
+        slot.reserve(cloud.size() / num_threads + 1);
+        std::vector<Best>& best = per_thread[tid];
+        const std::hash<VOXEL_LOCATION> hasher;
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            const Vec3& p = cloud[i];
+            if (!p.allFinite()) continue;
+            const VOXEL_LOCATION loc(p, leaf);
+            if (num_threads > 1 && static_cast<int>(hasher(loc) % num_threads) != tid) continue;
+            const Vec3 center = (Vec3(loc.x, loc.y, loc.z) + Vec3::Constant(0.5)) * leaf;
+            const double d2 = (p - center).squaredNorm();
+            const auto ins = slot.emplace(loc, best.size());
+            if (ins.second) {
+                best.push_back({i, i, d2});
+            } else if (d2 < best[ins.first->second].d2) {
+                best[ins.first->second].idx = i;
+                best[ins.first->second].d2 = d2;
+            }
         }
     }
+    std::vector<Best> all;
+    for (const std::vector<Best>& b : per_thread) all.insert(all.end(), b.begin(), b.end());
+    std::sort(all.begin(), all.end(), [](const Best& a, const Best& b) { return a.first < b.first; });
     std::vector<Vec3> out;
-    out.reserve(best.size());
-    for (const Best& b : best) out.push_back(cloud[b.idx]);
+    out.reserve(all.size());
+    for (const Best& b : all) out.push_back(cloud[b.idx]);
     return out;
 }
 

@@ -64,6 +64,8 @@ class LoopDetector {
 
     PgoParam pgo_param_;
     BtcDatabase btc_db_;
+    // keyframe id -> the KD tree over its plane centres (PlaneOverlap), built the first time it is a candidate
+    std::vector<std::shared_ptr<const PlaneTree>> plane_trees_;
     std::vector<LoopRejection> rejections_;
     LoopSource source_ = LoopSource::kBtc;  // layer being verified, stamped on each rejection
 };

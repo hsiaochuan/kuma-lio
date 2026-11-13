@@ -80,13 +80,24 @@ LoopDetector::Candidates LoopDetector::BtcCandidates(const KeyFrames& kfs, const
     const auto btc_cands = btc_db_.Query(btc_frame, [&](int id) { return Eligible(kfs, id, cur_kf_id); });
     btc_db_.Add(std::move(btc_frame));  // after the query, so a keyframe never finds itself
 
-    // paper VI-B: of the candidates RANSAC accepted, the one whose planes overlap best
+    // paper VI-B: of the candidates RANSAC accepted, the one whose planes overlap best.  The candidates' trees are
+    // built here, one per keyframe for good; the overlaps then in parallel, the best picked in candidate order.
+    const int num_cands = static_cast<int>(btc_cands.size());
+    if (static_cast<int>(plane_trees_.size()) < cur_kf_id + 1) plane_trees_.resize(cur_kf_id + 1);
+    for (const BtcCandidate& c : btc_cands) {
+        if (!plane_trees_[c.frame_id]) plane_trees_[c.frame_id] = MakePlaneTree(kfs[c.frame_id].planes);
+    }
+    std::vector<double> overlaps(num_cands);
+#pragma omp parallel for schedule(dynamic, 1) if (num_cands > 1)
+    for (int i = 0; i < num_cands; ++i) {
+        const int id = btc_cands[i].frame_id;
+        overlaps[i] = PlaneOverlap(kfs[cur_kf_id].planes, kfs[id].planes, plane_trees_[id].get(), btc_cands[i].T,
+                                   pgo_param_);
+    }
     int best = -1;
     double best_overlap = 0.0;
-    for (size_t i = 0; i < btc_cands.size(); ++i) {
-        const double overlap =
-            PlaneOverlap(kfs[cur_kf_id].planes, kfs[btc_cands[i].frame_id].planes, btc_cands[i].T, pgo_param_);
-        if (overlap > best_overlap) best_overlap = overlap, best = static_cast<int>(i);
+    for (int i = 0; i < num_cands; ++i) {
+        if (overlaps[i] > best_overlap) best_overlap = overlaps[i], best = i;
     }
     if (best < 0) return {};
     if (best_overlap <= pgo_param_.btc_min_overlap) {
