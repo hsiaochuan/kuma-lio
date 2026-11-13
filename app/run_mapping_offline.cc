@@ -99,7 +99,11 @@ int main(int argc, char **argv) {
         }
     }
     LOG(INFO) << "Go!";
-    rosbag::View view(bag, start_time, end_time);
+    // only the topics the loop below handles: the rest of the bag (event cameras, other images, INS status, ...) is
+    // neither read nor tried against every message type
+    std::vector<std::string> topics = {laser_mapping->param->lidar_topic_, laser_mapping->param->imu_topic_};
+    if (!laser_mapping->param->img_topic_.empty()) topics.push_back(laser_mapping->param->img_topic_);
+    rosbag::View view(bag, rosbag::TopicQuery(topics), start_time, end_time);
     for (const rosbag::MessageInstance &m : view) {
         auto imu_msg = m.instantiate<sensor_msgs::Imu>();
         if (m.getTopic() == laser_mapping->param->imu_topic_ && imu_msg) {

@@ -10,7 +10,7 @@ common:
   image_time_offset: -0.013618216766727708
 
 front_end: fastlio
-num_threads: 4
+num_threads: 8
 lidar_type: OUSTER
 livox_tag_mask: 32
 blind: 2.0

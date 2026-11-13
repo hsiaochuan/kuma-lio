@@ -35,7 +35,7 @@ LoopClosure::LoopClosure(const pgo::PgoParam& prm, LocalBA* lba, double fixed_va
     : prm_(prm), lba_(lba), pgo_(prm), fixed_var_(fixed_var) {
     CHECK(prm.keep_kf_points) << "the coupled loop closure needs the keyframe clouds";
     LOG(INFO) << "loop closure coupled to the front end: map_kfs " << prm_.map_kfs << " reload_radius "
-              << prm_.reload_radius << " kf_voxel " << prm_.kf_voxel;
+              << prm_.reload_radius << " kf_ds_voxel " << prm_.kf_ds_voxel;
 }
 
 bool LoopClosure::PushScan(const LocalBA::MargScan& scan, double time_s) {

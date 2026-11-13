@@ -1,14 +1,13 @@
 # run_pgo 的参数，扁平键，全部可省略（缺省值即下面这些）。
 # 同一个文件给 run_mapping_offline --pgo_config 时，回环按 Voxel-SLAM 紧耦合进 fastlio 前端：
-# local BA 边缘化的 scan 构成位姿图，求解后修正窗口与 EKF 状态并重建局部地图。下面四个键只有耦合模式读：
+# local BA 边缘化的 scan 构成位姿图，求解后修正窗口与 EKF 状态并重建局部地图。下面两个键只有耦合模式读：
 map_kfs: 5               # 求解后局部地图由最新几个关键帧重建
 reload_radius: 10.0      # [m] 之后距传感器这么近的历史关键帧逐帧载回局部地图
-kf_voxel: 0.1            # [m] 为上面两项保存的关键帧点云体素
 # 关键帧：Voxel-SLAM 每 win_size 个 scan 封一个
 kf_scans: 10
 kf_min_angle: 5.0        # [deg] 同时低于它和 kf_min_dist 才跳过
 kf_min_dist: 0.1         # [m]
-kf_ds_voxel: 0.2         # [m]
+kf_ds_voxel: 0.2         # [m] 关键帧点云只采样一次：平面由它提取，耦合模式下也是保存给上面两项的点云
 # 平面 cell：回环 ICP、BTC 的参考平面和平面重叠率都用它
 plane_voxel: 1.0         # [m]
 plane_min_points: 10

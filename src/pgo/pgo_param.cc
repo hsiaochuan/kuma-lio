@@ -84,7 +84,6 @@ void LoadPgoParam(const std::string& file, PgoParam* p) {
     get("odom_var_trans", &p->odom_var_trans);
     get("map_kfs", &p->map_kfs);
     get("reload_radius", &p->reload_radius);
-    get("kf_voxel", &p->kf_voxel);
 }
 
 

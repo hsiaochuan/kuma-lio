@@ -45,7 +45,7 @@ struct PgoParam {
     int kf_scans = 10;
     double kf_min_angle = 5.0;  // [deg] the keyframe is skipped below this AND kf_min_dist
     double kf_min_dist = 0.1;   // [m]
-    double kf_ds_voxel = 0.2;   // [m] leaf of the stored keyframe cloud
+    double kf_ds_voxel = 0.2;   // [m] leaf of the keyframe cloud: its planes, and the cloud kept in coupled mode
 
     // ---- plane cells: the loop ICP, the BTC reference planes and the plane overlap all use them ----
     double plane_voxel = 1.0;  // [m]
@@ -116,8 +116,7 @@ struct PgoParam {
     // ---- the coupled front end only (run_mapping_offline --pgo_config); run_pgo ignores them ----
     int map_kfs = 5;              // newest keyframes the local map is rebuilt from after a solve (Voxel-SLAM init_num)
     double reload_radius = 10.0;  // [m] an older keyframe this close to the sensor is loaded into the local map
-    double kf_voxel = 0.1;        // [m] leaf of the keyframe clouds kept for the two above (Voxel-SLAM voxel_size / 10)
-    // Keep every keyframe's merged cloud at kf_voxel for the two above; set by LoopClosure, not a yaml key.
+    // Keep every keyframe's merged cloud (at kf_ds_voxel) for the two above; set by LoopClosure, not a yaml key.
     bool keep_kf_points = false;
 };
 
@@ -152,7 +151,7 @@ struct KeyFrame {
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     int points = 0;                  // in the downsampled cloud the planes came from
     PlaneCells planes;               // keyframe body frame, so a pose change costs nothing
-    // the merged cloud at kf_voxel, body frame; empty unless PgoParam::keep_kf_points
+    // the merged cloud at kf_ds_voxel, body frame; empty unless PgoParam::keep_kf_points
     std::vector<Eigen::Vector3f> cloud;
 };
 
