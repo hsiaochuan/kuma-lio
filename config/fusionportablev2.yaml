@@ -1,0 +1,114 @@
+# FusionPortableV2 (HKUST-GZ), UGV sequences: Ouster OS1-128 + STIM300 (body_imu) + FLIR left frame camera.
+# Calibration: github.com/fusionportable/calibration_files 20230426_calib (the UGV sequences'), the same values as
+# the bags' /tf_static.
+common:
+  lid_topic: "/os_cloud_node/points"
+  imu_topic: "/stim300/imu/data_raw"  # STIM300, 200 Hz, frame body_imu
+  img_topic: "/stereo/frame_left/image_raw/compressed"  # frame_cam00, 20 Hz, 1024x768 jpg
+  acc_ratio: false
+  # header = first column of the scan, per-point t from 0 to 0.1 s after it (checked on ugv_parking03)
+  lidar_time_offset: 0
+  # frame_cam00.yaml timeshift_sensor_body_imu: t_body_imu = t_cam - 0.013618
+  image_time_offset: -0.013618216766727708
+
+front_end: fastlio
+num_threads: 4
+lidar_type: OUSTER
+livox_tag_mask: 32  # unused for Ouster
+blind: 1.0
+point_filter_num: 4  # 128 x 1024 points per scan
+det_range: 100.0
+# T_imu_lidar (P_imu = R P_lidar + t), the inverse of ouster00.yaml quaternion/translation_sensor_body_imu
+# (T_ouster00_body_imu, itself T_ouster00_frame_cam00 * T_frame_cam00_body_imu)
+extrin_t_il: [0.0359568, -0.01764044, 0.03291764]
+extrin_R_il: [0.99995859, 0.00830747, 0.00371544,
+              -0.00831236, 0.9999646, 0.00130257,
+              -0.00370449, -0.0013334, 0.99999225]
+pcd_save_en: false
+pcd_save_interval: 1.0
+bag_save_en: false
+image_save_en: false
+image_save_interval: 1.5
+resple:
+  knot_hz: 100
+  ds_scan_voxel: 0.1
+  w_pt: 0.01
+  nn_thresh: 0.5
+  coeff_cov: 3.0
+  plane_thresh: 0.1
+  imu_acc_outlier: 10.0
+  imu_gyro_outlier: 5.0
+  q_std_pos_old: 0.0632456
+  q_std_ort_old: 0.0316228
+  q_std_pos_new: 0.2
+  q_std_ort_new: 0.1
+  q_std_bg: 1.0e-3
+  q_std_ba: 1.0e-2
+  cov_P0: 0.02
+  cov_acc: [1.0, 1.0, 1.0]
+  cov_gyro: [0.001, 0.001, 0.001]
+  cov_bg: [1.0e-6, 1.0e-6, 1.0e-6]
+  cov_ba: [0.2, 0.2, 0.2]
+  cov_en: false  # constant w_pt as in RESPLE; per-point variances gave more vertical drift with 0.5 m voxels
+  r_base: 0.001
+  fb_std_pos: 0.01
+  fb_std_ort: 0.002
+  fb_std_bg: 1.0e-3
+  fb_std_ba: 1.0e-2
+  fb_keep_cov: true
+
+fastlio:
+  mode: LIO
+  # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
+  sub_max: 4
+  # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
+  sub_std_acc: 0.0
+  sub_std_gyr: 0.0
+  down_size: 0.2
+  cov_gyr: 0.01
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  r_base: 0.0005
+
+lba:
+  win_size: 10
+  voxel_size: 1.0
+  plane_eigen_ratio: 0.1
+  min_plane_size: 0.1
+  clutter_points: 20
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  sigma_num: 3
+  pose_var: 1.0e-4
+  range_err: 0.02
+  angle_err: 0.05
+  frame_dt: 0.1
+  map_range: 200.0
+
+gnss:
+  # no RINEX for FusionPortableV2: LIO only, the block is only parsed
+  lever_arm: [0.0, 0.0, 0.0]
+  ali_min_travel: 10.0
+  ali_refine: true  # fastlio: yaw of the alignment re-estimated from the TDCP displacements
+  max_gap: 0.1
+  tdcp_dop_slip: 0.05  # [m] |phase change - integrated Doppler| above this is a cycle slip; Outdoor01: p99.9 0.036 m
+  tdcp_enable: true
+  tdcp_std: 0.02
+  tdcp_outlier: 0.5
+  tdcp_chi2: 10.83
+  tdcp_min_sat: 5
+  tdcp_init_weight: 1.0
+  tdcp_init_min_horiz: 0.05
+  tdcp_init_max_std: 0.5
+  std_clk: 10.0
+  std_isb: 0.01
+  std_clk_init: 10.0
+  std_ext_yaw_init: 0.2
+  std_ext_pos_init: 5.0

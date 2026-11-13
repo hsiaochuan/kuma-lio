@@ -202,6 +202,7 @@ class SLAMTestRunner:
                  "--gnss_obs_fname", task.gnss_obs_fname,
                  "--nav_fname", task.gnss_nav_fname,
                  "--camera_fname", task.camera_config,
+                 "--pgo_config", task.pgo_config,
                  ],
                 check=True,
             )
@@ -565,6 +566,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         ],
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/groundtruth",
+        gnss_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/GNSS",
     )
     i2nav_robot = DatasetConfig(
         name="i2nav_robot",
@@ -583,7 +585,26 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
         pgo_config="../config/pgo.yaml",
         camera_config={".": "../config/i2nav_robot_camera.yaml"},
     )
-    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot]
+
+    fusionportablev2 = DatasetConfig(
+        name="fusionportablev2",
+        config={".": "../config/fusionportablev2.yaml"},
+        bag_files=[
+            f"/media/hsiaochuan/hsiaochuan-data/fusionportablev2/{seq}.bag"
+            for seq in [
+                "ugv_parking03",
+                "ugv_campus00",
+                "ugv_campus01",
+                "ugv_transition00",
+                "ugv_transition01",
+            ]
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/fusionportablev2/groundtruth",
+        camera_config={".": "../config/fusionportablev2_camera.yaml"},
+    )
+    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot,
+                    fusionportablev2]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
@@ -594,17 +615,20 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["i2nav_robot"],
+                        default=["m3dgr"],
                         help="Run only specified datasets (by name)")
-    parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
+    parser.add_argument("--if_delete_result_dir", action="store_true", default=False,
+                        help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
     parser.add_argument("--if_pgo", action="store_true", default=False, help="Run run_pgo on the SLAM scans")
     parser.add_argument("--if_clean", action="store_true", default=False, help="Run run_clean, dynamic point removal")
-    parser.add_argument("--if_merge", action="store_true", default=False, help="Run points_merge, writes map.pcd")
-    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points_jet on map.pcd")
+    parser.add_argument("--if_ba", action="store_true", default=False,
+                        help="Run run_ba, BALM3 bundle adjustment of the poses")
+    parser.add_argument("--if_merge", action="store_true", default=False, help="Run run_merge, writes map.pcd")
+    parser.add_argument("--if_mls", action="store_true", default=False, help="Run run_mls on map.pcd")
     parser.add_argument("--if_rviz", action="store_true", default=True, help="Run rviz")
-    parser.add_argument("--start", type=float, default=5, help="Start time (sec) for offline mode")
-    parser.add_argument("--duration", type=float, default=-1.0,
+    parser.add_argument("--start", type=float, default=0, help="Start time (sec) for offline mode")
+    parser.add_argument("--duration", type=float, default=-1,
                         help="Duration (sec) for offline mode, -1 for full length")
     args = parser.parse_args()
     if args.if_rviz:
