@@ -143,6 +143,7 @@ class LaserMappingParam {
     float det_range_;
     double blind;
     int point_filter_num;
+    int img_filter;  // keep one image in img_filter (1 = every image)
     int livox_tag_mask = 0x3F;
 
     Pose3 extrin_il_ = Pose3::Identity();
@@ -210,6 +211,8 @@ class LaserMappingParam {
             lidar_type = ConfigKey<std::string>(yaml, "lidar_type");
             blind = ConfigKey<double>(yaml, "blind");
             point_filter_num = ConfigKey<int>(yaml, "point_filter_num");
+            img_filter = ConfigKey<int>(yaml, "img_filter");
+            CHECK_GE(img_filter, 1) << config_fname << ": img_filter must be at least 1";
             det_range_ = ConfigKey<float>(yaml, "det_range");
             livox_tag_mask = yaml["livox_tag_mask"].as<int>();
             extrin_il_.q_ = RotationFromArray(ConfigKey<std::vector<double>>(yaml, "extrin_R_il"));

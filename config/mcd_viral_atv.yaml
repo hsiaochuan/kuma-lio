@@ -13,6 +13,7 @@ lidar_type: LIVOX
 livox_tag_mask: 32
 blind: 1.0
 point_filter_num: 1
+img_filter: 1  # keep one image in img_filter (1 = every image)
 det_range: 100.0
 extrin_t_il: [-0.010514839241742317, -0.008989784841758377, 0.037356468638334630]
 extrin_R_il: [0.99985813160508060000, -0.0002258196228773494, -0.0168423771687589430,

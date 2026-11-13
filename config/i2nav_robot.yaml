@@ -14,6 +14,7 @@ lidar_type: LIVOX
 livox_tag_mask: 63
 blind: 2.0
 point_filter_num: 1
+img_filter: 1  # keep one image in img_filter (1 = every image)
 det_range: 50.0
 # HESAI lidar
 #extrin_t_il: [0.042, -0.018, -0.063]

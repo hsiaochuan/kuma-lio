@@ -6,29 +6,26 @@ common:
   imu_topic: "/stim300/imu/data_raw"  # STIM300, 200 Hz, frame body_imu
   img_topic: "/stereo/frame_left/image_raw/compressed"  # frame_cam00, 20 Hz, 1024x768 jpg
   acc_ratio: false
-  # header = first column of the scan, per-point t from 0 to 0.1 s after it (checked on ugv_parking03)
-  lidar_time_offset: 0
-  # frame_cam00.yaml timeshift_sensor_body_imu: t_body_imu = t_cam - 0.013618
+  lidar_time_offset: -0.1
   image_time_offset: -0.013618216766727708
 
 front_end: fastlio
 num_threads: 4
 lidar_type: OUSTER
-livox_tag_mask: 32  # unused for Ouster
-blind: 1.0
-point_filter_num: 4  # 128 x 1024 points per scan
-det_range: 100.0
-# T_imu_lidar (P_imu = R P_lidar + t), the inverse of ouster00.yaml quaternion/translation_sensor_body_imu
-# (T_ouster00_body_imu, itself T_ouster00_frame_cam00 * T_frame_cam00_body_imu)
+livox_tag_mask: 32
+blind: 2.0
+point_filter_num: 5
+img_filter: 2  # keep one image in img_filter (1 = every image)
+det_range: 150.0
 extrin_t_il: [0.0359568, -0.01764044, 0.03291764]
 extrin_R_il: [0.99995859, 0.00830747, 0.00371544,
               -0.00831236, 0.9999646, 0.00130257,
               -0.00370449, -0.0013334, 0.99999225]
-pcd_save_en: false
-pcd_save_interval: 1.0
+pcd_save_en: true
+pcd_save_interval: 0.0
 bag_save_en: false
-image_save_en: false
-image_save_interval: 1.5
+image_save_en: true
+image_save_interval: 1.0
 resple:
   knot_hz: 100
   ds_scan_voxel: 0.1
@@ -58,17 +55,16 @@ resple:
   fb_keep_cov: true
 
 fastlio:
-  mode: LIO
-  # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
+  mode: LIVO
   sub_max: 4
-  # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
   sub_std_acc: 0.0
   sub_std_gyr: 0.0
-  down_size: 0.2
-  cov_gyr: 0.01
-  cov_acc: 1.0
-  rdw_gyr: 1.0e-4
-  rdw_acc: 1.0e-4
+  down_size: 0.1
+  # STIM300, fusionportable/fastlio2 ouster128_fusionportable.yaml (gyr_cov, acc_cov, b_gyr_cov, b_acc_cov)
+  cov_gyr: 5.6210762686976616e-03
+  cov_acc: 0.23777720518818246
+  rdw_gyr: 6.615657812411791e-05
+  rdw_acc: 1.0885363217411185e-03
   r_base: 0.0005
 
 lba:
@@ -80,10 +76,10 @@ lba:
   min_points: 5
   max_fix_points: 20
   max_iter: 3
-  imu_coef: 0.000025
+  imu_coef: 0.0025
   cov_gyr: 0.0001
   cov_acc: 1.0
-  rdw_gyr: 1.0e-4
+  rdw_gyr: 1.0e-6
   rdw_acc: 1.0e-4
   sigma_num: 3
   pose_var: 1.0e-4

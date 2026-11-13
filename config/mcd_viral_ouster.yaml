@@ -13,6 +13,7 @@ lidar_type: OUSTER
 livox_tag_mask: 32
 blind: 1.0
 point_filter_num: 5
+img_filter: 1  # keep one image in img_filter (1 = every image)
 det_range: 100.0
 extrin_t_il: [-0.00633, -0.01149, 0.00801]
 extrin_R_il: [1.0, 0.0, 0.0,

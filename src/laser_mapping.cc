@@ -1358,6 +1358,9 @@ void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr& msg) {
     // time offset
     const double timestamp = msg->header.stamp.toSec() + param->image_time_offset_;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    // keep one image in img_filter
+    static int img_count = 0;
+    if (img_count++ % param->img_filter != 0) return;
     RgbImage image;
     if (!image.FromRaw(msg->data.data(), msg->width, msg->height, msg->step, msg->encoding)) {
         LOG(WARNING) << "image skipped, encoding " << msg->encoding;
@@ -1372,6 +1375,9 @@ void LaserMapping::CompressedImageCallback(const sensor_msgs::CompressedImage::C
     // time offset
     const double timestamp = msg->header.stamp.toSec() + param->image_time_offset_;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    // keep one image in img_filter
+    static int img_count = 0;
+    if (img_count++ % param->img_filter != 0) return;
     RgbImage image;
     // image_decode off: only the bytes are kept, decoding a 5 MP JPEG costs ~60 ms per frame
     if (!image.SetEncoded(msg->data.data(), msg->data.size(), msg->format) ||
@@ -2169,7 +2175,7 @@ void LaserMapping::Finish() {
             CHECK_LT(std::abs(nodes[i].time - trajectory_[i].time), 1e-6) << "node " << i << " is not frame " << i;
             trajectory_[i].pose = nodes[i].pose;
         }
-        const fs::path dir = fs::path(output_dir) / "pgo_coupled";
+        const fs::path dir = fs::path(output_dir) / "pgo";
         fs::create_directories(dir);
         fast_lio_->loop->SaveDebug(dir.string());
     }
