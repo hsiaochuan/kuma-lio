@@ -130,7 +130,8 @@ bool PgoBackend::Solve(Eigen::Isometry3d* dx) {
     kf_since_opt_ = 0;
     unsolved_loops_ = 0;
     ++num_solves_;
-    const Eigen::Isometry3d step = scan_nodes_.back().pose * old_last.inverse();
+    Eigen::Isometry3d step = scan_nodes_.back().pose * old_last.inverse();
+    step.linear() = Eigen::Quaterniond(step.linear()).normalized().toRotationMatrix();
     if (dx) *dx = step;
     LOG(INFO) << "PGO: solved " << scan_nodes_.size() << " nodes, " << graph_.num_loops() << " loops, dx t "
               << step.translation().norm() << " m r " << LogMat(Mat3(step.linear())).norm() * 180.0 / PI << " deg in "

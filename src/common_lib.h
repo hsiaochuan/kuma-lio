@@ -231,7 +231,6 @@ struct SatTrack {
     std::vector<Eigen::Vector3d> sv_poss;
     std::vector<double> sv_dts;
     std::vector<int64_t> local_times;
-    std::vector<double> phase_vars;  // this epoch's own undifferenced phase variance [m^2]
     double hatch = 0.0;
 
 };

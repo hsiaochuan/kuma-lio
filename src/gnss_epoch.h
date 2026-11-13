@@ -27,31 +27,12 @@
 
 #include "common_lib.h"
 #include "laser_mapping_param.h"
+#include "gnss_obs.h"
 
 namespace kuma_lio {
 
 // Receiver clock index of a satellite system: GPS (and QZSS, which keeps GPS time), GLO, GAL, BDS; -1 otherwise.
 int GnssSysIdx(int sys);
-
-// Local-to-ECEF alignment from antenna positions in the local frame and their SPP fixes: R_ecef_enu is the ENU
-// frame at the mean fix turned by the yaw that best matches the horizontal tracks.  False below 3 fixes or when the
-// horizontal spread is under `min_travel` [m].
-bool GnssAlignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu, const std::vector<Vec3>& locals,
-                   const std::vector<Vec3>& ecefs, double min_travel);
-
-// Fixed-anchor TDCP (FAST-LIVGO eq. 11) of one satellite: epoch k is the anchor, epoch k+1 the current one.
-struct TdcpObs {
-    int64_t time_ns;         // epoch k+1, local time
-    int64_t anchor_time_ns;  // epoch k
-    Vec3 sv_pos;             // satellite ECEF at k+1
-    Vec3 sv_pos_anchor;      // satellite ECEF at k
-    double sv_dt;            // satellite clock bias at k+1 [s]
-    double sv_dt_anchor;     // satellite clock bias at k [s]
-    double cp_diff;          // lambda * (L_{k+1} - L_k) [m]
-    int sys_idx;             // which receiver clock the satellite reads
-    double var;              // measurement variance [m^2]
-    double sin_el;           // sine of the elevation at k+1, floored at 5 deg
-};
 
 // One GNSS epoch starting at obss.data[ei], seen at `local_time`: SPP into `sol`, the satellite arcs in `tracks`
 // extended or restarted, and, when `emit_tdcp`, one TdcpObs per satellite whose arc continues appended to `tdcp`.

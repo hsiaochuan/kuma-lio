@@ -1,9 +1,7 @@
 common:
   lid_topic: "/livox/lidar"
   imu_topic: "/vn100/imu"
-  gnss_topic: ""
   img_topic: ""
-  gnss_enable: false
   acc_ratio: false
   lidar_time_offset: 0
   image_time_offset: 0
@@ -90,8 +88,10 @@ lba:
 
 gnss:
   lever_arm: [0.0, 0.0, 0.0]
-  ali_min_travel: 50.0
+  ali_min_travel: 10.0
+  ali_refine: true  # fastlio: yaw of the alignment re-estimated from the TDCP displacements
   max_gap: 0.1
+  tdcp_dop_slip: 1.0  # [m] |phase change - integrated Doppler| above this is a cycle slip (the old fixed value)
   tdcp_enable: true
   tdcp_std: 0.02
   tdcp_outlier: 0.5

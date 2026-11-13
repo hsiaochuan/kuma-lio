@@ -24,7 +24,6 @@
 
 #include <ros/param.h>
 
-#include "gnss_epoch.h"
 namespace kuma_lio {
 
 void RESPLE_LIO::Init() {
@@ -35,7 +34,6 @@ void RESPLE_LIO::Init() {
         param->resple_.cov_P0 * dt_s * dt_s * Eigen::Matrix<double, CP_SIZE, CP_SIZE>::Identity();
     P.block<3, 3>(BA_OFFSET, BA_OFFSET) = param->resple_.cov_ba.asDiagonal();
     P.block<3, 3>(BG_OFFSET, BG_OFFSET) = param->resple_.cov_bg.asDiagonal();
-    P.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
 
     // set Q: each RCP is a (position, orientation increment) pair with its own random walk
     auto q_block = [dt_s](double std_pos, double std_ort) {
@@ -62,8 +60,6 @@ void RESPLE_LIO::Init() {
     A_mat.block(21, 9, 3, 3) = Eigen::Matrix3d::Identity();
     A_mat.block(BA_OFFSET, BA_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
     A_mat.block(BG_OFFSET, BG_OFFSET, 3, 3) = Eigen::Matrix3d::Identity();
-    A_mat.block<GNSS_SIZE, GNSS_SIZE>(CLK_OFFSET, CLK_OFFSET).setIdentity();
-
 
     param->lba_.num_threads = param->num_threads;
     lba = std::make_unique<LocalBA>(param->lba_);
@@ -89,16 +85,6 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
         scan_sampler.filter(*points_body);
         std::sort(points_body->points.begin(), points_body->points.end(),
                   [](const Point& p1, const Point& p2) { return p1.GetTimeNs() < p2.GetTimeNs(); });
-    }
-
-    sol_t sol{};
-    bool gnss_epoch_ok = false;
-    tdcp_meas.clear();
-    psr_meas.clear();
-    if (measures.obs_id > 0) {
-        gnss_epoch_ok = ProcessGnssEpoch(measures.obs_id, measures.obs_time_ns, sol);
-        if (!tdcp_meas.empty())
-            PrepareTdCpEpoch();
     }
 
     // add to imu
@@ -142,117 +128,12 @@ void RESPLE_LIO::ProcessMeasurement(MeasureGroup& measures) {
                   << P.block<3, 3>(BA_OFFSET, BA_OFFSET).diagonal().cwiseSqrt().transpose() << ") bg "
                   << bg.transpose();
     }
-
-    if (gnss_epoch_ok && !if_GNSS_aligned) {
-        // align the antenna, not the IMU, with the SPP fix
-        Eigen::Isometry3d pose = spl.Interpolate(measures.obs_time_ns);
-        Vec3 local = pose * param->level_arm;
-        Vec3 ecef(sol.rr[0], sol.rr[1], sol.rr[2]);
-        if (align_locals.empty() || (align_locals.back() - local).norm() > 0.3) {
-            align_locals.push_back(local);
-            align_ecefs.push_back(ecef);
-            if (GnssAlignment(R_ecef_enu_init, t_ecef_enu, align_locals, align_ecefs, param->ali_min_travel)) {
-                InitGnssState(sol);
-            }
-        }
-    }
-}
-
-bool RESPLE_LIO::ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol) {
-    std::vector<TdcpObs> obs;
-    if (!kuma_lio::ProcessGnssEpoch(obss, nav, *param, sat_tracks_, ei, local_time,
-                                    if_GNSS_aligned && param->tdcp_enable, sol, &obs))
-        return false;
-    for (const TdcpObs& o : obs) {
-        TimeDiffCarrierPhaseData tdcp_data;
-        tdcp_data.time_ns = o.time_ns;
-        tdcp_data.anchor_time_ns = o.anchor_time_ns;
-        tdcp_data.sv_pos = o.sv_pos;
-        tdcp_data.sv_pos_anchor = o.sv_pos_anchor;
-        tdcp_data.sv_dt = o.sv_dt;
-        tdcp_data.sv_dt_anchor = o.sv_dt_anchor;
-        tdcp_data.cp_diff = o.cp_diff;
-        tdcp_data.sys_idx = o.sys_idx;
-        tdcp_data.var = o.var;
-        tdcp_data.if_valid = true;
-        tdcp_meas.push_back(tdcp_data);
-    }
-    return true;
-}
-
-void RESPLE_LIO::PrepareTdCpEpoch() {
-    // Residual without the receiver clock step. The step is common to every system (the
-    // inter-system biases cancel between epochs), so the median across satellites estimates it.
-    const int num = static_cast<int>(tdcp_meas.size());
-    std::vector<double> res(num), var_innov(num);
-    Eigen::Matrix<double, 1, XSIZE> H_cur, H_anchor;
-    for (int i = 0; i < num; ++i) {
-        const TimeDiffCarrierPhaseData& data = tdcp_meas[i];
-        const double range = AntennaRange(data.time_ns, data.sv_pos, &H_cur);
-        const double range_anchor = AntennaRange(data.anchor_time_ns, data.sv_pos_anchor, &H_anchor);
-        res[i] = data.cp_diff + CLIGHT * (data.sv_dt - data.sv_dt_anchor) - (range - range_anchor);
-        // innovation variance without the clock column: the median below takes the clock step out
-        const Eigen::Matrix<double, 1, XSIZE> h = H_cur - H_anchor;
-        var_innov[i] = (h * P * h.transpose())(0) + data.var;
-    }
-    std::vector<double> sorted = res;
-    std::nth_element(sorted.begin(), sorted.begin() + num / 2, sorted.end());
-    const double clk_step = sorted[num / 2];
-
-    // hold the clocks of epoch k as the anchor and predict epoch k+1 from the median step
-    clk_anchor = clk;
-    clk.array() += clk_step;
-
-    // LIVO-prior chi-square test (FAST-LIVGO eq. 14) on each clock-free innovation
-    int num_valid = 0;
-    double sq_sum = 0.0;
-    for (int i = 0; i < num; ++i) {
-        const double r = res[i] - clk_step;
-        tdcp_meas[i].if_valid = r * r / var_innov[i] < param->tdcp_chi2 && std::abs(r) < param->tdcp_outlier;
-        if (tdcp_meas[i].if_valid) {
-            ++num_valid;
-            sq_sum += r * r;
-        }
-    }
-    if (num_valid < param->tdcp_min_sat) {
-        for (auto& d : tdcp_meas) d.if_valid = false;
-    }
-    LOG(INFO) << "TDCP: " << num_valid << "/" << num << " valid, rms " << std::sqrt(sq_sum / std::max(num_valid, 1))
-              << " m, clock step " << clk_step << " m, theta_ecef_enu " << theta_ecef_enu;
-}
-
-void RESPLE_LIO::InitGnssState(const sol_t& sol) {
-    // pntpos reports the GPS clock and the GLO/GAL/BDS offsets from it
-    clk(0) = CLIGHT * sol.dtr[0];
-    clk(1) = CLIGHT * (sol.dtr[0] + sol.dtr[1]);
-    clk(2) = CLIGHT * (sol.dtr[0] + sol.dtr[2]);
-    clk(3) = CLIGHT * (sol.dtr[0] + sol.dtr[3]);
-    clk_anchor = clk;
-    theta_ecef_enu = 0.0;
-
-    P.middleRows<GNSS_SIZE>(CLK_OFFSET).setZero();
-    P.middleCols<GNSS_SIZE>(CLK_OFFSET).setZero();
-    P.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
-        param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
-    P(ROT_OFFSET, ROT_OFFSET) = param->std_ext_yaw_init * param->std_ext_yaw_init;
-    P.block<3, 3>(TRANS_OFFSET, TRANS_OFFSET) =
-        param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
-
-    // one receiver oscillator drives all four clocks, plus a slow per-system bias
-    const double dt_s = param->resple_.dt_ns * 1e-9;
-    Q_mat.block<4, 4>(CLK_OFFSET, CLK_OFFSET) =
-        (param->std_clk * param->std_clk * Eigen::Matrix4d::Ones() +
-         param->std_isb * param->std_isb * Eigen::Matrix4d::Identity()) * dt_s;
-
-    if_GNSS_aligned = true;
-    LOG(INFO) << "GNSS aligned with " << align_locals.size() << " SPP fixes, t_ecef_enu " << t_ecef_enu.transpose()
-              << ", clk " << clk.transpose();
 }
 
 Eigen::Matrix<double, XSIZE, 1> RESPLE_LIO::getState() {
     Eigen::Matrix<double, CP_SIZE, 1> cps_win = spl.getRCPs();
     Eigen::Matrix<double, XSIZE, 1> state;
-    state << cps_win, ba, bg, clk, theta_ecef_enu, t_ecef_enu;
+    state << cps_win, ba, bg;
     return state;
 }
 
@@ -336,57 +217,8 @@ void RESPLE_LIO::IterativeUpdate() {
     LOG(INFO) << "Points: " << pt_meas.size()
               << " Imu: " << imu_meas.size()
               << " Effect Points: " << num_eff
-              << " GNSS " << tdcp_meas.size()
               << " Time: " << update_time << " match " << t_match << " solve " << t_solve;
 }
-double RESPLE_LIO::AntennaRange(int64_t t_ns, const Vec3& sv_pos, Eigen::Matrix<double, 1, XSIZE>* H) const {
-    Eigen::Quaterniond q_itp;
-    Jacobian43 J_ortdel;
-    Jacobian J_pos;
-    spl.itpQuaternion(t_ns, &q_itp, nullptr, H ? &J_ortdel : nullptr);
-    const Vec3 p_itp = spl.itpPosition(t_ns, H ? &J_pos : nullptr);
-    const Vec3 p_ant = q_itp * param->level_arm + p_itp;
-    const Mat3 R = RotEcefEnu();
-    const Vec3 p_ecef = R * p_ant + t_ecef_enu;
-    double e[3];
-    const double range = geodist(sv_pos.data(), p_ecef.data(), e);
-    if (!H) return range;
-
-    // d(range)/d(receiver ECEF), Sagnac term included
-    const Eigen::RowVector3d d_range =
-        -Eigen::Map<const Vec3>(e).transpose() + Eigen::RowVector3d(-OMGE / CLIGHT * sv_pos.y(), OMGE / CLIGHT * sv_pos.x(), 0.0);
-    const Eigen::RowVector3d d_range_local = d_range * R;
-    Eigen::Matrix<double, 3, 4> drot;
-    dRot(param->level_arm, q_itp, drot);
-    const Eigen::Matrix<double, 1, 4> tmp = d_range_local * drot;
-
-    H->setZero();
-
-    for (int i = 0; i < 4; i++) {
-        H->block<1, 3>(0, i * 6) = d_range_local * J_pos.d_val_d_knot[i];
-        H->block<1, 3>(0, i * 6 + 3) = tmp * J_ortdel.d_val_d_knot[i];
-    }
-    // R_init * Rz(yaw) * v, d/d(yaw) = R * (ez x v) since Rz(yaw) commutes with its own generator
-    H->block<1, 1>(0, ROT_OFFSET) = d_range_local * Vec3::UnitZ().cross(p_ant);
-    H->block<1, 3>(0, TRANS_OFFSET) = d_range;
-    return range;
-}
-
-void RESPLE_LIO::prepTdCp(TimeDiffCarrierPhaseData& tdcp_data) const {
-    if (!tdcp_data.if_valid) return;
-    // lambda*dPhi + c*d(dts) = (range_{k+1} - range_k) + (clk_{k+1} - clk_k), clk_k held at the anchor
-    Eigen::Matrix<double, 1, XSIZE> H_cur, H_anchor;
-    const double range = AntennaRange(tdcp_data.time_ns, tdcp_data.sv_pos, &H_cur);
-    const double range_anchor = AntennaRange(tdcp_data.anchor_time_ns, tdcp_data.sv_pos_anchor, &H_anchor);
-    H_anchor.leftCols<24>().setZero();
-    const int s = tdcp_data.sys_idx;
-    const double pred = range - range_anchor + clk(s) - clk_anchor(s);
-    tdcp_data.z = tdcp_data.cp_diff + CLIGHT * (tdcp_data.sv_dt - tdcp_data.sv_dt_anchor) - pred;
-    tdcp_data.H = H_cur - H_anchor;
-    tdcp_data.H(0, CLK_OFFSET + s) = 1.0;
-}
-void RESPLE_LIO::prepPsr(PsrData& psr_data) {}
-
 void RESPLE_LIO::prepIMU(ImuData& imu_data) {
     Eigen::Quaterniond q_itp;
     Eigen::Vector3d rot_vel;
@@ -486,15 +318,7 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
     for (size_t i = 0; i < imu_meas.size(); i++) {
         prepIMU(imu_meas[i]);
     }
-    int num_tdcp = 0;
-    for (int i = 0; i < tdcp_meas.size(); i++) {
-        prepTdCp(tdcp_meas[i]);
-        if (tdcp_meas[i].if_valid) ++num_tdcp;
-    }
-    for (int i = 0; i < psr_meas.size(); ++i) {
-        prepPsr(psr_meas[i]);
-    }
-    int dim_meas = 6 * imu_meas.size() + eff_lidar_num + num_tdcp;
+    int dim_meas = 6 * imu_meas.size() + eff_lidar_num;
     Eigen::Matrix<double, Eigen::Dynamic, XSIZE> H(dim_meas, XSIZE);
     Eigen::Matrix<double, Eigen::Dynamic, 1> z(dim_meas, 1);
     Eigen::Matrix<double, Eigen::Dynamic, 1> mat_cov_inv(dim_meas, 1);
@@ -517,13 +341,6 @@ void RESPLE_LIO::UpdateLiDARInertial(int eff_lidar_num, const Eigen::Matrix<doub
         H.block(idx_offset, 0, 6, XSIZE) = imu_data.H;
         mat_cov_inv.segment<6>(idx_offset) = cov_imu_inv;
         idx_offset += 6;
-    }
-    for (const TimeDiffCarrierPhaseData& tdcp_data : tdcp_meas) {
-        if (!tdcp_data.if_valid) continue;
-        z(idx_offset) = tdcp_data.z;
-        H.row(idx_offset) = tdcp_data.H;
-        mat_cov_inv(idx_offset) = 1.0 / tdcp_data.var;
-        idx_offset++;
     }
     Update(z, mat_cov_inv, H, x_prop, P_prop);
 }
@@ -635,9 +452,6 @@ void RESPLE_LIO::UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd) {
     }
     ba = xupd.segment(BA_OFFSET, 3);
     bg = xupd.segment(BG_OFFSET, 3);
-    clk = xupd.segment<4>(CLK_OFFSET);
-    theta_ecef_enu = xupd(ROT_OFFSET);
-    t_ecef_enu = xupd.segment<3>(TRANS_OFFSET);
 }
 
 }  // namespace kuma_lio

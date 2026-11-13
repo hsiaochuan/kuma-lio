@@ -24,6 +24,8 @@
 
 #include <glog/logging.h>
 
+#include <algorithm>
+
 #include "rtklib_func.h"
 
 namespace kuma_lio {
@@ -34,43 +36,6 @@ int GnssSysIdx(int sys) {
     if (sys == SYS_GAL) return 2;
     if (sys == SYS_CMP) return 3;
     return -1;
-}
-
-bool GnssAlignment(Mat3& R_ecef_enu, Vec3& t_ecef_enu, const std::vector<Vec3>& locals,
-                   const std::vector<Vec3>& ecefs, double min_travel) {
-    CHECK(locals.size() == ecefs.size());
-    int N = locals.size();
-    if (N < 3) return false;
-    // the yaw needs real horizontal spread; summed path length is fooled by jitter on a vertical climb
-    double spread = 0.0;
-    for (int i = 1; i < N; ++i) {
-        spread = std::max(spread, (locals[i] - locals[0]).head<2>().norm());
-    }
-    if (spread < min_travel) return false;
-    Vec3 mean_l(Vec3::Zero());
-    Vec3 mean_e(Vec3::Zero());
-    for (int i = 0; i < N; ++i) {
-        mean_l += locals[i];
-        mean_e += ecefs[i];
-    }
-    mean_l /= N;
-    mean_e /= N;
-    double anc_llh[3];
-    ecef2pos(mean_e.data(), anc_llh);
-    Eigen::Matrix3d R_enu_ecef;
-    xyz2enu(anc_llh, R_enu_ecef.data());
-    double num = 0.0, den = 0.0;
-    for (int i = 0; i < N; ++i) {
-        const Vec3 s = locals[i] - mean_l;
-        const Vec3 d = R_enu_ecef * (ecefs[i] - mean_e);
-        num += s.x() * d.y() - s.y() * d.x();
-        den += s.x() * d.x() + s.y() * d.y();
-    }
-    const double yaw = std::atan2(num, den);
-    const Mat3 Rz = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    R_ecef_enu = R_enu_ecef.transpose() * Rz;
-    t_ecef_enu = mean_e - R_ecef_enu * mean_l;
-    return true;
 }
 
 bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingParam& param,
@@ -109,7 +74,6 @@ bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingPar
         const double freq = sat2freq(obs.sat, obs.code[0], &nav);
         if (freq <= 0.0) continue;
         const double lambda = CLIGHT / freq;
-        const double phase_var_cur = rtklib::varerr_phase(&param.prcopt, &obs, azel[1], sys);
 
         // manage the sat track; phase and Doppler are signed, so only zero means missing
         bool psr_valid = obs.P[0] > 0.0;
@@ -127,10 +91,6 @@ bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingPar
                 arc_continu = false;
                 break;
             }
-            if (tracks[obs.sat].obs_ids.size() >= 20) {
-                arc_continu = false;
-                break;
-            }
             int last_oi = tracks[obs.sat].obs_ids.back();
             const obsd_t& last_obs = obss.data[last_oi];
             if ((obs.LLI[0] & LLI_SLIP) || ((obs.LLI[0] & LLI_HALFC) != (last_obs.LLI[0] & LLI_HALFC))) {
@@ -145,7 +105,7 @@ bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingPar
 
             // time diff
             double dt = timediff(obs.time, last_obs.time);
-            if (dt <= 0.0 || dt > param.max_gap) {
+            if (dt <= 0.0 || dt > param.max_gap + DTTOL) {
                 arc_continu = false;
                 break;
             }
@@ -164,10 +124,10 @@ bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingPar
                 }
             }
 
-            // doppler-phase
+            // doppler-phase: the phase change against the Doppler integrated over the gap, in metres
             const double dpt = (-0.5) * lambda * (obs.D[0] + last_obs.D[0]) * dt;
             const double dcp = obs.L[0] * lambda - last_obs.L[0] * lambda;
-            if (std::abs(dcp - dpt) > param.prcopt.thresdop) {
+            if (std::abs(dcp - dpt) > param.tdcp_dop_slip) {
                 arc_continu = false;
                 break;
             }
@@ -181,15 +141,21 @@ bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingPar
             track.sv_poss.clear();
             track.local_times.clear();
             track.sv_dts.clear();
-            track.phase_vars.clear();
         }
         track.obs_ids.push_back(oi);
         track.sv_poss.push_back(sv);
         track.local_times.push_back(local_time);
         track.sv_dts.push_back(dts[si * 2 + 0]);
-        track.phase_vars.push_back(phase_var_cur);
+        // the TDCP anchor only looks one epoch back: the arc goes on, its history does not
+        if (track.obs_ids.size() > 2) {
+            track.obs_ids.erase(track.obs_ids.begin());
+            track.sv_poss.erase(track.sv_poss.begin());
+            track.local_times.erase(track.local_times.begin());
+            track.sv_dts.erase(track.sv_dts.begin());
+        }
 
         const int N = static_cast<int>(track.obs_ids.size());
+
         if (emit_tdcp && arc_continu && N >= 2) {
             const int i = N - 2;
             const obsd_t& anchor_obs = obss.data[track.obs_ids[i]];
@@ -202,11 +168,10 @@ bool ProcessGnssEpoch(const obs_t& obss, const nav_t& nav, const LaserMappingPar
             tdcp_data.sv_dt_anchor = track.sv_dts[i];
             tdcp_data.cp_diff = lambda * (obs.L[0] - anchor_obs.L[0]);
             tdcp_data.sys_idx = sys_idx;
-            tdcp_data.var = track.phase_vars[i] + phase_var_cur;
             tdcp_data.sin_el = std::max(std::sin(azel[1]), std::sin(5.0 * D2R));
             tdcp->push_back(tdcp_data);
         }
-    }  // for satellite
+    }  // for obs in one epoch
 
     return true;
 }

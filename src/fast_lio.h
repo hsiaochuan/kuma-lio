@@ -38,11 +38,14 @@
 
 namespace kuma_lio {
 
-// Voxel-SLAM IMUST: the IMU frame in the world, with a fixed gravity outside the state.
+// Voxel-SLAM IMUST: the IMU frame in the world, with a fixed gravity outside the state.  LIGO adds the placement of
+// the local frame in ECEF, ecef = R_ecef_enu Rz(yaw) local + t_ecef_enu (R_ecef_enu outside the state), and the
+// receiver clock of each system [m] (FAST-LIVGO eq. 1, without the drift).  They stay untouched until the front end's
+// own alignment places the local frame (FastLio::AlignGnss); the TDCP update estimates them from then on.
 struct FastLioState {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    static constexpr int DIM = 15;  // R p v bg ba
-    static constexpr int ROT = 0, POS = 3, VEL = 6, BG = 9, BA = 12;
+    static constexpr int DIM = 23;  // R p v bg ba | yaw t_ecef_enu clk(GPS GLO GAL BDS)
+    static constexpr int ROT = 0, POS = 3, VEL = 6, BG = 9, BA = 12, YAW = 15, TEC = 16, CLK = 19;
     using MatN = Eigen::Matrix<double, DIM, DIM>;
     using VecN = Eigen::Matrix<double, DIM, 1>;
 
@@ -56,6 +59,9 @@ struct FastLioState {
         v += dx.segment<3>(VEL);
         bg += dx.segment<3>(BG);
         ba += dx.segment<3>(BA);
+        yaw += dx(YAW);
+        t_ecef_enu += dx.segment<3>(TEC);
+        clk += dx.segment<4>(CLK);
         return *this;
     }
     Eigen::Isometry3d Isometry() const {
@@ -72,6 +78,9 @@ struct FastLioState {
         dx.segment<3>(VEL) = v - b.v;
         dx.segment<3>(BG) = bg - b.bg;
         dx.segment<3>(BA) = ba - b.ba;
+        dx(YAW) = yaw - b.yaw;
+        dx.segment<3>(TEC) = t_ecef_enu - b.t_ecef_enu;
+        dx.segment<4>(CLK) = clk - b.clk;
         return dx;
     }
 
@@ -80,24 +89,10 @@ struct FastLioState {
     Vec3 v = Vec3::Zero();
     Vec3 bg = Vec3::Zero();
     Vec3 ba = Vec3::Zero();
+    double yaw = 0.0;                // [rad] about the ENU up axis
+    Vec3 t_ecef_enu = Vec3::Zero();  // [m]
+    Vec4 clk = Vec4::Zero();         // [m] c * receiver clock bias as read by GPS, GLO, GAL, BDS
     MatN cov;
-};
-
-struct RTKState {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    static constexpr int DIM = 8;  // clk (4) | yaw | t_ecef_enu (3)
-    static constexpr int CLK = 0, YAW = 4, T_ECEF_ENU = 5;
-    using Vec = Eigen::Matrix<double, DIM, 1>;
-
-    Mat3 RotEcefEnu() const { return R_ecef_enu_rollpitch * Eigen::AngleAxisd(yaw, Vec3::UnitZ()).toRotationMatrix(); }
-
-    Vec4 clk = Vec4::Zero();         // c * receiver clock [m]: GPS, GLO, GAL, BDS
-    Vec4 clk_anchor = Vec4::Zero();  // the clocks at the anchor epoch, held fixed
-    Vec3 t_ecef_enu = Vec3::Zero();
-    Mat3 R_ecef_enu_rollpitch = Mat3::Identity();
-    double yaw = 0.0;
-    Eigen::Matrix<double, DIM, DIM> P = Eigen::Matrix<double, DIM, DIM>::Identity();
-    Eigen::Matrix<double, FastLioState::DIM, DIM> P_ng = Eigen::Matrix<double, FastLioState::DIM, DIM>::Zero();
 };
 
 struct FastLioPoint {
@@ -134,10 +129,9 @@ class FastLio {
     // Loop closure coupled to the BA and the map (--pgo_config); null without.
     std::unique_ptr<LoopClosure> loop;
 
-    // LIGO: the RINEX observations and ephemerides (LaserMapping::ReadObsNav), and the GNSS state.
+    // LIGO: the RINEX observations and ephemerides (LaserMapping::ReadObsNav).
     obs_t obss{};
     nav_t nav{};
-    RTKState rtk_state;
 
    private:
     // State of the propagation at an IMU sample, with what holds until the next one.
@@ -149,6 +143,22 @@ class FastLio {
         Vec3 v = Vec3::Zero();
         Vec3 gyro = Vec3::Zero();  // bias free
         Vec3 acc = Vec3::Zero();   // world frame, with gravity
+    };
+
+    // LIGO, FAST-LIVGO Sec. IV-D-1: the per-satellite TDCP rows of the epoch that closes this frame, against the
+    // previous frame end as a fixed anchor (eq. 11): its antenna position in the local frame and its receiver clocks
+    // are constants, while yaw and t_ecef_enu, being parameters rather than per-epoch states, are the current ones
+    // at both epochs.
+    struct Tdcp {
+        bool valid = false;
+        std::vector<TdcpObs> obs;       // anchored at the previous frame end
+        Vec3 ant_anchor = Vec3::Zero();  // antenna at the previous frame end, local frame
+        Vec4 clk_anchor = Vec4::Zero();  // receiver clocks at the previous frame end [m]
+        std::vector<bool> mask;           // rows past the gate of the first iteration
+        int num_used = 0;
+        int num_gated = 0;
+        double postfit_rms = 0.0;        // [m] over the rows used, at the updated state
+        double postfit_nrms = 0.0;       // the same, each row over its sigma
     };
 
     // Voxel-SLAM IMUEKF::motion_blur: x to `end_ns`, and the frame's points to that instant, LiDAR frame.
@@ -163,29 +173,34 @@ class FastLio {
     void ProcessSubFrames(MeasureGroup& measures, int n);
     void SetPoints(const std::vector<Vec3>& scan);
     int Match();
-    // Voxel-SLAM lio_state_estimation: LIO on the nav state, or, once the GNSS is aligned, on the nav and GNSS states
-    // together with the valid TDCP rows in tdcp_ when there are any (LIGO).  False when the matched planes leave a
-    // direction unobserved.
+    // Voxel-SLAM lio_state_estimation on the nav state; in LIGO mode the TDCP rows of the frame end (tdcp_) join
+    // the LiDAR rows.  False when the matched planes leave a direction unobserved.
     bool IteratedUpdate();
 
-    // GNSS (LIGO), after RESPLE_LIO::ProcessGnssEpoch, PrepareTdCpEpoch and InitGnssState.
-    // Range from the antenna at the IMU pose (R, p) to `sv_pos`; H, when given, is d(range)/d(nav error, GNSS state)
-    // with the nav columns only when `nav_cols`.
-    double AntennaRange(const Mat3& R, const Vec3& pos, const Vec3& sv_pos, bool if_eval_jaco,
-                        Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
-    // TDCP residual (measured minus predicted) of one row at the current state, and its Jacobian.
-    double TdcpResidual(const TdcpObs& tdcp_obs, Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const;
-    // The epoch's clock step from the median clock-free residual of tdcp_epoch_, then the chi-square test on the
-    // prior; tdcp_ gets the rows that pass, or stays empty below tdcp_min_sat.  The state must be at the epoch.
-    void PrepareTdcp();
-    void InitGnss(const sol_t& sol);
-
+    // Per row of tdcp_, predicted minus measured TDCP at `s` [m] (eq. 11) and, when `jac` is given, its Jacobian
+    // on the error state.
+    void TdcpResiduals(const FastLioState& x, std::vector<double>* residuals,
+                       Eigen::aligned_vector<FastLioState::VecN>* jacos) const;
+    // The TDCP rows into the normal equations of IteratedUpdate; `if_gate` (the first iteration) decides which rows
+    // are used: the chi-square test on the prior (eq. 14).
+    void AddTdcpObservations(bool if_gate, const FastLioState& x_prop, FastLioState::MatN* HTH, FastLioState::VecN* HTz);
+    // LIGO, until aligned, with the epoch that closed this frame (x at its end): the two-step placement of the local
+    // frame in ECEF, R_ecef_enu from the first SPP fix, then yaw and t_ecef_enu from GnssAlignment once the antenna
+    // track has spread ali_min_travel; with ali_refine the yaw is re-estimated from the window's TDCP
+    // (RefineYawTdcp) and t_ecef_enu re-matched to the SPP centroids under it.  Turns the GNSS states on, with the
+    // SPP clocks and their initial covariance.
+    void AlignGnss(const GnssEpoch& epoch);
 
     Imu last_imu_;
     int degrade_cnt_ = 0;
     std::unordered_map<int, SatTrack> sat_tracks_;
-    std::vector<TdcpObs> tdcp_epoch_;  // this frame's TDCP rows, epoch at the frame end
-    std::vector<TdcpObs> tdcp_;        // the valid ones, set by PrepareTdcp just before the frame-end update
+    Tdcp tdcp_;
+    bool gnss_aligned_ = false;
+    Mat3 R_ecef_enu_ = Mat3::Identity();  // the ENU frame at the first SPP fix
+    // the alignment's data until it succeeds: antenna in the local frame and its SPP fix every 0.3 m, and, for
+    // ali_refine, every epoch by its time with its antenna
+    std::vector<Vec3> align_locals_, align_ecefs_;
+    GnssAlignWindow align_window_;
 
     FastLioState::MatN phi_ = FastLioState::MatN::Identity();  // error-state transition of the last Propagate
 };

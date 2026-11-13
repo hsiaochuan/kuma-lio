@@ -1,9 +1,7 @@
 common:
   lid_topic: "/livox/lidar"
   imu_topic: "/livox/imu"
-  gnss_topic: "/ublox_driver/receiver_lla"
   img_topic: "/left_camera/image/compressed"
-  gnss_enable: true
   acc_ratio: true
   lidar_time_offset: 0
   image_time_offset: 0
@@ -54,7 +52,7 @@ resple:
   fb_keep_cov: true
 
 fastlio:
-  mode: LIVO
+  mode: LIGO
   # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
   sub_max: 4
   # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
@@ -89,9 +87,13 @@ lba:
   map_range: 1000.0
 
 gnss:
-  lever_arm: [0.0, 0.0, 0.0]
-  ali_min_travel: 50.0
+  # raw GNSS (u-blox) antenna in the IMU frame: CAD_extrinsic.yaml "Raw GNSS receiver antenna phase center in
+  # LiDAR frame" (-0.3501, 0.1631, 0) + extrin_t_il; the RTK antenna entry is the ground truth's, not this one
+  lever_arm: [-0.30845, 0.18636, -0.0284]
+  ali_min_travel: 10.0
+  ali_refine: true  # fastlio: yaw of the alignment re-estimated from the TDCP displacements
   max_gap: 1.0
+  tdcp_dop_slip: 1.0  # [m] |phase change - integrated Doppler| above this is a cycle slip (the old fixed value)
   tdcp_enable: true
   tdcp_std: 0.1
   tdcp_outlier: 0.5

@@ -472,7 +472,6 @@ class VoxelInitializer {
                 const double freq = sat2freq(obs.sat, obs.code[0], &nav);
                 if (freq <= 0.0) continue;
                 const double lambda = CLIGHT / freq;
-                const double phase_var_cur = rtklib::varerr_phase(&param->prcopt, &obs, azel[1], sys);
 
                 // manage the sat track; phase and Doppler are signed, so only zero means missing
                 bool psr_valid = obs.P[0] > 0.0;
@@ -542,20 +541,17 @@ class VoxelInitializer {
                     sat_tracks_[obs.sat].sv_poss.push_back(sv);
                     sat_tracks_[obs.sat].local_times.push_back(local_time);
                     sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
-                    sat_tracks_[obs.sat].phase_vars.push_back(phase_var_cur);
                 } else {
                     // clear the track
                     sat_tracks_[obs.sat].obs_ids.clear();
                     sat_tracks_[obs.sat].sv_poss.clear();
                     sat_tracks_[obs.sat].local_times.clear();
                     sat_tracks_[obs.sat].sv_dts.clear();
-                    sat_tracks_[obs.sat].phase_vars.clear();
                     // insert the one observation
                     sat_tracks_[obs.sat].obs_ids.push_back(oi);
                     sat_tracks_[obs.sat].sv_poss.push_back(sv);
                     sat_tracks_[obs.sat].local_times.push_back(local_time);
                     sat_tracks_[obs.sat].sv_dts.push_back(dts[si * 2 + 0]);
-                    sat_tracks_[obs.sat].phase_vars.push_back(phase_var_cur);
                 }
 
                 SatTrack& track = sat_tracks_[obs.sat];
@@ -1406,29 +1402,6 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr& msg_in) {
     imu_buffer_.emplace_back(imu);
 }
 
-void LaserMapping::GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr& msg) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-    gtime_t gpst{};
-    gpst.time = msg->header.stamp.sec;
-    gpst.sec = NS_TO_S(msg->header.stamp.nsec);
-
-    sol_t sol{};
-    sol.time = gpst;
-    const double pos[3] = {msg->latitude * D2R, msg->longitude * D2R, msg->altitude};
-    pos2ecef(pos, sol.rr);
-    const uint8_t fix_type = static_cast<uint8_t>(msg->status.status);
-    const uint8_t carr_soln = static_cast<uint8_t>(msg->status.service);
-    if (fix_type == 0 || fix_type == 5) {
-        sol.stat = SOLQ_NONE;
-    } else if (carr_soln == 2) {
-        sol.stat = SOLQ_FIX;
-    } else if (carr_soln == 1) {
-        sol.stat = SOLQ_FLOAT;
-    } else {
-        sol.stat = SOLQ_SINGLE;
-    }
-    sol.type = 0;
-}
 bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& nav_fname, const std::string& sol_fname) {
     gtime_t ts{}, te{};  // zero disable the time window filter
 
@@ -1445,10 +1418,6 @@ bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& n
     // RTKLIB expects observations sorted by time/sat and ephemerides uniquified before use.
     sortobs(&obss);
     uniqnav(&nav);
-    if (resple_lio_) {
-        resple_lio_->obss = obss;
-        resple_lio_->nav = nav;
-    }
     if (fast_lio_) {
         fast_lio_->obss = obss;
         fast_lio_->nav = nav;

@@ -29,7 +29,6 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Imu.h>
-#include <sensor_msgs/NavSatFix.h>
 
 #include <rosbag/bag.h>
 #include "fast_lio.h"
@@ -65,7 +64,6 @@ class LaserMapping {
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
     void ImageCallBack(const sensor_msgs::Image::ConstPtr &msg);
     void CompressedImageCallback(const sensor_msgs::CompressedImage::ConstPtr &msg);
-    void GnssSolutionCallback(const sensor_msgs::NavSatFix::ConstPtr &msg);
     bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
     bool CollectMeasures(const std::int64_t& meas_end);

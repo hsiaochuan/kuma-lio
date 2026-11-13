@@ -132,9 +132,7 @@ class LaserMappingParam {
     }
     std::string lidar_topic_;
     std::string imu_topic_;
-    std::string gnss_topic_;
     std::string img_topic_;  // empty: no images
-    bool gnss_enable_;
     bool acc_ratio_;
     double lidar_time_offset_;
     double image_time_offset_;
@@ -163,7 +161,9 @@ class LaserMappingParam {
 
     Vec3 level_arm;
     double max_gap;
-    double ali_min_travel;
+    double tdcp_dop_slip;        // cycle slip when the phase change and the integrated Doppler differ by more [m]
+    double ali_min_travel;       // horizontal spread of the SPP fixes before the local frame is placed in ECEF [m]
+    bool ali_refine;             // fastlio: re-estimate the alignment's yaw from the window's TDCP (RefineYawTdcp)
     bool tdcp_enable;
     double tdcp_std;             // TDCP noise at zenith, scaled by 1/sin(el) [m]
     double tdcp_outlier;         // |residual - epoch median| hard cap [m]
@@ -200,9 +200,7 @@ class LaserMappingParam {
             const YAML::Node common = yaml["common"];
             lidar_topic_ = ConfigKey<std::string>(common, "lid_topic");
             imu_topic_ = ConfigKey<std::string>(common, "imu_topic");
-            gnss_topic_ = ConfigKey<std::string>(common, "gnss_topic");
             img_topic_ = ConfigKey<std::string>(common, "img_topic");
-            gnss_enable_ = ConfigKey<bool>(common, "gnss_enable");
             acc_ratio_ = ConfigKey<bool>(common, "acc_ratio");
             lidar_time_offset_ = ConfigKey<double>(common, "lidar_time_offset");
             image_time_offset_ = ConfigKey<double>(common, "image_time_offset");
@@ -286,7 +284,9 @@ class LaserMappingParam {
             const YAML::Node g = yaml["gnss"];
             level_arm = ConfigVec3(g, "lever_arm");
             ali_min_travel = ConfigKey<double>(g, "ali_min_travel");
+            ali_refine = ConfigKey<bool>(g, "ali_refine");
             max_gap = ConfigKey<double>(g, "max_gap");
+            tdcp_dop_slip = ConfigKey<double>(g, "tdcp_dop_slip");
             tdcp_enable = ConfigKey<bool>(g, "tdcp_enable");
             tdcp_std = ConfigKey<double>(g, "tdcp_std");
             tdcp_outlier = ConfigKey<double>(g, "tdcp_outlier");

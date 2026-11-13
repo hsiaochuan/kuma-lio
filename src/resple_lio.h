@@ -33,8 +33,8 @@
 #include "spline_state.h"
 #include "timer.h"
 namespace kuma_lio {
-// window control points (4 x 6) | ba | bg | receiver clocks (4) | yaw_ecef_enu (1) | t_ecef_enu
-constexpr int XSIZE = 38;
+// window control points (4 x 6) | ba | bg
+constexpr int XSIZE = 30;
 struct PointData {
     Vec3 point_body;
     Vec3 point_world;
@@ -66,31 +66,6 @@ struct ImuData {
           z(other.z), if_acc_valid(other.if_acc_valid), if_gyro_valid(other.if_gyro_valid) {}
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
-// Fixed-anchor TDCP (FAST-LIVGO eq. 11): epoch k is the anchor, epoch k+1 lies in the window.
-struct TimeDiffCarrierPhaseData {
-    int64_t time_ns;         // epoch k+1
-    int64_t anchor_time_ns;  // epoch k
-    Vec3 sv_pos;             // satellite ECEF at k+1
-    Vec3 sv_pos_anchor;      // satellite ECEF at k
-    double sv_dt;            // satellite clock bias at k+1 [s]
-    double sv_dt_anchor;     // satellite clock bias at k [s]
-    double cp_diff;          // lambda * (L_{k+1} - L_k) [m]
-    int sys_idx;             // which receiver clock the satellite reads
-    double var;              // measurement variance [m^2]
-    Eigen::Matrix<double, 1, XSIZE> H;
-    double z;
-    bool if_valid = false;
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};
-struct PsrData {
-    int64_t time_ns;
-    Vec3 sv_pos;
-    double sv_dt;
-    double ion_delay;
-    double tro_delay;
-    double noise_var;
-    double psr_measure;
-};
 class RESPLE_LIO {
    public:
     static constexpr int CP_SIZE = 24;
@@ -98,10 +73,6 @@ class RESPLE_LIO {
     static constexpr int Q1 = 3, Q2 = 9, Q3 = 15, Q4 = 21;
     static constexpr int BA_OFFSET = 24;
     static constexpr int BG_OFFSET = 27;
-    static constexpr int CLK_OFFSET = 30;    // c * receiver clock [m]: GPS, GLO, GAL, BDS
-    static constexpr int ROT_OFFSET = 34;    // yaw, R_ecef_enu = R_ecef_enu_init * Rz(yaw), 1-dim
-    static constexpr int TRANS_OFFSET = 35;  // t_ecef_enu [m]
-    static constexpr int GNSS_SIZE = 8;
     static constexpr double GRAVITY_NORM = 9.81;
     static constexpr int kMinParallelPoints = 2048;
     void Init();
@@ -111,13 +82,6 @@ class RESPLE_LIO {
     Eigen::Matrix<double, XSIZE, 1> getState();
     int Match();
     void IterativeUpdate();
-    bool ProcessGnssEpoch(int ei, int64_t local_time, sol_t& sol);
-    void PrepareTdCpEpoch();
-    void InitGnssState(const sol_t& sol);
-    Mat3 RotEcefEnu() const { return R_ecef_enu_init * Eigen::AngleAxisd(theta_ecef_enu, Vec3::UnitZ()).toRotationMatrix(); }
-    double AntennaRange(int64_t t_ns, const Vec3& sv_pos, Eigen::Matrix<double, 1, XSIZE>* H) const;
-    void prepTdCp(TimeDiffCarrierPhaseData& tdcp_data) const;
-    void prepPsr(PsrData& psr_data);
     void prepIMU(ImuData& imu_data);
     void prepLiDAR(PointData& pt_data) const;
     void propRCP();
@@ -163,8 +127,6 @@ class RESPLE_LIO {
     }
     void UpdateState(const Eigen::Matrix<double, XSIZE, 1>& xupd);
 
-    bool if_GNSS_aligned = false;
-
     SplineState spl;
     Eigen::Matrix<double, XSIZE, XSIZE> P;
     Eigen::Matrix<double, XSIZE, XSIZE> Q_mat;
@@ -186,21 +148,5 @@ class RESPLE_LIO {
     void AlignToBA(int64_t t_ns, const LbaState& x);
     Eigen::aligned_deque<ImuData> imu_meas;
     Eigen::aligned_deque<PointData> pt_meas;
-    Eigen::aligned_deque<TimeDiffCarrierPhaseData> tdcp_meas;
-    Eigen::aligned_deque<PsrData> psr_meas;
-    obs_t obss{};
-    nav_t nav{};
-    std::unordered_map<int, SatTrack> sat_tracks_;
-
-
-    Vec4 clk = Vec4::Zero();
-    Vec4 clk_anchor = Vec4::Zero();  // receiver clocks at the anchor epoch, held fixed
-    Mat3 R_ecef_enu_init = Mat3::Identity();
-    double theta_ecef_enu = 0.0;  // yaw-only correction on top of R_ecef_enu_init
-    Vec3 t_ecef_enu = Vec3::Zero();
-
-    // SPP track collected for the initial local-to-ECEF alignment
-    std::vector<Vec3> align_locals;
-    std::vector<Vec3> align_ecefs;
 };
 }  // namespace kuma_lio

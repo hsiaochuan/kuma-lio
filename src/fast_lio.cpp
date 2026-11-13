@@ -23,6 +23,7 @@
 #include "fast_lio.h"
 
 #include <Eigen/Eigenvalues>
+#include <algorithm>
 #include <cmath>
 #include <unordered_map>
 
@@ -36,7 +37,7 @@ constexpr int kMinScanPoints = 500;     // below this the frame is downsampled a
 constexpr double kMinNormalEigen = 14;  // smallest eigenvalue of sum(n n^T) over a frame's matches
 // error-state blocks of FastLioState; a LiDAR row touches only the pose, ROT and POS, the first POSE entries
 constexpr int ROT = FastLioState::ROT, POS = FastLioState::POS, VEL = FastLioState::VEL, BG = FastLioState::BG,
-              BA = FastLioState::BA;
+              BA = FastLioState::BA, YAW = FastLioState::YAW, TEC = FastLioState::TEC, CLK = FastLioState::CLK;
 constexpr int POSE = 6;
 static_assert(ROT == 0 && POS == 3, "the pose block must be the first POSE entries");
 }  // namespace
@@ -47,7 +48,6 @@ void FastLio::Init(const std::string& pgo_config) {
     LOG(INFO) << "local BA map shared with the odometry: voxel " << param->lba_.voxel_size << " window "
               << param->lba_.win_size;
     if (!pgo_config.empty()) {
-        CHECK(param->fast_lio_.mode != FastLioMode::LIGO) << "--pgo_config: the GNSS state is not corrected by a loop";
         pgo::PgoParam pgo_prm;
         pgo::LoadPgoParam(pgo_config, &pgo_prm);
         pgo_prm.keep_kf_points = true;
@@ -84,6 +84,10 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
     Vec3 pos = x.p, vel = x.v;
     Mat3 rot = x.R;
     FastLioState::MatN F, cov_w;
+    Eigen::Matrix4d q_clk = Eigen::Matrix4d::Zero();
+    if (gnss_aligned_)
+        q_clk = param->std_clk * param->std_clk * Eigen::Matrix4d::Ones() +
+                param->std_isb * param->std_isb * Eigen::Matrix4d::Identity();
     phi_.setIdentity();
     for (size_t i = 0; i + 1 < imus.size(); ++i) {
         const Imu& head = *imus[i];
@@ -115,6 +119,7 @@ void FastLio::Propagate(const MeasureGroup& measures, int64_t end_ns, std::vecto
         cov_w.block<3, 3>(VEL, VEL) = rot * cov_acc.asDiagonal() * rot.transpose() * dt * dt;
         cov_w.block<3, 3>(BG, BG).diagonal() = cov_bg * dt * dt;
         cov_w.block<3, 3>(BA, BA).diagonal() = cov_ba * dt * dt;
+        cov_w.block<4, 4>(CLK, CLK) = q_clk * dt;
         x.cov = F * x.cov * F.transpose() + cov_w;
         phi_ = F * phi_;
 
@@ -236,7 +241,6 @@ int FastLio::Match() {
 bool FastLio::IteratedUpdate() {
     using MatN = FastLioState::MatN;
     using VecN = FastLioState::VecN;
-    constexpr int DIM = FastLioState::DIM;
     const FastLioState x_prop = x;
     const MatN cov_inv = x.cov.inverse();
     MatN G = MatN::Zero(), H_T_H = MatN::Zero();
@@ -260,12 +264,17 @@ bool FastLio::IteratedUpdate() {
             nnt += pt.normal * pt.normal.transpose();
         }
 
+        // the LiDAR rows touch only the pose; the TDCP rows also the yaw, t_ecef_enu and the clocks
+        H_T_H.setZero();
         H_T_H.block<POSE, POSE>(ROT, ROT) = HTH;
+        VecN HTz_all = VecN::Zero();
+        HTz_all.segment<POSE>(ROT) = HTz;
+        if (tdcp_.valid) AddTdcpObservations(iter == 0, x_prop, &H_T_H, &HTz_all);
+
         const MatN K_1 = (H_T_H + cov_inv).inverse();
-        G.block<DIM, POSE>(0, ROT) = K_1.block<DIM, POSE>(0, ROT) * HTH;
+        G = K_1 * H_T_H;
         const VecN vec = x_prop - x;
-        const VecN solution =
-            K_1.block<DIM, POSE>(0, ROT) * HTz + vec - G.block<DIM, POSE>(0, ROT) * vec.segment<POSE>(ROT);
+        const VecN solution = K_1 * HTz_all + vec - G * vec;
         x += solution;
 
         const bool converged =
@@ -299,8 +308,8 @@ int FastLio::SubFrameCount(const MeasureGroup& measures) const {
     };
     const double sa = std_of(acc_sum, acc_sq);
     const double sg = std_of(gyr_sum, gyr_sq);
-    const double ratio = std::max(fp.sub_std_acc > 0.0 ? sa / fp.sub_std_acc : 0.0,
-                                  fp.sub_std_gyr > 0.0 ? sg / fp.sub_std_gyr : 0.0);
+    const double ratio =
+        std::max(fp.sub_std_acc > 0.0 ? sa / fp.sub_std_acc : 0.0, fp.sub_std_gyr > 0.0 ? sg / fp.sub_std_gyr : 0.0);
     return std::min(fp.sub_max, std::max(1, static_cast<int>(std::ceil(fp.sub_max * ratio))));
 }
 
@@ -309,9 +318,9 @@ void FastLio::ProcessSubFrames(MeasureGroup& measures, int n) {
     using VecN = FastLioState::VecN;
     struct Node {
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-        FastLioState prior;  // after the propagation to the end of the slice, cov = P-
-        FastLioState post;   // after its update
-        MatN phi;            // error-state transition from the previous slice's end
+        FastLioState prior;                       // after the propagation to the end of the slice, cov = P-
+        FastLioState post;                        // after its update
+        MatN phi;                                 // error-state transition from the previous slice's end
         Eigen::aligned_vector<FastLioPoint> pts;  // body frame at the end of the slice
     };
     Eigen::aligned_vector<Node> nodes(n);
@@ -321,6 +330,7 @@ void FastLio::ProcessSubFrames(MeasureGroup& measures, int n) {
     const PointCloud& cloud = *measures.lidar_;
     size_t pi = 0, ii = 0;
     MeasureGroup slice;
+    const bool tdcp_valid = tdcp_.valid;
     for (int j = 0; j < n; ++j) {
         const bool last = j == n - 1;
         const int64_t tj = last ? t1 : t0 + (t1 - t0) * (j + 1) / n;
@@ -339,7 +349,7 @@ void FastLio::ProcessSubFrames(MeasureGroup& measures, int n) {
         std::vector<Vec3> down = UniformSample(scan, fast_opt.down_size);
         if (static_cast<int>(down.size()) < kMinScanPoints / n) down = UniformSample(scan, fast_opt.down_size / 2);
         SetPoints(down);
-        if (last && !tdcp_epoch_.empty()) PrepareTdcp();
+        tdcp_.valid = tdcp_valid && last;  // the epoch is at the frame end: its rows are the last slice's
         if (!points.empty()) {
             if (IteratedUpdate()) {
                 if (degrade_cnt_ > 0) degrade_cnt_--;
@@ -393,15 +403,31 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     Timer timer;
     for (const Imu& imu : measures.imu_) lba->AddImu(imu.time_ns, imu.angular_velocity, imu.linear_acceleration);
 
-    // LIGO: the frame ends on a GNSS epoch; its TDCP rows join the update at the frame end
-    sol_t sol{};
-    bool gnss_epoch_ok = false;
-    tdcp_epoch_.clear();
-    tdcp_.clear();
+    // LIGO: the frame ends on a GNSS epoch; its TDCP rows join the update at the frame end, and until the alignment
+    // succeeds the epoch feeds it
+    tdcp_ = Tdcp();
+    std::optional<GnssEpoch> gnss_epoch;
     if (param->fast_lio_.mode == FastLioMode::LIGO && measures.obs_id >= 0 && obss.n > 0) {
         CHECK_EQ(measures.obs_time_ns, measures.mea_end_);
-        gnss_epoch_ok = ProcessGnssEpoch(obss, nav, *param, sat_tracks_, measures.obs_id, measures.obs_time_ns,
-                                         param->tdcp_enable, sol, &tdcp_epoch_);
+        // SPP and TDCP rows of the epoch
+        sol_t sol{};
+        GnssEpoch epoch;
+        if (ProcessGnssEpoch(obss, nav, *param, sat_tracks_, measures.obs_id, measures.obs_time_ns, param->tdcp_enable,
+                             sol, &epoch.tdcp_obs)) {
+            epoch.time_ns = measures.obs_time_ns;
+            epoch.ecef_spp = Vec3(sol.rr[0], sol.rr[1], sol.rr[2]);
+            epoch.clk_spp =
+                CLIGHT * Vec4(sol.dtr[0], sol.dtr[0] + sol.dtr[1], sol.dtr[0] + sol.dtr[2], sol.dtr[0] + sol.dtr[3]);
+            // once aligned, the rows anchored at the previous frame end go to the update with the anchor
+            if (param->tdcp_enable && gnss_aligned_) {
+                tdcp_.ant_anchor = x.R * param->level_arm + x.p;  // x is still the previous frame end
+                tdcp_.clk_anchor = x.clk;
+                for (const TdcpObs& obs : epoch.tdcp_obs)
+                    if (obs.anchor_time_ns == last_end_ns) tdcp_.obs.push_back(obs);
+                tdcp_.valid = static_cast<int>(tdcp_.obs.size()) >= param->tdcp_min_sat;
+            }
+            gnss_epoch = std::move(epoch);
+        }
     }
 
     const int n_sub = SubFrameCount(measures);
@@ -413,7 +439,6 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
         std::vector<Vec3> down = UniformSample(scan, down_size);
         if (static_cast<int>(down.size()) < kMinScanPoints) down = UniformSample(scan, down_size / 2);
         SetPoints(down);
-        if (!tdcp_epoch_.empty()) PrepareTdcp();
 
         if (!points.empty()) {
             if (IteratedUpdate()) {
@@ -426,6 +451,20 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
         ProcessSubFrames(measures, n_sub);
     }
     const double t_update = timer.ElapsedMiniSeconds(true);
+    if (tdcp_.num_used > 0) {
+        // post-fit at the updated state, before the BA moves it
+        std::vector<double> residuals;
+        TdcpResiduals(x, &residuals, nullptr);
+        double ss = 0.0, nn = 0.0;
+        for (size_t k = 0; k < residuals.size(); ++k) {
+            if (!tdcp_.mask[k]) continue;
+            const double s_el = param->tdcp_std / tdcp_.obs[k].sin_el;
+            ss += residuals[k] * residuals[k];
+            nn += residuals[k] * residuals[k] / (2.0 * s_el * s_el);
+        }
+        tdcp_.postfit_rms = std::sqrt(ss / tdcp_.num_used);
+        tdcp_.postfit_nrms = std::sqrt(nn / tdcp_.num_used);
+    }
 
     LbaState odom;
     odom.R = x.R;
@@ -437,8 +476,7 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
     frame_points.reserve(points.size());
     for (const FastLioPoint& pt : points) frame_points.push_back(LbaPoint{pt.body, pt.var});
     // Voxel-SLAM keyframe_loading, before the frame goes in so one Refresh covers both
-    if (loop)
-        loop->ReloadKeyframe(x.p);
+    if (loop) loop->ReloadKeyframe(x.p);
     if (lba->AddFrame(measures.mea_end_, odom, std::move(frame_points), gravity)) {
         LocalBA::MargScan scan;
         Eigen::Isometry3d dx;
@@ -451,124 +489,129 @@ void FastLio::ProcessMeasurement(MeasureGroup& measures) {
         x.R = lba->Newest().R;
         x.p = lba->Newest().p;
     }
+    if (gnss_epoch && !gnss_aligned_) AlignGnss(*gnss_epoch);
     for (FastLioPoint& pt : points) pt.world = x.R * pt.body + x.p;
     LOG(INFO) << "time [ms]: update " << t_update << " lba " << timer.ElapsedMiniSeconds() << " raw points "
-              << measures.lidar_->size() << " degrade " << degrade_cnt_ << " sub " << n_sub << " bg " << x.bg.transpose() << " ba "
-              << x.ba.transpose();
+              << measures.lidar_->size() << " degrade " << degrade_cnt_ << " sub " << n_sub << " bg "
+              << x.bg.transpose() << " ba " << x.ba.transpose();
+    if (tdcp_.num_used + tdcp_.num_gated > 0) {
+        LOG(INFO) << "TDCP: " << tdcp_.num_used << "/" << tdcp_.obs.size() << " rows, postfit rms " << tdcp_.postfit_rms
+                  << " m, normalized " << tdcp_.postfit_nrms << ", yaw " << x.yaw * R2D << " deg, clk step "
+                  << x.clk(0) - tdcp_.clk_anchor(0) << " m";
+    }
 }
 
-double FastLio::AntennaRange(const Mat3& R, const Vec3& pos, const Vec3& sv_pos, bool if_eval_jaco,
-                             Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const {
-    const Vec3& lever = param->level_arm;
-    const Vec3 ant_pos = R * lever + pos;
-    const Mat3 R_ecef_enu = rtk_state.RotEcefEnu();
-    const Vec3 p_ecef = R_ecef_enu * ant_pos + rtk_state.t_ecef_enu;
-    double e[3];
-    const double rho = geodist(sv_pos.data(), p_ecef.data(), e);
-    if (!H)
-        return rho;
-
-    // d(range)/d(receiver ECEF), Sagnac term included
-    const Eigen::RowVector3d d_rho_drcv = -Eigen::Map<const Vec3>(e).transpose() +
-                                       Eigen::RowVector3d(-OMGE / CLIGHT * sv_pos.y(), OMGE / CLIGHT * sv_pos.x(), 0.0);
-    const Eigen::RowVector3d d_rho_dant = d_rho_drcv * R_ecef_enu;
-    H->setZero();
-    if (if_eval_jaco) {
-        // R Exp(d theta) lever = R lever - R [lever]x d theta
-        H->block<1, 3>(0, ROT) = -d_rho_dant * R * Hat(lever);
-        H->block<1, 3>(0, POS) = d_rho_dant;
+void FastLio::TdcpResiduals(const FastLioState& x, std::vector<double>* residuals,
+                            Eigen::aligned_vector<FastLioState::VecN>* jacos) const {
+    // lambda (phi_k+1 - phi_k) + c (dt_sv_k+1 - dt_sv_k) = rho_k+1 - rho_k + clk_k+1 - clk_k
+    const Vec3& l = param->level_arm;
+    const Mat3 Rz = Eigen::AngleAxisd(x.yaw, Vec3::UnitZ()).toRotationMatrix();
+    const Mat3 R_el = R_ecef_enu_ * Rz;
+    const Mat3 dR_el = R_ecef_enu_ * Hat(Vec3::UnitZ()) * Rz;  // d R_el / d yaw
+    const Vec3 a1 = x.R * l + x.p;
+    const Vec3& a0 = tdcp_.ant_anchor;
+    const Vec3 r1 = R_el * a1 + x.t_ecef_enu;
+    const Vec3 r0 = R_el * a0 + x.t_ecef_enu;
+    const Mat3 J_rot = R_el * x.R * Hat(l);  // d r1 = -R_el R [l]x dtheta for R <- R Exp(dtheta)
+    residuals->clear();
+    if (jacos) jacos->clear();
+    for (const TdcpObs& obs : tdcp_.obs) {
+        double e1[3], e0[3];  // unit vectors from the receiver to the satellite
+        const double rho1 = geodist(obs.sv_pos.data(), r1.data(), e1);
+        const double rho0 = geodist(obs.sv_pos_anchor.data(), r0.data(), e0);
+        const Vec3 u1(e1[0], e1[1], e1[2]), u0(e0[0], e0[1], e0[2]);
+        const double z = obs.cp_diff + CLIGHT * (obs.sv_dt - obs.sv_dt_anchor);
+        residuals->push_back(rho1 - rho0 + x.clk(obs.sys_idx) - tdcp_.clk_anchor(obs.sys_idx) - z);
+        if (!jacos) continue;
+        FastLioState::VecN J = FastLioState::VecN::Zero();
+        J.segment<3>(ROT) = J_rot.transpose() * u1;
+        J.segment<3>(POS) = -R_el.transpose() * u1;
+        J(YAW) = -u1.dot(dR_el * a1) + u0.dot(dR_el * a0);
+        J.segment<3>(TEC) = u0 - u1;  // t_ecef_enu cancels up to the change of the line of sight
+        J(CLK + obs.sys_idx) = 1.0;
+        jacos->push_back(J);
     }
-    // R_init Rz(yaw) v, d/d(yaw) = R (ez x v)
-    (*H)(0, FastLioState::DIM + RTKState::YAW) = (d_rho_dant * Vec3::UnitZ().cross(ant_pos)).value();
-    H->block<1, 3>(0, FastLioState::DIM + RTKState::T_ECEF_ENU) = d_rho_drcv;
-    return rho;
 }
 
-double FastLio::TdcpResidual(const TdcpObs& tdcp_obs,
-                             Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM>* H) const {
-    // lambda*dPhi + c*d(dts) = (range_{k+1} - range_k) + (clk_{k+1} - clk_k)
-    Mat3 R_anchor;
-    Vec3 p_anchor;
-    Eigen::Matrix<double, 1, FastLioState::DIM + RTKState::DIM> H_anchor;
-    const double range = AntennaRange(x.R, x.p, tdcp_obs.sv_pos, true, H);
-    const double range_anchor = AntennaRange(R_anchor, p_anchor, tdcp_obs.sv_pos_anchor, false, H ? &H_anchor : nullptr);
-    const int s = tdcp_obs.sys_idx;
-    const double pred_range = range - range_anchor + rtk_state.clk(s) - rtk_state.clk_anchor(s);
-    if (H) {
-        *H -= H_anchor;
-        (*H)(0, FastLioState::DIM + RTKState::CLK + s) = 1.0;
+void FastLio::AddTdcpObservations(bool if_gate, const FastLioState& x_prop, FastLioState::MatN* HTH,
+                                  FastLioState::VecN* HTz) {
+    std::vector<double> residuals;
+    Eigen::aligned_vector<FastLioState::VecN> jacobians;
+    TdcpResiduals(x, &residuals, &jacobians);
+    const size_t n = residuals.size();
+    // one row: tdcp_std / sin(el) at zenith for each of its two epochs
+    std::vector<double> var(n);
+    for (size_t k = 0; k < n; ++k) {
+        const double s_el = param->tdcp_std / tdcp_.obs[k].sin_el;
+        var[k] = 2.0 * s_el * s_el;
     }
-    return tdcp_obs.cp_diff + CLIGHT * (tdcp_obs.sv_dt - tdcp_obs.sv_dt_anchor) - pred_range;
-}
-
-void FastLio::PrepareTdcp() {
-    constexpr int N = FastLioState::DIM;
-    constexpr int NG = RTKState::DIM;
-    using RowJ = Eigen::Matrix<double, 1, N + NG>;
-    Eigen::Matrix<double, N + NG, N + NG> cov;
-    cov.topLeftCorner<N, N>() = x.cov;
-    cov.topRightCorner<N, NG>() = rtk_state.P_ng;
-    cov.bottomLeftCorner<NG, N>() = rtk_state.P_ng.transpose();
-    cov.bottomRightCorner<NG, NG>() = rtk_state.P;
-
-    std::vector<TdcpObs> rows;
-    std::vector<double> res, var_innov;
-    Mat3 R_anchor;
-    Vec3 p_anchor;
-    for (TdcpObs& obs : tdcp_epoch_) {
-        // the phase noise alone ignores multipath, the anchor pose error and the antenna-to-IMU mismatch:
-        // tdcp_std at zenith for each of the two epochs, scaled by 1/sin(el), as the offline graph weighs them
-        if (param->tdcp_std > 0.0) obs.var = 2.0 * (param->tdcp_std / obs.sin_el) * (param->tdcp_std / obs.sin_el);
-        RowJ H_cur, H_anchor;
-        const double range = AntennaRange(x.R, x.p, obs.sv_pos, true, &H_cur);
-        const double range_anchor = AntennaRange(R_anchor, p_anchor, obs.sv_pos_anchor, false, &H_anchor);
-        rows.push_back(obs);
-        res.push_back(obs.cp_diff + CLIGHT * (obs.sv_dt - obs.sv_dt_anchor) - (range - range_anchor));
-        // innovation variance without the clock column: the median below takes the clock step out
-        const RowJ h = H_cur - H_anchor;
-        var_innov.push_back((h * cov * h.transpose())(0) + obs.var);
-    }
-    const int num = static_cast<int>(rows.size());
-    tdcp_.clear();
-    if (num == 0) return;
-    std::vector<double> sorted = res;
-    std::nth_element(sorted.begin(), sorted.begin() + num / 2, sorted.end());
-    const double clk_step = sorted[num / 2];
-
-    // hold the clocks of epoch k as the anchor and predict epoch k+1 from the median step
-    rtk_state.clk_anchor = rtk_state.clk;
-    rtk_state.clk.array() += clk_step;
-
-    // LIVO-prior chi-square test (FAST-LIVGO eq. 14) on each clock-free innovation
-    double sq_sum = 0.0;
-    for (int i = 0; i < num; ++i) {
-        const double r = res[i] - clk_step;
-        if (r * r / var_innov[i] < param->tdcp_chi2 && std::abs(r) < param->tdcp_outlier) {
-            tdcp_.push_back(rows[i]);
-            sq_sum += r * r;
+    if (if_gate) {
+        tdcp_.mask.assign(n, true);
+        tdcp_.num_used = 0;
+        for (size_t k = 0; k < n; ++k) {
+            const double s = (jacobians[k].transpose() * x_prop.cov * jacobians[k])(0) + var[k];
+            if (residuals[k] * residuals[k] / s > param->tdcp_chi2) tdcp_.mask[k] = false;
+            else
+                ++tdcp_.num_used;
         }
+        tdcp_.num_gated = static_cast<int>(n) - tdcp_.num_used;
+        if (tdcp_.num_used < param->tdcp_min_sat) {
+            tdcp_.num_gated = static_cast<int>(n);
+            tdcp_.num_used = 0;
+            tdcp_.valid = false;
+        }
+        if (!tdcp_.valid) return;
     }
-    const int num_valid = static_cast<int>(tdcp_.size());
-    LOG(INFO) << "TDCP: " << num_valid << "/" << num << " valid, rms " << std::sqrt(sq_sum / std::max(num_valid, 1))
-              << " m, clock step " << clk_step << " m, yaw_ecef_enu " << rtk_state.yaw;
-    if (num_valid < param->tdcp_min_sat) tdcp_.clear();
+    for (size_t k = 0; k < n; ++k) {
+        if (!tdcp_.mask[k]) continue;
+        const double w = 1.0 / var[k];
+        *HTH += w * jacobians[k] * jacobians[k].transpose();
+        *HTz -= w * jacobians[k] * residuals[k];
+    }
 }
 
-void FastLio::InitGnss(const sol_t& sol) {
-    // pntpos reports the GPS clock and the GLO/GAL/BDS offsets from it
-    rtk_state.clk(0) = CLIGHT * sol.dtr[0];
-    rtk_state.clk(1) = CLIGHT * (sol.dtr[0] + sol.dtr[1]);
-    rtk_state.clk(2) = CLIGHT * (sol.dtr[0] + sol.dtr[2]);
-    rtk_state.clk(3) = CLIGHT * (sol.dtr[0] + sol.dtr[3]);
-    rtk_state.clk_anchor = rtk_state.clk;
-    rtk_state.yaw = 0.0;
+void FastLio::AlignGnss(const GnssEpoch& epoch) {
+    // step 1: the first SPP fix gives R_ecef_enu, the ENU frame there; only the yaw about its z is unknown
+    const Vec3 ant_local = x.R * param->level_arm + x.p;
+    if (align_ecefs_.empty()) R_ecef_enu_ = EnuRotation(epoch.ecef_spp);
+    if (align_locals_.empty() || (align_locals_.back() - ant_local).norm() > 0.3) {
+        align_locals_.push_back(ant_local);
+        align_ecefs_.push_back(epoch.ecef_spp);
+    }
+    if (param->ali_refine) align_window_[epoch.time_ns] = {ant_local, epoch};
+    // step 2: once the horizontal track is long enough, GnssAlignment gives the yaw and t_ecef_enu
+    double yaw = 0.0;
+    Vec3 t;
+    if (!GnssAlignment(R_ecef_enu_, align_locals_, align_ecefs_, param->ali_min_travel, &yaw, &t)) return;
+    LOG(INFO) << "GNSS aligned on " << align_locals_.size() << " SPP fixes: yaw " << yaw * R2D << " deg, t_ecef_enu "
+              << t.transpose();
+    // step 3: the yaw from the TDCP displacements; t_ecef_enu then matches the centroids again under that yaw
+    if (param->ali_refine && RefineYawTdcp(R_ecef_enu_, align_window_, param->tdcp_std, &yaw)) {
+        Vec3 mean_l = Vec3::Zero(), mean_e = Vec3::Zero();
+        for (size_t i = 0; i < align_locals_.size(); ++i) {
+            mean_l += align_locals_[i];
+            mean_e += align_ecefs_[i];
+        }
+        mean_l /= static_cast<double>(align_locals_.size());
+        mean_e /= static_cast<double>(align_ecefs_.size());
+        t = mean_e - R_ecef_enu_ * Eigen::AngleAxisd(yaw, Vec3::UnitZ()).toRotationMatrix() * mean_l;
+        LOG(INFO) << "GNSS alignment refined on " << align_window_.size() << " epochs: yaw " << yaw * R2D
+                  << " deg, t_ecef_enu " << t.transpose();
+    }
+    std::vector<Vec3>().swap(align_locals_);
+    std::vector<Vec3>().swap(align_ecefs_);
+    GnssAlignWindow().swap(align_window_);
 
-    rtk_state.P.setZero();
-    rtk_state.P.block<4, 4>(RTKState::CLK, RTKState::CLK) =
-        param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
-    rtk_state.P(RTKState::YAW, RTKState::YAW) = param->std_ext_yaw_init * param->std_ext_yaw_init;
-    rtk_state.P.block<3, 3>(RTKState::T_ECEF_ENU, RTKState::T_ECEF_ENU) =
-        param->std_ext_pos_init * param->std_ext_pos_init * Eigen::Matrix3d::Identity();
-    rtk_state.P_ng.setZero();
+    constexpr int kGnss = FastLioState::DIM - YAW;
+    x.cov.middleRows<kGnss>(YAW).setZero();
+    x.cov.middleCols<kGnss>(YAW).setZero();
+    x.cov(YAW, YAW) = param->std_ext_yaw_init * param->std_ext_yaw_init;
+    x.cov.block<3, 3>(TEC, TEC) = param->std_ext_pos_init * param->std_ext_pos_init * Mat3::Identity();
+    x.cov.block<4, 4>(CLK, CLK) = param->std_clk_init * param->std_clk_init * Eigen::Matrix4d::Identity();
+    x.yaw = yaw;
+    x.t_ecef_enu = t;
+    x.clk = epoch.clk_spp;
+    gnss_aligned_ = true;
 }
+
 }  // namespace kuma_lio
