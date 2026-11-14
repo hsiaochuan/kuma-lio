@@ -115,8 +115,8 @@ double MedianRange(const ba::BaData& ba_data) {
     size_t k = 0;
     for (const auto& scan_it : ba_data.scans) {
         if (k++ % step != 0) continue;
-        const std::vector<Vec3>& pts = scan_it.second->points;
-        for (size_t i = 0; i < pts.size(); i += 10) ranges.push_back(pts[i].norm());
+        const std::vector<double>& r = scan_it.second->ranges;
+        ranges.insert(ranges.end(), r.begin(), r.end());
     }
     if (ranges.empty()) return 0.0;
     const auto mid = ranges.begin() + ranges.size() / 2;
@@ -134,10 +134,10 @@ bool IsImageFile(const fs::path& file) {
 }
 
 // The points of a scan that go into the BA: the far enough ones, thinned.
-std::vector<Vec3> PreprocessScan(const ba::Scan& scan, const BaParam& prm) {
+std::vector<Vec3> PreprocessScan(const std::vector<Vec3>& points, const BaParam& prm) {
     std::vector<Vec3> kept;
-    kept.reserve(scan.points.size());
-    for (const Vec3& p : scan.points)
+    kept.reserve(points.size());
+    for (const Vec3& p : points)
         if (p.allFinite() && p.norm() >= prm.min_range) kept.push_back(p);
     return prm.downsample > 0 ? pgo::UniformSample(kept, prm.downsample) : kept;
 }
@@ -214,28 +214,15 @@ void RemoveWeakScans(ba::BaData& sfm_data, std::vector<ba::PlaneFeature>* planes
 
 // Optimize the poses associated to a laser frame (Scan::id_pose) with the point-to-plane bundle adjustment of
 // BALM3.  Only these poses move; false, with the poses untouched, if no plane ties two scans together.
-bool BAOptimize(ba::BaData& sfm_data, const BaParam& prm, const fs::path& out) {
+// `plane_map` holds the thinned points of the scans of sfm_data, put there by main.
+bool BAOptimize(ba::BaData& sfm_data, ba::PlaneMap&& plane_map, const BaParam& prm, const fs::path& out) {
     // Plane association.  The map is only needed to find the planes, and is the largest thing in memory, so it
     // is gone before the optimization.
     ba::BundleAdjuster adjuster;
     adjuster.opt = prm.opt;
     {
-        std::vector<const ba::Scan*> scans;
-        for (const auto& scan_it : sfm_data.scans) scans.push_back(scan_it.second.get());
-        std::vector<std::vector<Vec3>> pts(scans.size());
-#pragma omp parallel for schedule(dynamic, 1)
-        for (long i = 0; i < (long)scans.size(); ++i) pts[i] = PreprocessScan(*scans[i], prm);
-
-        ba::PlaneMap plane_map(prm.voxel);
-        size_t total_pts = 0;
-        for (size_t i = 0; i < scans.size(); ++i) {
-            const Eigen::Isometry3d& pose = sfm_data.poses.at(scans[i]->id_pose);
-            plane_map.AddScan(scans[i]->id_pose, pose.linear(), pose.translation(), pts[i]);
-            total_pts += pts[i].size();
-        }
-        LOG(INFO) << "inserted " << total_pts << " points from " << scans.size() << " laser frames into "
-                  << plane_map.NumVoxels() << " voxels";
-        std::vector<ba::PlaneFeature> planes = plane_map.ExtractPlanes(sfm_data.poses);
+        ba::PlaneMap map = std::move(plane_map);
+        std::vector<ba::PlaneFeature> planes = map.ExtractPlanes(sfm_data.poses);
         RemoveWeakScans(sfm_data, &planes, prm.min_constraint, out);
         adjuster.Load(std::move(planes));
     }
@@ -335,19 +322,40 @@ int main(int argc, char** argv) {
         scan->id_pose = id_pose;
         loaded.push_back(std::move(scan));
     }
-    std::vector<char> readable(loaded.size());
-#pragma omp parallel for schedule(dynamic, 1)
-    for (long i = 0; i < (long)loaded.size(); ++i) readable[i] = LoadPly(loaded[i]->path, &loaded[i]->points);
+    ba::PlaneMap plane_map(prm.voxel);
+    size_t total_pts = 0;
     ba::IndexT scan_id = 0;
-    for (size_t i = 0; i < loaded.size(); ++i) {
-        if (!readable[i]) {
-            LOG(WARNING) << "cannot read point cloud: " << loaded[i]->path;
-            continue;
+    const size_t kBatch = 256;
+    for (size_t b0 = 0; b0 < loaded.size(); b0 += kBatch) {
+        const size_t nb = std::min(kBatch, loaded.size() - b0);
+        std::vector<char> readable(nb);
+        std::vector<std::vector<Vec3>> pts(nb);
+#pragma omp parallel for schedule(dynamic, 1)
+        for (long i = 0; i < (long)nb; ++i) {
+            std::vector<Vec3> raw;
+            ba::Scan& scan = *loaded[b0 + i];
+            readable[i] = LoadPly(scan.path, &raw);
+            if (!readable[i]) continue;
+            for (size_t k = 0; k < raw.size(); k += 10) scan.ranges.push_back(raw[k].norm());
+            pts[i] = PreprocessScan(raw, prm);
         }
-        ba_data.scans[scan_id++] = std::move(loaded[i]);
+        for (size_t i = 0; i < nb; ++i) {
+            std::shared_ptr<ba::Scan>& scan = loaded[b0 + i];
+            if (!readable[i]) {
+                LOG(WARNING) << "cannot read point cloud: " << scan->path;
+                continue;
+            }
+            const Eigen::Isometry3d& pose = ba_data.poses.at(scan->id_pose);
+            plane_map.AddScan(scan->id_pose, pose.linear(), pose.translation(), pts[i]);
+            total_pts += pts[i].size();
+            std::vector<Vec3>().swap(pts[i]);
+            ba_data.scans[scan_id++] = std::move(scan);
+        }
     }
     LOG(INFO) << "laser frames loaded: " << ba_data.scans.size() << " (removed without pose: " << scan_without_pose
               << ")";
+    LOG(INFO) << "inserted " << total_pts << " points from " << ba_data.scans.size() << " laser frames into "
+              << plane_map.NumVoxels() << " voxels";
 
     // Associate the images to the poses; an image without pose is dropped.  Only the file is recorded.
     if (!images_dir.empty()) {
@@ -377,7 +385,7 @@ int main(int argc, char** argv) {
     }
 
     // Optimize the poses associated to a laser frame
-    if (!BAOptimize(ba_data, prm, out)) LOG(WARNING) << "poses unchanged";
+    if (!BAOptimize(ba_data, std::move(plane_map), prm, out)) LOG(WARNING) << "poses unchanged";
 
     const fs::path traj = out / "traj_ba.txt";
     if (!ba_data.SaveTumPoses(traj.string())) LOG(FATAL) << "cannot write " << traj;

@@ -49,7 +49,7 @@ using Poses = std::map<IndexT, Eigen::Isometry3d, std::less<IndexT>,
 struct Scan {
     std::string path;             // its point cloud file
     IndexT id_pose = kUndefinedIndex;
-    std::vector<Vec3> points;     // body frame
+    std::vector<double> ranges;   // |p| of every 10th point of the file (body frame), for the median scene depth
 };
 
 // All the laser frames, indexed by scan id

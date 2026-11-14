@@ -47,16 +47,17 @@ std::vector<Vec3> UniformSample(const std::vector<Vec3>& cloud, double leaf) {
     std::vector<std::vector<Best>> per_thread(num_threads);
 #pragma omp parallel num_threads(num_threads)
     {
-        const int tid = omp_get_thread_num();
+        // the team can be smaller than asked: one thread when called inside another parallel region (run_ba)
+        const int tid = omp_get_thread_num(), team = omp_get_num_threads();
         std::unordered_map<VOXEL_LOCATION, size_t> slot;  // voxel -> index in `best`
-        slot.reserve(cloud.size() / num_threads + 1);
+        slot.reserve(cloud.size() / team + 1);
         std::vector<Best>& best = per_thread[tid];
         const std::hash<VOXEL_LOCATION> hasher;
         for (size_t i = 0; i < cloud.size(); ++i) {
             const Vec3& p = cloud[i];
             if (!p.allFinite()) continue;
             const VOXEL_LOCATION loc(p, leaf);
-            if (num_threads > 1 && static_cast<int>(hasher(loc) % num_threads) != tid) continue;
+            if (team > 1 && static_cast<int>(hasher(loc) % team) != tid) continue;
             const Vec3 center = (Vec3(loc.x, loc.y, loc.z) + Vec3::Constant(0.5)) * leaf;
             const double d2 = (p - center).squaredNorm();
             const auto ins = slot.emplace(loc, best.size());
