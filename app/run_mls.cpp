@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@
 #include <boost/program_options.hpp>
 #include <boost/progress.hpp>
 
+#include <pcl/common/io.h>
 #include <pcl/features/normal_3d_omp.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/io/ply_io.h>
@@ -45,10 +47,13 @@ namespace po = boost::program_options;
 
 namespace {
 
-using Cloud = pcl::PointCloud<pcl::PointXYZI>;
-using OutPoint = pcl::PointXYZINormal;
-using OutCloud = pcl::PointCloud<OutPoint>;
-using Search = pcl::search::KdTree<pcl::PointXYZI>;
+// The search, the outlier removal and the normals read x y z only (the default point representation of both
+// PointXYZ and PointXYZI is the first three floats), so the cloud is PointXYZ (16 bytes, PointXYZI is 32) and the
+// intensities are kept apart.
+using Cloud = pcl::PointCloud<pcl::PointXYZ>;
+using Search = pcl::search::KdTree<pcl::PointXYZ>;
+// PCA normal (x y z, NaN where the fit failed) and curvature of each point
+using PcaNormals = std::vector<Eigen::Vector4f, Eigen::aligned_allocator<Eigen::Vector4f>>;
 
 // boost::progress_display is not thread safe: the loops below advance it once per kProgressBlock points, under a
 // critical section, from inside `omp for schedule(dynamic, kProgressBlock)` (whose chunks start at multiples of it).
@@ -74,9 +79,8 @@ struct RimlsParam {
 // The robust implicit MLS surface of a point set with normals (MeshLab's GaelMls::RIMLS).
 class Rimls {
    public:
-    // `tree` searches `cloud`; `normals` holds the PCA normals (only its normal fields are read, so the caller may
-    // write the others while projecting).
-    Rimls(const Cloud::ConstPtr& cloud, const Search::ConstPtr& tree, const OutCloud::ConstPtr& normals,
+    // `tree` searches `cloud`; `normals` holds the PCA normals.
+    Rimls(const Cloud::ConstPtr& cloud, const Search::ConstPtr& tree, const PcaNormals& normals,
           const std::vector<double>& radii, const RimlsParam& prm)
         : cloud_(cloud), tree_(tree), normals_(normals), radii_(radii), prm_(prm) {
         double sum = 0;
@@ -111,15 +115,15 @@ class Rimls {
    private:
     // PCL leaves NaN where the fit failed (fewer than 3 neighbours, or all of them on a line).
     bool HasNormal(int i) const {
-        const OutPoint& n = normals_->points[i];
-        return std::isfinite(n.normal_x) && std::isfinite(n.normal_y) && std::isfinite(n.normal_z);
+        const Eigen::Vector4f& n = normals_[i];
+        return std::isfinite(n.x()) && std::isfinite(n.y()) && std::isfinite(n.z());
     }
-    Eigen::Vector3d Normal(int i) const { return normals_->points[i].getNormalVector3fMap().cast<double>(); }
+    Eigen::Vector3d Normal(int i) const { return normals_[i].head<3>().cast<double>(); }
 
     // rimls.tpp computePotentialAndGradient: f(x) and its gradient; `ref` orients the neighbours' normals.
     bool PotentialAndGradient(const Eigen::Vector3d& x, double search_radius, const Eigen::Vector3d& ref,
                               double* potential, Eigen::Vector3d* grad) const {
-        pcl::PointXYZI qp;
+        pcl::PointXYZ qp;
         qp.x = float(x.x());
         qp.y = float(x.y());
         qp.z = float(x.z());
@@ -186,35 +190,24 @@ class Rimls {
 
     Cloud::ConstPtr cloud_;
     Search::ConstPtr tree_;
-    OutCloud::ConstPtr normals_;
+    const PcaNormals& normals_;
     const std::vector<double>& radii_;
     RimlsParam prm_;
     double epsilon_ = 0;
 };
 
 // Binary little-endian PLY with pcl::PointXYZINormal's field names (what pcl::io::savePLYFile writes, so
-// pcl::io::loadPLYFile reads it back), streamed in blocks: savePLYFile would first copy the whole cloud into a
-// PCLPointCloud2.
-bool SavePly(const std::string& fname, const OutCloud& cloud) {
-    std::ofstream ofs(fname, std::ios::binary);
-    if (!ofs) return false;
-    ofs << "ply\nformat binary_little_endian 1.0\nelement vertex " << cloud.size() << "\n";
+// pcl::io::loadPLYFile reads it back), written block by block as the points are projected: the whole output cloud
+// is never held.  Each vertex is kPlyFloats floats: x y z intensity normal_x normal_y normal_z curvature.
+constexpr int kPlyFloats = 8;
+std::unique_ptr<std::ofstream> OpenPly(const std::string& fname, size_t num_points) {
+    std::unique_ptr<std::ofstream> ofs(new std::ofstream(fname, std::ios::binary));
+    if (!*ofs) return nullptr;
+    *ofs << "ply\nformat binary_little_endian 1.0\nelement vertex " << num_points << "\n";
     for (const char* name : {"x", "y", "z", "intensity", "normal_x", "normal_y", "normal_z", "curvature"})
-        ofs << "property float " << name << "\n";
-    ofs << "end_header\n";
-    constexpr size_t kBlock = 1 << 16;
-    std::vector<float> buf;
-    buf.reserve(kBlock * 8);
-    for (size_t begin = 0; begin < cloud.size(); begin += kBlock) {
-        buf.clear();
-        const size_t end = std::min(cloud.size(), begin + kBlock);
-        for (size_t i = begin; i < end; ++i) {
-            const OutPoint& p = cloud.points[i];
-            buf.insert(buf.end(), {p.x, p.y, p.z, p.intensity, p.normal_x, p.normal_y, p.normal_z, p.curvature});
-        }
-        ofs.write(reinterpret_cast<const char*>(buf.data()), std::streamsize(buf.size() * sizeof(float)));
-    }
-    return bool(ofs);
+        *ofs << "property float " << name << "\n";
+    *ofs << "end_header\n";
+    return ofs;
 }
 
 }  // namespace
@@ -249,31 +242,48 @@ int main(int argc, char** argv) {
         return vm.count("help") ? 0 : 1;
     }
 
-    // 1) load, keep the finite points
-    Cloud::Ptr raw(new Cloud);
-    if (pcl::io::loadPLYFile(input_fname, *raw) != 0) {
-        std::cerr << "[ERROR] Failed to load " << input_fname << std::endl;
-        return 1;
-    }
+    // 1) load, keep the finite points: x y z in `cloud`, the intensities apart
     Cloud::Ptr cloud(new Cloud);
-    cloud->reserve(raw->size());
-    for (const auto& p : raw->points)
-        if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) cloud->push_back(p);
-    raw.reset();
+    std::vector<float> intensity;
+    {
+        pcl::PointCloud<pcl::PointXYZI> raw;
+        if (pcl::io::loadPLYFile(input_fname, raw) != 0) {
+            std::cerr << "[ERROR] Failed to load " << input_fname << std::endl;
+            return 1;
+        }
+        long finite = 0;
+        for (const auto& p : raw.points)
+            if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) ++finite;
+        cloud->reserve(finite);
+        intensity.reserve(finite);
+        for (const auto& p : raw.points)
+            if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) {
+                cloud->push_back(pcl::PointXYZ(p.x, p.y, p.z));
+                intensity.push_back(p.intensity);
+            }
+    }
     std::cout << "[INFO] Loaded " << cloud->size() << " points from " << input_fname << std::endl;
 
-    // 2) statistical outlier removal
+    // 2) statistical outlier removal.  filter(indices) is what filter(cloud) does before copying the kept points
+    // (StatisticalOutlierRemoval::applyFilter); the filter and its search tree go before the copy.
     if (kEnableSor) {
+        std::vector<int> kept;
+        {
+            pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            sor.setInputCloud(cloud);
+            sor.setMeanK(kSorMeanK);
+            sor.setStddevMulThresh(kSorStddev);
+            sor.filter(kept);
+        }
         Cloud::Ptr filtered(new Cloud);
-        pcl::StatisticalOutlierRemoval<pcl::PointXYZI> sor;
-        sor.setInputCloud(cloud);
-        sor.setMeanK(kSorMeanK);
-        sor.setStddevMulThresh(kSorStddev);
-        sor.filter(*filtered);
+        pcl::copyPointCloud(*cloud, kept, *filtered);
+        std::vector<float> filtered_intensity(kept.size());
+        for (size_t j = 0; j < kept.size(); ++j) filtered_intensity[j] = intensity[kept[j]];
         std::cout << "[INFO] SOR kept " << filtered->size() << " of " << cloud->size() << " points ("
                   << 100.0 * (cloud->size() - filtered->size()) / std::max<size_t>(cloud->size(), 1) << " % removed)"
                   << std::endl;
         cloud = filtered;
+        intensity.swap(filtered_intensity);
     }
     if (cloud->size() <= size_t(prm.k)) {
         std::cerr << "[ERROR] " << cloud->size() << " points, not more than k = " << prm.k << std::endl;
@@ -301,60 +311,82 @@ int main(int argc, char** argv) {
     }
     bar_radius += n % kProgressBlock;  // the last, partial block
 
+    // Steps 4 and 5 go block by block (a point's normal and projection do not depend on the block), so only one
+    // block of the pcl normal cloud and of the output is ever held.
+    constexpr long kBlock = 1L << 20;  // a multiple of kProgressBlock, so Tick still counts whole blocks
+    static_assert(kBlock % kProgressBlock == 0, "kBlock");
+
     // 4) PCA normal over the same k neighbours; its sign is fixed per neighbourhood in Rimls
     std::cout << "[INFO] normals (pcl::NormalEstimationOMP)" << std::endl;
-    OutCloud::Ptr out(new OutCloud);  // normals and curvature now, the projected points after step 5
+    PcaNormals pca(n);
     {
-        pcl::NormalEstimationOMP<pcl::PointXYZI, OutPoint> ne;
+        pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> ne;
         ne.setNumberOfThreads(omp_get_max_threads());
         ne.setInputCloud(cloud);
         ne.setSearchMethod(knn);  // the same tree: Feature::initCompute keeps it, its input is already `cloud`
         ne.setKSearch(prm.k);
-        ne.compute(*out);
+        pcl::IndicesPtr block(new std::vector<int>);
+        pcl::PointCloud<pcl::Normal> block_normals;
+        for (long begin = 0; begin < n; begin += kBlock) {
+            const long end = std::min(n, begin + kBlock);
+            block->resize(end - begin);
+            for (long i = begin; i < end; ++i) (*block)[i - begin] = int(i);
+            ne.setIndices(block);
+            ne.compute(block_normals);
+            for (long i = begin; i < end; ++i) {
+                const pcl::Normal& nm = block_normals.points[i - begin];
+                pca[i] = Eigen::Vector4f(nm.normal_x, nm.normal_y, nm.normal_z, nm.curvature);
+            }
+        }
     }
     long no_normal = 0;
-    for (const OutPoint& nm : out->points)
-        if (!std::isfinite(nm.normal_x) || !std::isfinite(nm.normal_y) || !std::isfinite(nm.normal_z)) ++no_normal;
+    for (const Eigen::Vector4f& nm : pca)
+        if (!std::isfinite(nm.x()) || !std::isfinite(nm.y()) || !std::isfinite(nm.z())) ++no_normal;
     if (no_normal > 0) std::cout << "[INFO] " << no_normal << " points without a normal are left in place" << std::endl;
 
-    // 5) RIMLS projection of every point
-    // RIMLS reads the neighbours' PCA normals from `out` while the loop writes x y z intensity of `out`: distinct
-    // fields, so no race.  The new normals are held back in `surface_normals` until every point is projected.
-    long failed = 0;
-    {
-        std::vector<Eigen::Vector3f> surface_normals(n);
-        const Rimls rimls(cloud, knn, out, radii, prm);
-        std::cout << "[INFO] RIMLS projection" << std::endl;
-        boost::progress_display bar_project(n);
-#pragma omp parallel for schedule(dynamic, kProgressBlock) reduction(+ : failed)
-        for (long i = 0; i < n; ++i) {
-            Eigen::Vector3d p, nrm;
-            if (!rimls.Project(int(i), &p, &nrm)) ++failed;
-            OutPoint& o = out->points[i];
-            o.x = float(p.x());
-            o.y = float(p.y());
-            o.z = float(p.z());
-            o.intensity = cloud->points[i].intensity;
-            surface_normals[i] = nrm.cast<float>();
-            Tick(bar_project, i);
-        }
-        bar_project += n % kProgressBlock;
-        for (long i = 0; i < n; ++i) out->points[i].getNormalVector3fMap() = surface_normals[i];
-    }
-    // the tree, the input and the radii are not needed for writing
-    knn.reset();
-    cloud.reset();
-    std::vector<double>().swap(radii);
-    out->width = std::uint32_t(out->size());
-    out->height = 1;
-    out->is_dense = no_normal == 0;  // a NaN normal makes the cloud not dense
-    if (failed > 0)
-        std::cout << "[INFO] " << failed << " points without a normal or a neighbour were left in place" << std::endl;
-
-    if (!SavePly(output_fname, *out)) {
+    // 5) RIMLS projection of every point, written out block by block.  RIMLS reads only the input points and the
+    // PCA normals, never the projected points, so a block can go to the file as soon as it is done.
+    std::unique_ptr<std::ofstream> ofs = OpenPly(output_fname, size_t(n));
+    if (!ofs) {
         std::cerr << "[ERROR] Failed to save " << output_fname << std::endl;
         return 1;
     }
-    std::cout << "[INFO] Smoothed cloud saved to " << output_fname << " (" << out->size() << " points)." << std::endl;
+    long failed = 0;
+    {
+        const Rimls rimls(cloud, knn, pca, radii, prm);
+        std::cout << "[INFO] RIMLS projection" << std::endl;
+        boost::progress_display bar_project(n);
+        std::vector<float> buf(size_t(kBlock) * kPlyFloats);
+        for (long begin = 0; begin < n; begin += kBlock) {
+            const long end = std::min(n, begin + kBlock);
+#pragma omp parallel for schedule(dynamic, kProgressBlock) reduction(+ : failed)
+            for (long i = begin; i < end; ++i) {
+                Eigen::Vector3d p, nrm;
+                if (!rimls.Project(int(i), &p, &nrm)) ++failed;
+                float* o = &buf[size_t(i - begin) * kPlyFloats];
+                o[0] = float(p.x());
+                o[1] = float(p.y());
+                o[2] = float(p.z());
+                o[3] = intensity[i];
+                o[4] = float(nrm.x());
+                o[5] = float(nrm.y());
+                o[6] = float(nrm.z());
+                o[7] = pca[i].w();  // the PCA curvature
+                Tick(bar_project, i);
+            }
+            ofs->write(reinterpret_cast<const char*>(buf.data()),
+                       std::streamsize(size_t(end - begin) * kPlyFloats * sizeof(float)));
+        }
+        bar_project += n % kProgressBlock;
+    }
+    if (failed > 0)
+        std::cout << "[INFO] " << failed << " points without a normal or a neighbour were left in place" << std::endl;
+
+    ofs->close();
+    if (!*ofs) {
+        std::cerr << "[ERROR] Failed to save " << output_fname << std::endl;
+        return 1;
+    }
+    std::cout << "[INFO] Smoothed cloud saved to " << output_fname << " (" << n << " points)." << std::endl;
     return 0;
 }

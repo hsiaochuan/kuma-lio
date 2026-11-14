@@ -44,8 +44,8 @@ PointCloud::Ptr PointCloudPreprocess::LivoxHandler(const livox_ros_driver::Custo
         added_pt.y = msg->points[i].y;
         added_pt.z = msg->points[i].z;
         added_pt.intensity = msg->points[i].reflectivity;
-        // unit of offset_time: nanosecond
-        added_pt.SetTimeNs(scan_start + msg->points[i].offset_time);
+        // unit of offset_time: nanosecond.  It is a uint32 holding a signed value
+        added_pt.SetTimeNs(scan_start + static_cast<std::int32_t>(msg->points[i].offset_time));
 
         cloud_out->points.push_back(added_pt);
     }
