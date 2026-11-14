@@ -103,6 +103,9 @@ void PgoBackend::SealKeyframe(const Eigen::Isometry3d& scan_pose, std::vector<Ve
     const std::vector<Vec3> cloud = UniformSample(*kf_points, prm_.kf_ds_voxel);
     kf.planes = ExtractPlaneCells(cloud, prm_, cell_pcs);
     kf.points = static_cast<int>(cloud.size());
+    if (prm_.overlap_enable) {
+        for (const Vec3& p : UniformSample(cloud, prm_.overlap_voxel)) kf.occupancy.push_back(p.cast<float>());
+    }
     if (prm_.keep_kf_points) {
         kf.cloud.reserve(cloud.size());
         for (const Vec3& p : cloud) kf.cloud.push_back(p.cast<float>());

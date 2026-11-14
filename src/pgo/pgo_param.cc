@@ -43,11 +43,15 @@ void LoadPgoParam(const std::string& file, PgoParam* p) {
     get("plane_min_points", &p->plane_min_points);
     get("plane_min_eigen", &p->plane_min_eigen);
     get("btc_enable", &p->btc_enable);
+    get("radius_enable", &p->radius_enable);
+    get("overlap_enable", &p->overlap_enable);
     get("loop_min_kf_gap", &p->loop_min_kf_gap);
     get("loop_min_travel", &p->loop_min_travel);
     get("loop_radius", &p->loop_radius);
     get("loop_max_dz", &p->loop_max_dz);
     get("loop_max_yaw_diff", &p->loop_max_yaw_diff);
+    get("overlap_voxel", &p->overlap_voxel);
+    get("overlap_min", &p->overlap_min);
     get("btc_merge_normal", &p->btc_merge_normal);
     get("btc_merge_dist", &p->btc_merge_dist);
     get("btc_ref_planes", &p->btc_ref_planes);

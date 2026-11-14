@@ -26,12 +26,25 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace kuma_lio {
 namespace pgo {
 namespace {
 
-constexpr int kMaxRadiusCands = 3;  // nearest radius candidates handed to the ICP
+constexpr int kMaxRadiusCands = 3;   // nearest radius candidates handed to the ICP
+constexpr int kMaxOverlapCands = 3;  // best overlapping candidates handed to the ICP
+
+std::vector<VOXEL_LOCATION> WorldVoxels(const std::vector<Eigen::Vector3f>& occupancy, const Eigen::Isometry3d& pose,
+                                        double leaf) {
+    std::unordered_set<VOXEL_LOCATION> seen;
+    std::vector<VOXEL_LOCATION> out;
+    for (const Eigen::Vector3f& p : occupancy) {
+        const VOXEL_LOCATION loc(Vec3(pose * p.cast<double>()), leaf);
+        if (seen.insert(loc).second) out.push_back(loc);
+    }
+    return out;
+}
 
 // Absolute heading difference between two poses, in degrees.
 double YawDiffDeg(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) {
@@ -131,12 +144,71 @@ LoopDetector::Candidates LoopDetector::RadiusCandidates(const KeyFrames& kfs) co
     return cands;
 }
 
+LoopDetector::Candidates LoopDetector::OverlapCandidates(const KeyFrames& kfs) {
+    const int cur_kf_id = static_cast<int>(kfs.size()) - 1;
+    const KeyFrame& cur_kf = kfs[cur_kf_id];
+    const double leaf = pgo_param_.overlap_voxel;
+
+    // the index holds the keyframes before the current one at their present poses: after a solve moved
+    // any of them it is built again, then the keyframes sealed since are added
+    for (size_t i = 0; i < indexed_poses_.size(); ++i) {
+        if (kfs[i].pose.matrix() != indexed_poses_[i].matrix()) {
+            overlap_index_.clear();
+            indexed_poses_.clear();
+            break;
+        }
+    }
+    for (int id = static_cast<int>(indexed_poses_.size()); id < cur_kf_id; ++id) {
+        for (const VOXEL_LOCATION& loc : WorldVoxels(kfs[id].occupancy, kfs[id].pose, leaf)) overlap_index_[loc].push_back(id);
+        indexed_poses_.push_back(kfs[id].pose);
+    }
+
+    const std::vector<VOXEL_LOCATION> cur_voxels = WorldVoxels(cur_kf.occupancy, cur_kf.pose, leaf);
+    if (cur_voxels.empty()) return {};
+    std::vector<int> hits(cur_kf_id, 0);
+    for (const VOXEL_LOCATION& loc : cur_voxels) {
+        const auto it = overlap_index_.find(loc);
+        if (it == overlap_index_.end()) continue;
+        for (const int id : it->second) ++hits[id];
+    }
+    // (-overlap, id): the largest overlap first, the older keyframe on a tie
+    std::vector<std::pair<double, int>> ranked;
+    double best_low = 0.0;
+    int best_low_id = -1;
+    for (int id = 0; id < cur_kf_id; ++id) {
+        if (hits[id] == 0 || !Eligible(kfs, id, cur_kf_id)) continue;
+        const double overlap = static_cast<double>(hits[id]) / cur_voxels.size();
+        if (overlap >= pgo_param_.overlap_min) {
+            ranked.emplace_back(-overlap, id);
+        } else if (overlap > best_low) {
+            best_low = overlap, best_low_id = id;
+        }
+    }
+    if (ranked.empty()) {
+        // the near miss, for tuning overlap_min
+        if (best_low_id >= 0) {
+            source_ = LoopSource::kOverlap;
+            Reject(best_low_id, cur_kf_id, "overlap_low", best_low);
+        }
+        return {};
+    }
+    std::sort(ranked.begin(), ranked.end());
+    if (static_cast<int>(ranked.size()) > kMaxOverlapCands) ranked.resize(kMaxOverlapCands);
+
+    Candidates cands;
+    // seeded with what the odometry currently believes the relative pose is
+    for (const auto& r : ranked) cands.push_back({r.second, kfs[r.second].pose.inverse() * cur_kf.pose});
+    return cands;
+}
+
 bool LoopDetector::Detect(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
                           const std::vector<PointCluster>& cell_pcs, LoopEdge* loop) {
     // BTC runs on every keyframe while enabled: its database has to see each one, in order
     if (pgo_param_.btc_enable && Verify(kfs, BtcCandidates(kfs, kf_points, cell_pcs), LoopSource::kBtc, loop))
         return true;
-    return Verify(kfs, RadiusCandidates(kfs), LoopSource::kRadius, loop);
+    if (pgo_param_.radius_enable && Verify(kfs, RadiusCandidates(kfs), LoopSource::kRadius, loop)) return true;
+    // the overlap index catches up with the keyframes it skipped on its next call
+    return pgo_param_.overlap_enable && Verify(kfs, OverlapCandidates(kfs), LoopSource::kOverlap, loop);
 }
 
 bool LoopDetector::Verify(const KeyFrames& kfs, const Candidates& cands, LoopSource source, LoopEdge* loop) {

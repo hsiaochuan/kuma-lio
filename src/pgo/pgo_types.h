@@ -31,14 +31,17 @@
 namespace kuma_lio {
 namespace pgo {
 
-// The candidate layer a loop came from; see PgoParam::btc_enable.
+// The candidate layer a loop came from; see PgoParam::btc_enable / radius_enable / overlap_enable.
 enum class LoopSource {
     kBtc,
     kRadius,
+    kOverlap,
 };
 
-// "btc" / "radius", for the logs and the debug dumps.
-inline const char* LoopSourceName(LoopSource s) { return s == LoopSource::kBtc ? "btc" : "radius"; }
+// "btc" / "radius" / "overlap", for the logs and the debug dumps.
+inline const char* LoopSourceName(LoopSource s) {
+    return s == LoopSource::kBtc ? "btc" : s == LoopSource::kRadius ? "radius" : "overlap";
+}
 
 struct PgoParam {
     // ---- keyframes: Voxel-SLAM seals one every win_size scans ----
@@ -52,6 +55,15 @@ struct PgoParam {
     int plane_min_points = 10;
     double plane_min_eigen = 0.01;  // [m^2] a cell is a plane below this smallest eigenvalue
 
+    // ---- the candidate layers, tried in this order on each keyframe until one closes a loop:
+    // ---- BTC descriptors (rotation invariant, seeded by the triangle match); radius, the old keyframes
+    // ---- near the current position; overlap, the old keyframes whose clouds, at the odometry poses,
+    // ---- share the most world voxels with the current one's.  The last two seed the ICP with the
+    // ---- odometry relative pose.
+    bool btc_enable = true;
+    bool radius_enable = true;
+    bool overlap_enable = true;
+
     // radius search
     double loop_radius = 20.0;  // [m]
     double loop_max_dz = 4.0;   // [m]
@@ -59,9 +71,13 @@ struct PgoParam {
     // yet ranked by distance it is often the nearest candidate and crowds the matchable ones out
     double loop_max_yaw_diff = 90.0;
 
+    // overlap search: an aerial survey revisits a strip from tens of metres to the side, past any
+    // radius, and a heading-reversed revisit that sees other geometry scores low on its own
+    double overlap_voxel = 2.0;  // [m] world voxel two keyframes' clouds have to share
+    double overlap_min = 0.3;    // least fraction of the current keyframe's voxels an old one occupies
+
     // ---- BTC, defaults from Voxel-SLAM's read_parameters (non-aerial).  The plane cells are the
     // ---- plane_voxel ones above, which Voxel-SLAM's BTC also builds at 1 m / 10 points / 0.01.
-    bool btc_enable = true;
     double btc_merge_normal = 0.1;  // |n1 -+ n2| below which two plane cells may merge
     double btc_merge_dist = 0.3;    // [m] and the largest centre-to-plane distance either way
     int btc_ref_planes = 2;         // M, the largest merged planes the cloud is projected onto
@@ -153,6 +169,10 @@ struct KeyFrame {
     PlaneCells planes;               // keyframe body frame, so a pose change costs nothing
     // the merged cloud at kf_ds_voxel, body frame; empty unless PgoParam::keep_kf_points
     std::vector<Eigen::Vector3f> cloud;
+    // that cloud thinned to one point per overlap_voxel cell, body frame: what the overlap search
+    // counts.  Not the plane cells, which a sparse cloud (aerial, ~7 points/m^2) only forms where it
+    // is densest.  Empty unless overlap_enable.
+    std::vector<Eigen::Vector3f> occupancy;
 };
 
 struct LoopEdge {

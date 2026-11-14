@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <unordered_map>
 #include <vector>
 
 #include "pgo/btc.h"
@@ -58,6 +59,7 @@ class LoopDetector {
     Candidates BtcCandidates(const KeyFrames& kfs, const std::vector<Vec3>& kf_points,
                              const std::vector<PointCluster>& cell_pcs);
     Candidates RadiusCandidates(const KeyFrames& kfs) const;
+    Candidates OverlapCandidates(const KeyFrames& kfs);
     // Runs the ICP and drift checks on `cands` in order; true at the first one that passes.
     bool Verify(const KeyFrames& kfs, const Candidates& cands, LoopSource source, LoopEdge* loop);
     void Reject(int from, int to, const char* reason, double value, const IcpResult* icp = nullptr);
@@ -66,6 +68,9 @@ class LoopDetector {
     BtcDatabase btc_db_;
     // keyframe id -> the KD tree over its plane centres (PlaneOverlap), built the first time it is a candidate
     std::vector<std::shared_ptr<const PlaneTree>> plane_trees_;
+    // overlap search: world voxel -> the keyframes whose occupancy points fall in it
+    std::unordered_map<VOXEL_LOCATION, std::vector<int>> overlap_index_;
+    Isometries indexed_poses_;
     std::vector<LoopRejection> rejections_;
     LoopSource source_ = LoopSource::kBtc;  // layer being verified, stamped on each rejection
 };
