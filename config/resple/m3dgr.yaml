@@ -1,0 +1,42 @@
+common:
+  lid_topic: "/livox/avia/lidar"
+  imu_topic: "/livox/avia/imu"
+  acc_ratio: false
+  lidar_time_offset: 0
+
+num_threads: 4
+lidar_type: LIVOX
+livox_tag_mask: 32
+blind: 0.5
+point_filter_num: 1
+det_range: 300.0
+# Livox Avia with its internal IMU (same extrinsic as the FAST-LIO2 / Voxel-SLAM baselines)
+extrin_t_il: [0.04165, 0.02326, -0.0284]
+extrin_R_il: [1, 0, 0,
+              0, 1, 0,
+              0, 0, 1]
+bag_save_en: false
+resple:
+  knot_hz: 100
+  ds_scan_voxel: 0.1
+  w_pt: 0.01
+  nn_thresh: 0.5
+  coeff_cov: 3.0
+  plane_thresh: 0.1  # max |point-to-plane| of the 5 neighbours when fitting [m]
+  imu_acc_outlier: 10.0
+  imu_gyro_outlier: 5.0
+  q_std_pos_old: 0.0632456
+  q_std_ort_old: 0.0316228
+  q_std_pos_new: 0.2
+  q_std_ort_new: 0.1
+  q_std_bg: 1.0e-3
+  q_std_ba: 1.0e-2
+  cov_P0: 0.02
+  cov_acc: [1.0, 1.0, 1.0]
+  cov_gyro: [0.001, 0.001, 0.001]
+  cov_bg: [1.0e-6, 1.0e-6, 1.0e-6]
+  cov_ba: [0.2, 0.2, 0.2]
+  # ikd-tree local map
+  ds_lm_voxel: 0.1             # ikd-tree downsample leaf [m]
+  cube_len: 2000.0         # local map cube edge length [m]
+  nn_search_radius: 2.236  # Nearest_Search max distance [m]

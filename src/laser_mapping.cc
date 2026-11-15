@@ -1,24 +1,59 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include <iomanip>
+#include <map>
 #include <sstream>
 
 #include <nav_msgs/Path.h>
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/kdtree/kdtree_flann.h>
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <boost/filesystem.hpp>
 #include "laser_mapping.h"
+
+#include <pcl/io/ply_io.h>
+
+#include "rtklib_.h"
+#include "rtklib_func.h"
 namespace fs = boost::filesystem;
-namespace faster_lio {
+
+namespace kuma_lio {
+double global_offset_time = std::numeric_limits<double>::quiet_NaN();
+}  // namespace kuma_lio
+
+int showmsg(const char* format, ...) { return 0; }
+void settspan(gtime_t ts, gtime_t te) {}
+void settime(gtime_t time) {}
+
+namespace kuma_lio {
 LaserMapping::LaserMapping() = default;
-void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
+void LaserMapping::AddScanToBuffer(const PointCloud::Ptr& scan) {
     if (scan->empty()) {
         LOG(INFO) << "empty in scan, no points pushed into buffer";
         return;
     }
-    std::sort(scan->points.begin(), scan->points.end(), [](const Point &a, const Point &b) {
-        return a.GetTimeNs() < b.GetTimeNs();
-    });
     int skip_scan_points = 0;
     for (int i = 0; i < scan->size(); ++i) {
         if (points_buffer_.empty()) {
@@ -33,24 +68,33 @@ void LaserMapping::AddScanToBuffer(const PointCloud::Ptr &scan) {
     }
 
     if (skip_scan_points != 0)
-        LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error, " << scan->size() << " points total";
+        LOG(INFO) << "skip " << skip_scan_points << " scan points for timestamp of point error, " << scan->size()
+                  << " points total";
 }
-void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
+namespace {
+void SortByTime(const PointCloud::Ptr& scan) {
+    std::sort(scan->points.begin(), scan->points.end(),
+              [](const Point& a, const Point& b) { return a.GetTimeNs() < b.GetTimeNs(); });
+}
+}  // namespace
 
+void LaserMapping::PushScan(const PointCloud::Ptr& scan) {
+    if (!scan) return;
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    AddScanToBuffer(scan);
+}
+
+void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) { PushScan(ScanFromPCL(msg)); }
+
+void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) { PushScan(ScanFromLivox(msg)); }
+
+PointCloud::Ptr LaserMapping::ScanFromPCL(const sensor_msgs::PointCloud2::ConstPtr& msg) const {
     double timestamp = msg->header.stamp.toSec();
 
     // time offset
     timestamp += param->lidar_time_offset_;
-
-    // loop
-    if (timestamp < last_timestamp_lidar_) {
-        LOG(ERROR) << "lidar loop back, clear buffer";
-    }
-    last_timestamp_lidar_ = timestamp;
-    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return nullptr;
     timestamp = timestamp - global_offset_time;
-    // push to buffer
     PointCloud::Ptr scan(new PointCloud());
     switch (LidarTypeFromString(param->lidar_type)) {
         case LidarType::OUSTER:
@@ -65,64 +109,60 @@ void LaserMapping::StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr 
         default:
             throw std::logic_error("unknown lidar type");
     }
-    AddScanToBuffer(scan);
+    SortByTime(scan);
+    return scan;
 }
 
-void LaserMapping::LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-
+PointCloud::Ptr LaserMapping::ScanFromLivox(const livox_ros_driver::CustomMsg::ConstPtr& msg) const {
     double timestamp = msg->header.stamp.toSec();
 
     // time offset
     timestamp += param->lidar_time_offset_;
-
-    // loop
-    if (timestamp < last_timestamp_lidar_) {
-        LOG(ERROR) << "lidar loop back, clear buffer";
-    }
-    last_timestamp_lidar_ = timestamp;
-    if (std::isnan(global_offset_time) || timestamp < global_offset_time) {
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return nullptr;
+    timestamp = timestamp - global_offset_time;
+    PointCloud::Ptr scan = preprocess_->LivoxHandler(msg, S_TO_NS(timestamp));
+    SortByTime(scan);
+    return scan;
+}
+void LaserMapping::ImageCallBack(const sensor_msgs::Image::ConstPtr& msg) {
+    // time offset
+    const double timestamp = msg->header.stamp.toSec() + param->image_time_offset_;
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    // keep one image in img_filter
+    static int img_count = 0;
+    if (img_count++ % param->img_filter != 0) return;
+    RgbImage image;
+    if (!image.FromRaw(msg->data.data(), msg->width, msg->height, msg->step, msg->encoding)) {
+        LOG(WARNING) << "image skipped, encoding " << msg->encoding;
         return;
     }
-    timestamp = timestamp - global_offset_time;
-    // push to buffer
-    PointCloud::Ptr scan;
-    scan = preprocess_->LivoxHandler(msg, S_TO_NS(timestamp));
-    AddScanToBuffer(scan);
-}
-void LaserMapping::VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg) {
+    image.time_ns = S_TO_NS(timestamp - global_offset_time);
     std::lock_guard<std::mutex> lock(mtx_buffer_);
-
-    CHECK(!msg->packets.empty()) << "VelodyneScan message is empty!";
-    // the msg->header.stamp is 100 ms later than the msg->packets front
-    double timestamp = msg->packets.front().stamp.toSec();
-
-    // time offset
-    timestamp += param->lidar_time_offset_;
-
-    // loop
-    if (timestamp < last_timestamp_lidar_) {
-        LOG(ERROR) << "lidar loop back, clear buffer";
-    }
-    last_timestamp_lidar_ = timestamp;
-    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
-    timestamp = timestamp - global_offset_time;
-    // push to buffer
-    PointCloud::Ptr scan(new PointCloud());
-    scan = preprocess_->VelodyneScanHandler(msg, S_TO_NS(timestamp));
-    AddScanToBuffer(scan);
+    image_buff_.push_back(std::move(image));
 }
 
-void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
+void LaserMapping::CompressedImageCallback(const sensor_msgs::CompressedImage::ConstPtr& msg) {
+    // time offset
+    const double timestamp = msg->header.stamp.toSec() + param->image_time_offset_;
+    if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
+    // keep one image in img_filter
+    static int img_count = 0;
+    if (img_count++ % param->img_filter != 0) return;
+    RgbImage image;
+    // image_decode off: only the bytes are kept, decoding a 5 MP JPEG costs ~60 ms per frame
+    if (!image.SetEncoded(msg->data.data(), msg->data.size(), msg->format) ||
+        (false && !image.Decode(msg->data.data(), msg->data.size()))) {
+        LOG(WARNING) << "image skipped, format " << msg->format;
+        return;
+    }
+    image.time_ns = S_TO_NS(timestamp - global_offset_time);
+    std::lock_guard<std::mutex> lock(mtx_buffer_);
+    image_buff_.push_back(std::move(image));
+}
+
+void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr& msg_in) {
     std::lock_guard<std::mutex> lock(mtx_buffer_);
     double timestamp = msg_in->header.stamp.toSec();
-
-    // loop
-    if (timestamp < last_timestamp_imu_) {
-        LOG(WARNING) << "imu loop back, clear buffer";
-        imu_buffer_.clear();
-    }
-    last_timestamp_imu_ = timestamp;
     if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
     timestamp = timestamp - global_offset_time;
     // push to buffer
@@ -134,65 +174,78 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     imu.linear_acceleration.x() = msg_in->linear_acceleration.x;
     imu.linear_acceleration.y() = msg_in->linear_acceleration.y;
     imu.linear_acceleration.z() = msg_in->linear_acceleration.z;
-    if (param->acc_ratio_) imu.linear_acceleration *= RESPLE_LIO::GRAVITY_NORM;
+    if (param->acc_ratio_) imu.linear_acceleration *= FastLio::GRAVITY_NORM;
     imu_buffer_.emplace_back(imu);
 }
 
-void LaserMapping::ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-    static int img_count = 0;
-    if (img_count % param->image_skip_ == 0) {
-        double timestamp = msg_in->header.stamp.toSec();
-        timestamp += param->camera_time_offset_;
-        if (timestamp < last_timestamp_camera_) {
-            LOG(WARNING) << "image loop back, clear buffer";
-            image_buffer_.clear();
-        }
-        last_timestamp_camera_ = timestamp;
-        if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
-        timestamp = timestamp - global_offset_time;
-        Image image;
-        cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        image.image_data_ = img;
-        image.time_ns_ = S_TO_NS(timestamp);
-        image_buffer_.emplace_back(image);
+bool LaserMapping::ReadObsNav(const std::string& obs_fname, const std::string& nav_fname, const std::string& sol_fname) {
+    gtime_t ts{}, te{};  // zero disable the time window filter
+
+    // rcv index 1 for the observation file; the navigation file carries no receiver data.
+    if (readrnxt(obs_fname.c_str(), 1, ts, te, 0.0, "", &obss, &nav, nullptr) <= 0) {
+        LOG(ERROR) << "failed to read observation file: " << obs_fname;
+        return false;
     }
-    img_count++;
+    if (readrnxt(nav_fname.c_str(), 0, ts, te, 0.0, "", nullptr, &nav, nullptr) <= 0) {
+        LOG(ERROR) << "failed to read navigation file: " << nav_fname;
+        return false;
+    }
+
+    // RTKLIB expects observations sorted by time/sat and ephemerides uniquified before use.
+    sortobs(&obss);
+    uniqnav(&nav);
+    if (fast_lio_) {
+        fast_lio_->obss = obss;
+        fast_lio_->nav = nav;
+    }
+
+    LOG(INFO) << "read " << obss.n << " observations, " << nav.n << " eph, " << nav.ng << " geph, " << nav.ns
+              << " seph";
+    if (obss.n <= 0 || nav.n + nav.ng <= 0) {
+        LOG(ERROR) << "no usable GNSS data; check that RTKLIB is built with -DENAGLO/-DENAGAL/-DENACMP";
+        return false;
+    }
+    CHECK(!std::isnan(global_offset_time));
+    for (int i = 0; i < obss.n;) {
+        obss_id_buff_.push_back(i);
+        gtime_t utc = gpst2utc(obss.data[i].time);
+        double utc_d = double(utc.time) + utc.sec;
+        obss_time_ns_buff_.push_back(S_TO_NS(utc_d - global_offset_time));
+        int j = i;
+        while (std::abs(timediff(obss.data[j].time, obss.data[i].time)) < DTTOL && j < obss.n) ++j;
+        i = j;
+    }
+    std::vector<std::string> files{obs_fname, nav_fname};
+    std::vector<const char*> infiles;
+    for (const auto& f : files) infiles.push_back(f.c_str());
+
+    // position
+    filopt_t filopt{};
+    const int ret = postpos(ts, te, 0.0, 0.0, &param->prcopt, &param->solopt, &filopt, infiles.data(),
+                            static_cast<int>(infiles.size()), sol_fname.c_str(), "", "");
+    if (ret != 0) {
+        LOG(ERROR) << "postpos failed with status " << ret;
+        return false;
+    }
+    return true;
 }
 
-void LaserMapping::CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in) {
-    std::lock_guard<std::mutex> lock(mtx_buffer_);
-    static int img_count = 0;
-    if (img_count % param->image_skip_ == 0) {
-        double timestamp = msg_in->header.stamp.toSec();
-        timestamp += param->camera_time_offset_;
-        if (timestamp < last_timestamp_camera_) {
-            LOG(WARNING) << "image loop back, clear buffer";
-            image_buffer_.clear();
-        }
-        last_timestamp_camera_ = timestamp;
-        if (std::isnan(global_offset_time) || timestamp < global_offset_time) return;
-        timestamp = timestamp - global_offset_time;
-        Image image;
-        cv::Mat img = cv_bridge::toCvCopy(msg_in, "bgr8")->image;
-        image.image_data_ = img;
-        image.time_ns_ = S_TO_NS(timestamp);
-        image_buffer_.emplace_back(image);
-    }
-    img_count++;
-}
-
-bool LaserMapping::Init(const std::string &config_fname) {
+bool LaserMapping::Init(const std::string& config_fname, const std::string& camera_fname, const std::string& pgo_fname) {
     LOG(INFO) << "init laser mapping from " << config_fname;
+    Eigen::setNbThreads(1);
     param = std::make_shared<LaserMappingParam>();
-    if (!param->LoadFromYaml(config_fname)) return false;
+    param->LoadFromYaml(config_fname);
+    if (!camera_fname.empty()) param->LoadCameraFromYaml(camera_fname);
     preprocess_ = std::make_shared<PointCloudPreprocess>();
-    preprocess_->param = param;
+    preprocess_->param.livox_tag_mask = param->livox_tag_mask;
+    preprocess_->param.point_filter_num = param->point_filter_num;
+    preprocess_->param.blind = param->blind;
+    preprocess_->param.det_range_ = param->det_range_;
 
     // the estimation algorithm
-    resple_lio_ = std::make_shared<RESPLE_LIO>();
-    resple_lio_->param = param;
-    resple_lio_->Init();
+    fast_lio_ = std::make_shared<FastLio>();
+    fast_lio_->param = param;
+    fast_lio_->Init(pgo_fname);
 
     if (param->bag_save_en_) {
         bag_.open(output_dir + "/dump.bag", rosbag::bagmode::Write);
@@ -204,195 +257,249 @@ bool LaserMapping::Init(const std::string &config_fname) {
     return true;
 }
 
-void LaserMapping::InitialSubscribers(ros::NodeHandle &nh) {
+void LaserMapping::InitialSubscribers(ros::NodeHandle& nh) {
     LidarType lidar_type = LidarTypeFromString(param->lidar_type);
     if (lidar_type == LidarType::LIVOX) {
         sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
             param->lidar_topic_, 200000,
-            [this](const livox_ros_driver::CustomMsg::ConstPtr &msg) { LivoxPCLCallBack(msg); });
-    } else if (lidar_type == LidarType::VELODYNE_SCAN) {
-        sub_pcl_ = nh.subscribe<velodyne_msgs::VelodyneScan>(
-            param->lidar_topic_, 200000,
-            [this](const velodyne_msgs::VelodyneScan::ConstPtr &msg) { VelodyneScanCallBack(msg); });
+            [this](const livox_ros_driver::CustomMsg::ConstPtr& msg) { LivoxPCLCallBack(msg); });
     } else {
         sub_pcl_ = nh.subscribe<sensor_msgs::PointCloud2>(
             param->lidar_topic_, 200000,
-            [this](const sensor_msgs::PointCloud2::ConstPtr &msg) { StandardPCLCallBack(msg); });
+            [this](const sensor_msgs::PointCloud2::ConstPtr& msg) { StandardPCLCallBack(msg); });
     }
 
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(param->imu_topic_, 200000,
-                                              [this](const sensor_msgs::Imu::ConstPtr &msg) { IMUCallBack(msg); });
-    bool compressed_image = false;
-    if (!compressed_image) {
-        sub_img_ = nh.subscribe<sensor_msgs::Image>(
-            param->camera_topic_, 200000, [this](const sensor_msgs::Image::ConstPtr &msg) { ImageMsgCallBack(msg); });
-    } else {
+                                              [this](const sensor_msgs::Imu::ConstPtr& msg) { IMUCallBack(msg); });
+    const std::string& img = param->img_topic_;
+    if (img.size() >= 11 && img.compare(img.size() - 11, 11, "/compressed") == 0) {
         sub_img_ = nh.subscribe<sensor_msgs::CompressedImage>(
-            param->camera_topic_, 200000,
-            [this](const sensor_msgs::CompressedImage::ConstPtr &msg) { CompressedImageCallBack(msg); });
+            img, 100, [this](const sensor_msgs::CompressedImage::ConstPtr& msg) { CompressedImageCallback(msg); });
+    } else if (!img.empty()) {
+        sub_img_ = nh.subscribe<sensor_msgs::Image>(
+            img, 100, [this](const sensor_msgs::Image::ConstPtr& msg) { ImageCallBack(msg); });
     }
 }
-void LaserMapping::InitialPublishers(ros::NodeHandle &nh) {
+void LaserMapping::InitialPublishers(ros::NodeHandle& nh) {
     pub_laser_cloud_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     pub_laser_cloud_effect_world_ = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_effect_world", 100000);
     pub_odom_aft_mapped_ = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     pub_path_ = nh.advertise<nav_msgs::Path>("/path", 100000);
-    if (param->camera_enable_) pub_image_ = nh.advertise<sensor_msgs::Image>("/image_raw", 100000);
     pub_frustrum_ = nh.advertise<visualization_msgs::Marker>("/frustrum", 100000);
 }
 
-void LaserMapping::Run() {
-    static constexpr int kInitImuNum = 20;
-    static constexpr int64_t kInitMapSpanNs = S_TO_NS(0.3);
-    if (!resple_lio_->if_localmap_initialized) {
-        if (points_buffer_.empty()) return;
+void LaserMapping::RunFastLio() {
+    static constexpr int INIT_IMU_COUNT = 20;
+    static constexpr int64_t INIT_POINTS_SPAN = S_TO_NS(0.3);
+    if (!if_localmap_initialized) {
+        if (points_buffer_.empty() || imu_buffer_.empty()) return;
+        if (static_cast<int>(imu_buffer_.size()) < INIT_IMU_COUNT) return;
 
-        std::int64_t first_point_time_ns = points_buffer_.front().GetTimeNs();
+        const std::int64_t end_time_ns = points_buffer_.front().GetTimeNs() + INIT_POINTS_SPAN;
+        if (points_buffer_.back().GetTimeNs() < end_time_ns || imu_buffer_.back().time_ns < end_time_ns) return;
 
-        if (!resple_lio_->if_inertial_initialized) {
-            if (static_cast<int>(imu_buffer_.size()) < kInitImuNum) return;
-            Vec3 acc_sum = Vec3::Zero();
-            Vec3 acc_gyro = Vec3::Zero();
-            for (int i = 0; i < kInitImuNum; ++i) {
-                acc_sum += imu_buffer_[i].linear_acceleration;
-                acc_gyro += imu_buffer_[i].angular_velocity;
-            }
-
-            Vec3 mean_acc = acc_sum / kInitImuNum;
-            Vec3 gravity_body = mean_acc.normalized() * RESPLE_LIO::GRAVITY_NORM;
-            Eigen::Matrix3d R0 =
-                Eigen::Quaterniond::FromTwoVectors(gravity_body.normalized(), Vec3(0, 0, 1)).toRotationMatrix();
-            double yaw = std::atan2(R0(1, 0), R0(0, 0));
-            R0 = Eigen::AngleAxisd(-yaw, Vec3::UnitZ()).toRotationMatrix() * R0;
-            Eigen::Quaterniond q0(R0);
-            resple_lio_->bg = acc_gyro / kInitImuNum;
-            resple_lio_->gravity = q0 * gravity_body;
-            resple_lio_->spl.init(param->dt_ns, 0, q0);
-            resple_lio_->if_inertial_initialized = true;
-            LOG(INFO) << " s, gravity " << resple_lio_->gravity.transpose();
+        // standing still: gravity and the gyroscope bias come from the first samples
+        Vec3 acc_sum = Vec3::Zero();
+        Vec3 gyr_sum = Vec3::Zero();
+        for (int i = 0; i < INIT_IMU_COUNT; ++i) {
+            acc_sum += imu_buffer_[i].linear_acceleration;
+            gyr_sum += imu_buffer_[i].angular_velocity;
         }
+        const Vec3 gravity_body = (acc_sum / INIT_IMU_COUNT).normalized() * FastLio::GRAVITY_NORM;
+        Mat3 R0 = Eigen::Quaterniond::FromTwoVectors(gravity_body.normalized(), Vec3(0, 0, 1)).toRotationMatrix();
+        const double yaw = std::atan2(R0(1, 0), R0(0, 0));
+        R0 = Eigen::AngleAxisd(-yaw, Vec3::UnitZ()).toRotationMatrix() * R0;
 
-        if (points_buffer_.back().GetTimeNs() < first_point_time_ns + kInitMapSpanNs) return;
-        std::int64_t end_time_ns = first_point_time_ns + kInitMapSpanNs;
+        FastLioState state;
+        state.R = R0;
+        state.bg = gyr_sum / INIT_IMU_COUNT;
+
         PointCloud::Ptr init_points(new PointCloud);
         while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < end_time_ns) {
             init_points->emplace_back(points_buffer_.front());
             points_buffer_.pop_front();
         }
+        Imu last_imu = imu_buffer_.front();
         while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < end_time_ns) {
+            last_imu = imu_buffer_.front();
             imu_buffer_.pop_front();
         }
-        while (resple_lio_->spl.maxTimeNs() < end_time_ns) {
-            resple_lio_->spl.addOneStateKnot(Vec3::Zero(), Vec3::Zero());
+        while (!image_buff_.empty() && image_buff_.front().time_ns < end_time_ns) {
+            image_buff_.pop_front();
         }
         if (init_points->size() < 100) {
             LOG(WARNING) << "only " << init_points->size() << " points for map init, waiting";
             return;
         }
         PointCloud::Ptr init_points_world(new PointCloud);
-        Pose3 world_from_lidar(resple_lio_->spl.q_idle, Vec3::Zero());
-        world_from_lidar = world_from_lidar * param->extrin_il_;
-        pcl::transformPointCloud(*init_points, *init_points_world, world_from_lidar.Mat4d(), true);
-        resple_lio_->kd_tree->Build(init_points_world->points);
-        resple_lio_->if_localmap_initialized = true;
+        pcl::transformPointCloud(*init_points, *init_points_world,
+                                 (Pose3(Eigen::Quaterniond(R0), Vec3::Zero()) * param->extrin_il_).Mat4d(), true);
+        std::vector<Vec3> init_ps;
+        for (const Point& pt : init_points_world->points) init_ps.push_back(pt.getVector3fMap().cast<double>());
+        fast_lio_->lba->InitMap(init_ps, param->lba_.range_err * param->lba_.range_err + param->lba_.pose_var);
+        fast_lio_->Start(state, R0 * gravity_body, end_time_ns, last_imu);
+        if_localmap_initialized = true;
         LOG(INFO) << "localmap initialized with " << init_points_world->size() << " points";
         return;
     }
 
-    while (CollectMeasures(resple_lio_->spl.maxTimeNs() + param->dt_ns)) {
-        resple_lio_->propRCP();
-        resple_lio_->ProcessMeasurement(measures_);
-        PublishROSMsg();
-        PostUpdate();
+    while (CollectMeasuresFastLio()) {
+        fast_lio_->ProcessMeasurement(measures_);
+        PublishROSMsgFastLio();
+        PostUpdateFastLio();
     }
 }
 
-void LaserMapping::PostUpdate() {
-    int64_t t_ns = resple_lio_->spl.maxTimeNs() - param->dt_ns;
-    Eigen::Isometry3d body_pose = resple_lio_->spl.Interpolate(t_ns);
-    trajectory_.emplace_back(global_offset_time + t_ns * 1e-9, body_pose);
+void LaserMapping::PostUpdateFastLio() {
+    const std::int64_t time_ns = measures_.mea_end_;
+    trajectory_.emplace_back(global_offset_time + time_ns * 1e-9, fast_lio_->x.Isometry());
 
     if (param->pcd_save_en_) {
         static int call_once = [&]() {
-            fs::create_directories(fs::path(output_dir) / "map");
+            fs::create_directories(fs::path(output_dir) / "scans");
             return 0;
         }();
-        wait_save_points_->reserve(wait_save_points_->size() + resple_lio_->pt_meas.size());
-        for (int i = 0; i < resple_lio_->pt_meas.size(); ++i) {
-            Point point{};
-            point.getVector3fMap() = resple_lio_->pt_meas[i].point_world.cast<float>();
-            point.intensity = resple_lio_->pt_meas[i].point.intensity;
-            point.SetTimeNs(resple_lio_->pt_meas[i].time_ns);
-            wait_save_points_->push_back(point);
-        }
+        static Vec3 last_save_pos = Vec3::Zero();
+        if (last_save_pos == Vec3::Zero() || (last_save_pos - fast_lio_->x.p).norm() > param->pcd_save_interval_) {
+            last_save_pos = fast_lio_->x.p;
+            PointCloud::Ptr save_points{new PointCloud()};
+            save_points->reserve(fast_lio_->points.size());
+            for (const FastLioPoint& pt : fast_lio_->points) {
+                Point point{};
+                point.getVector3fMap() = pt.body.cast<float>();  // with traj_log.txt, what run_pgo and run_clean read
+                point.SetTimeNs(time_ns);
+                save_points->push_back(point);
+            }
 
-        if (wait_save_points_->size() >= 2 &&
-            wait_save_points_->back().GetTimeNs() - wait_save_points_->front().GetTimeNs() >
-                S_TO_NS(param->pcd_save_interval_)) {
-            double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
+            double time_s = global_offset_time + time_ns * 1e-9;
+            std::stringstream stamp_string;
+            stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s << ".ply";
+            pcl::io::savePLYFileBinary((fs::path(output_dir) / "scans" / stamp_string.str()).string(),
+                                       *save_points);
+        }
+    }
+
+    if (param->image_save_en_ && !measures_.rgb_image_.Empty()) {
+        static int call_once = [&]() {
+            fs::create_directories(fs::path(output_dir) / "images");
+            return 0;
+        }();
+        static Vec3 last_save_pos = Vec3::Zero();
+        static Mat3 last_save_R = Mat3::Identity();
+        constexpr double kMaxAngleChange = 20 * M_PI / 180;
+        if (last_save_pos == Vec3::Zero() ||
+            (last_save_pos - fast_lio_->x.p).norm() > param->image_save_interval_ ||
+            LogMat(last_save_R.transpose() * fast_lio_->x.R).norm() > kMaxAngleChange) {
+            last_save_pos = fast_lio_->x.p;
+            last_save_R = fast_lio_->x.R;
+            double time_s = global_offset_time + time_ns * 1e-9;
             std::stringstream stamp_string;
             stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
-
-            pcl::UniformSampling<Point> sampler;
-            sampler.setInputCloud(wait_save_points_);
-            sampler.setRadiusSearch(param->ds_scan_voxel);
-            sampler.filter(*wait_save_points_);
-            pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(),
-                                       *wait_save_points_);
-            wait_save_points_->clear();
+            if (!measures_.rgb_image_.Save((fs::path(output_dir) / "images" / stamp_string.str()).string()))
+                LOG(INFO) << "failed to save image at " << time_s;
         }
     }
 }
-void LaserMapping::PublishROSMsg() {
-    // publish
-    PublishOdometry();
-    PublishFrameWorld();
-    PublishFrameEffectWorld();
-    PublishImage();
-    PublishFrustrum();
-}
-bool LaserMapping::CollectMeasures(const std::int64_t &meas_end) {
-    if (points_buffer_.empty()) return false;
-    if (param->imu_enable_ && imu_buffer_.empty()) return false;
 
-    // imu buffer is not beyond the measures end
+void LaserMapping::PublishROSMsgFastLio() {
+    const std::int64_t time_ns = measures_.mea_end_;
+    PublishOdometry(fast_lio_->x.Isometry(), time_ns);
+    if (!fast_lio_->points.empty()) {
+        const ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(time_ns));
+        PointCloud::Ptr points_world(new PointCloud);
+        PointCloud::Ptr eff_points(new PointCloud);
+        for (const FastLioPoint& pt : fast_lio_->points) {
+            Point point{};
+            point.getVector3fMap() = pt.world.cast<float>();
+            points_world->push_back(point);
+            if (pt.valid) eff_points->push_back(point);
+        }
+        sensor_msgs::PointCloud2 scan_msg;
+        pcl::toROSMsg(*points_world, scan_msg);
+        scan_msg.header.stamp = ros_stamp;
+        scan_msg.header.frame_id = "world";
+        if (pub_laser_cloud_world_) pub_laser_cloud_world_.publish(scan_msg);
+        if (bag_.isOpen()) bag_.write("/cloud_registered", ros_stamp, scan_msg);
+
+        sensor_msgs::PointCloud2 eff_scan_msg;
+        pcl::toROSMsg(*eff_points, eff_scan_msg);
+        eff_scan_msg.header.stamp = ros_stamp;
+        eff_scan_msg.header.frame_id = "world";
+        if (pub_laser_cloud_effect_world_) pub_laser_cloud_effect_world_.publish(eff_scan_msg);
+        if (bag_.isOpen()) bag_.write("/cloud_registered_effect_world", ros_stamp, eff_scan_msg);
+    }
+    PublishFrustrum(time_ns);
+}
+void LaserMapping::ClearMeasuresBefore(const std::int64_t& time_ns) {
+    while (!image_buff_.empty() && image_buff_.front().time_ns <= time_ns) {
+        image_buff_.pop_front();
+    }
+    while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() <= time_ns) {
+        points_buffer_.pop_front();
+    }
+    while (!imu_buffer_.empty() && imu_buffer_.front().time_ns <= time_ns) {
+        imu_buffer_.pop_front();
+    }
+    while (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() <= time_ns) {
+        obss_time_ns_buff_.pop_front();
+        obss_id_buff_.pop_front();
+    }
+}
+bool LaserMapping::CollectMeasuresFastLio() {
+    std::int64_t meas_end;
+    ClearMeasuresBefore(fast_lio_->last_end_ns);
+    if (param->fast_lio_.mode == FastLioMode::LIVO) {
+        if (image_buff_.empty()) return false;
+        meas_end = image_buff_.front().time_ns;
+    } else if (param->fast_lio_.mode == FastLioMode::LIGO && !obss_time_ns_buff_.empty() &&
+               obss_time_ns_buff_.front() - fast_lio_->last_end_ns <= S_TO_NS(1.5 * param->lba_.frame_dt)) {
+        meas_end = obss_time_ns_buff_.front();
+    } else {
+        meas_end = fast_lio_->last_end_ns + S_TO_NS(param->lba_.frame_dt);
+    }
+
+    if (points_buffer_.empty() || imu_buffer_.empty()) return false;
     if (imu_buffer_.back().time_ns < meas_end) return false;
-    // points buffer is not beyond the measures end
     if (points_buffer_.back().GetTimeNs() < meas_end) return false;
 
-    // push the imu data
+    measures_.mea_end_ = meas_end;
     measures_.imu_.clear();
-    while (!imu_buffer_.empty() && imu_buffer_.front().time_ns < meas_end) {
+    while (!imu_buffer_.empty() && imu_buffer_.front().time_ns <= meas_end) {
         measures_.imu_.emplace_back(imu_buffer_.front());
         imu_buffer_.pop_front();
     }
-
     measures_.lidar_->clear();
-    int num_collected = 0;
-    while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() < meas_end) {
+    while (!points_buffer_.empty() && points_buffer_.front().GetTimeNs() <= meas_end) {
         measures_.lidar_->emplace_back(points_buffer_.front());
         points_buffer_.pop_front();
-        num_collected++;
     }
-
-    if (measures_.lidar_->empty()) {
-        LOG(INFO) << "Empty lidar points in measures";
+    measures_.obs_id = -1;
+    if (!obss_time_ns_buff_.empty() && obss_time_ns_buff_.front() <= meas_end) {
+        measures_.obs_id = obss_id_buff_.front();
+        measures_.obs_time_ns = obss_time_ns_buff_.front();
+        obss_id_buff_.pop_front();
+        obss_time_ns_buff_.pop_front();
+    }
+    measures_.rgb_image_ = RgbImage();
+    while (!image_buff_.empty() && image_buff_.front().time_ns <= meas_end) {
+        measures_.rgb_image_ = std::move(image_buff_.front());
+        image_buff_.pop_front();
     }
     return true;
 }
-void LaserMapping::PublishOdometry() {
-    auto interp_pose = resple_lio_->spl.Interpolate(resple_lio_->spl.maxTimeNs() - 1);
+
+void LaserMapping::PublishOdometry(const Eigen::Isometry3d& pub_pose, std::int64_t time_ns) {
     nav_msgs::Odometry body_odometry;
     geometry_msgs::PoseStamped pose_stamped;
-    pose_stamped.pose.position.x = interp_pose.translation().x();
-    pose_stamped.pose.position.y = interp_pose.translation().y();
-    pose_stamped.pose.position.z = interp_pose.translation().z();
-    Eigen::Quaterniond q(interp_pose.linear());
+    pose_stamped.pose.position.x = pub_pose.translation().x();
+    pose_stamped.pose.position.y = pub_pose.translation().y();
+    pose_stamped.pose.position.z = pub_pose.translation().z();
+    Eigen::Quaterniond q(pub_pose.linear());
     pose_stamped.pose.orientation.x = q.x();
     pose_stamped.pose.orientation.y = q.y();
     pose_stamped.pose.orientation.z = q.z();
     pose_stamped.pose.orientation.w = q.w();
-    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(time_ns));
     pose_stamped.header.stamp = ros_stamp;
     pose_stamped.header.frame_id = "world";
 
@@ -419,9 +526,9 @@ void LaserMapping::PublishOdometry() {
     tf::Transform transform;
     tf::Quaternion tf_q;
     tf::Vector3 t;
-    t.setX(interp_pose.translation().x());
-    t.setY(interp_pose.translation().y());
-    t.setZ(interp_pose.translation().z());
+    t.setX(pub_pose.translation().x());
+    t.setY(pub_pose.translation().y());
+    t.setZ(pub_pose.translation().z());
     tf_q.setX(q.x());
     tf_q.setY(q.y());
     tf_q.setZ(q.z());
@@ -431,47 +538,9 @@ void LaserMapping::PublishOdometry() {
     br.sendTransform(tf::StampedTransform(transform, body_odometry.header.stamp, "world", "body"));
 }
 
-void LaserMapping::PublishFrameWorld() {
-    if (resple_lio_->pt_meas.empty()) return;
-    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
-    PointCloud::Ptr points_world(new PointCloud);
-    points_world->reserve(resple_lio_->pt_meas.size());
-    for (int i = 0; i < resple_lio_->pt_meas.size(); ++i) {
-        faster_lio::Point point{};
-        point.getVector3fMap() = resple_lio_->pt_meas[i].point_world.cast<float>();
-        points_world->push_back(point);
-    }
-    sensor_msgs::PointCloud2 scan_msg;
-    pcl::toROSMsg(*points_world, scan_msg);
-    scan_msg.header.stamp = ros_stamp;
-    scan_msg.header.frame_id = "world";
-    if (pub_laser_cloud_world_) pub_laser_cloud_world_.publish(scan_msg);
-    if (bag_.isOpen()) bag_.write("/cloud_registered", ros_stamp, scan_msg);
-}
-
-void LaserMapping::PublishFrameEffectWorld() {
-    if (resple_lio_->pt_meas.empty()) return;
-    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
-    PointCloud::Ptr eff_points(new PointCloud);
-    eff_points->reserve(resple_lio_->pt_meas.size());
-    for (int i = 0; i < resple_lio_->pt_meas.size(); ++i) {
-        if (!resple_lio_->pt_meas[i].if_valid) continue;
-        faster_lio::Point point{};
-        point.getVector3fMap() = resple_lio_->pt_meas[i].point_world.cast<float>();
-        eff_points->push_back(point);
-    }
-    sensor_msgs::PointCloud2 eff_scan_msg;
-    pcl::toROSMsg(*eff_points, eff_scan_msg);
-    eff_scan_msg.header.stamp = ros_stamp;
-    eff_scan_msg.header.frame_id = "world";
-    if (pub_laser_cloud_effect_world_) pub_laser_cloud_effect_world_.publish(eff_scan_msg);
-    if (bag_.isOpen()) bag_.write("/cloud_registered_effect_world", ros_stamp, eff_scan_msg);
-}
-void LaserMapping::PublishImage() {}
-
-void LaserMapping::PublishFrustrum() {
+void LaserMapping::PublishFrustrum(std::int64_t time_ns) {
     if (!pub_frustrum_) return;
-    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(resple_lio_->spl.maxTimeNs()));
+    ros::Time ros_stamp = ros::Time().fromSec(NS_TO_S(time_ns));
     // virtual pinhole camera, drawn at the body-to-camera extrinsic (identity if uncalibrated)
     constexpr double kDepth = 1.0;        // frustum depth, meters
     constexpr double kHalfFovH = 0.5236;  // 60 deg horizontal half-FOV, rad
@@ -479,17 +548,17 @@ void LaserMapping::PublishFrustrum() {
     const double half_w = kDepth * std::tan(kHalfFovH);
     const double half_h = kDepth * std::tan(kHalfFovV);
 
-    const Pose3 &body_from_cam = param->extrin_ic_;
-    const Eigen::Vector3d apex_cam(0, 0, 0);
-    const std::array<Eigen::Vector3d, 4> corners_cam = {
-        Eigen::Vector3d(-half_w, -half_h, kDepth),
-        Eigen::Vector3d(half_w, -half_h, kDepth),
-        Eigen::Vector3d(half_w, half_h, kDepth),
-        Eigen::Vector3d(-half_w, half_h, kDepth),
+    const Pose3& body_from_cam = param->extrin_ic_;
+    const Vec3 apex_cam(0, 0, 0);
+    const std::array<Vec3, 4> corners_cam = {
+        Vec3(-half_w, -half_h, kDepth),
+        Vec3(half_w, -half_h, kDepth),
+        Vec3(half_w, half_h, kDepth),
+        Vec3(-half_w, half_h, kDepth),
     };
 
-    const Eigen::Vector3d apex = body_from_cam * apex_cam;
-    std::array<Eigen::Vector3d, 4> corners;
+    const Vec3 apex = body_from_cam * apex_cam;
+    std::array<Vec3, 4> corners;
     for (int i = 0; i < 4; ++i) corners[i] = body_from_cam * corners_cam[i];
 
     visualization_msgs::Marker marker;
@@ -507,7 +576,7 @@ void LaserMapping::PublishFrustrum() {
     marker.color.b = 0.0;
     marker.color.a = 1.0;
 
-    auto add_point = [&marker](const Eigen::Vector3d &p) {
+    auto add_point = [&marker](const Vec3& p) {
         geometry_msgs::Point pt;
         pt.x = p.x();
         pt.y = p.y();
@@ -530,33 +599,24 @@ void LaserMapping::PublishFrustrum() {
 }
 
 void LaserMapping::Savetrajectory() {
-    // save body pose
-    TrajectoryGenerator::save_to_tumtxt(trajectory_, (fs::path(output_dir) / "traj_log.txt").string());
-    TrajectoryGenerator::save_to_pcd(trajectory_, (fs::path(output_dir) / "traj.pcd").string());
-
-    // save camera pose
-    Trajectory cam_traj;
-    for (auto stamp_pose : trajectory_) {
-        stamp_pose.pose = stamp_pose.pose * param->extrin_ic_.Isometry3d();
-        cam_traj.emplace_back(stamp_pose);
-    }
-    TrajectoryGenerator::save_to_tumtxt(cam_traj, (fs::path(output_dir) / "cam_traj_log.txt").string());
-    TrajectoryGenerator::save_to_pcd(cam_traj, (fs::path(output_dir) / "cam_traj.pcd").string());
+    LOG(INFO) << "Save states in imu frame";
+    TrajectoryGenerator::save_to_tumtxt(trajectory_,
+                                        (fs::path(output_dir) / "traj_log.txt").string());
 }
 
 void LaserMapping::Finish() {
-    bag_.close();
-    if (param->pcd_save_en_ && !wait_save_points_->empty()) {
-        double time_s = global_offset_time + wait_save_points_->front().GetTimeSec();
-        std::stringstream stamp_string;
-        stamp_string << std::setw(17) << std::setfill('0') << std::fixed << std::setprecision(8) << time_s;
-
-        pcl::UniformSampling<Point> sampler;
-        sampler.setInputCloud(wait_save_points_);
-        sampler.setRadiusSearch(param->ds_scan_voxel);
-        sampler.filter(*wait_save_points_);
-        fs::create_directories(fs::path(output_dir) / "map");
-        pcl::io::savePCDFileBinary((fs::path(output_dir) / "map" / stamp_string.str()).string(), *wait_save_points_);
+    if (fast_lio_ && fast_lio_->loop) {
+        fast_lio_->loop->Finish(fast_lio_->lba->WindowScans(), global_offset_time);
+        const pgo::ScanNodes& nodes = fast_lio_->loop->backend().nodes();
+        CHECK_EQ(nodes.size(), trajectory_.size());
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            CHECK_LT(std::abs(nodes[i].time - trajectory_[i].time), 1e-6) << "node " << i << " is not frame " << i;
+            trajectory_[i].pose = nodes[i].pose;
+        }
+        const fs::path dir = fs::path(output_dir) / "pgo";
+        fs::create_directories(dir);
+        fast_lio_->loop->SaveDebug(dir.string());
     }
+    bag_.close();
 }
-}  // namespace faster_lio
+}  // namespace kuma_lio

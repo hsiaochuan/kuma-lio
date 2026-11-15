@@ -1,10 +1,32 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "pose3.h"
 
 #include <algorithm>
 #include <limits>
 #include <random>
 
-namespace faster_lio {
+namespace kuma_lio {
 
 Pose3 Pose3::Identity() {
     return Pose3(Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero());
@@ -58,11 +80,7 @@ Pose3& Pose3::operator*=(const Pose3& other) {
 }
 
 Pose3 Pose3::operator*(const Pose3& other) const {
-    Pose3 out;
-    out.q_ = q_ * other.q_;
-    out.t_ = q_ * other.t_ + t_;
-    out.q_.normalize();
-    return out;
+    return Pose3(q_ * other.q_, q_ * other.t_ + t_);  // the constructor normalizes the quaternion
 }
 
 Eigen::Vector3d Pose3::operator*(const Eigen::Vector3d& vec3) const {
@@ -125,14 +143,20 @@ Pose3 Pose3::Interpolate(const Pose3& a, const Pose3& b, double ratio) {
 }
 
 void Pose3::AddNoise(double noise_trans, double noise_rot_angle) {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
+    // one generator per thread: a shared one would be a data race
+    thread_local std::mt19937 gen(std::random_device{}());
 
-    std::normal_distribution<double> trans_dist(0.0, noise_trans);
-    Eigen::Vector3d trans_noise(trans_dist(gen), trans_dist(gen), trans_dist(gen));
-
-    std::normal_distribution<double> rot_dist(0.0, noise_rot_angle);
-    Eigen::Vector3d omega(rot_dist(gen), rot_dist(gen), rot_dist(gen));
+    // std::normal_distribution needs a positive standard deviation: a zero one (no noise) is undefined behaviour
+    Eigen::Vector3d trans_noise = Eigen::Vector3d::Zero();
+    if (noise_trans > 0.0) {
+        std::normal_distribution<double> trans_dist(0.0, noise_trans);
+        trans_noise = Eigen::Vector3d(trans_dist(gen), trans_dist(gen), trans_dist(gen));
+    }
+    Eigen::Vector3d omega = Eigen::Vector3d::Zero();
+    if (noise_rot_angle > 0.0) {
+        std::normal_distribution<double> rot_dist(0.0, noise_rot_angle);
+        omega = Eigen::Vector3d(rot_dist(gen), rot_dist(gen), rot_dist(gen));
+    }
 
     const double theta = omega.norm();
     Eigen::Matrix3d R_noise = Eigen::Matrix3d::Identity();
@@ -146,5 +170,5 @@ void Pose3::AddNoise(double noise_trans, double noise_rot_angle) {
     q_.normalize();
 }
 
-}  // namespace faster_lio
+}  // namespace kuma_lio
 

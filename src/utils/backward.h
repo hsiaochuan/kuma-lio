@@ -21,8 +21,7 @@
  * SOFTWARE.
  */
 
-#ifndef H_6B9572DA_A64B_49E6_B234_051480991C89
-#define H_6B9572DA_A64B_49E6_B234_051480991C89
+#pragma once
 
 #ifndef __cplusplus
 #error "It's not going to compile without a C++ compiler..."
@@ -4530,5 +4529,3 @@ class SignalHandling {
 #endif  // BACKWARD_SYSTEM_UNKNOWN
 
 }  // namespace backward
-
-#endif /* H_GUARD */

@@ -1,23 +1,43 @@
-#ifndef FASTER_LIO_LASER_MAPPING_H
-#define FASTER_LIO_LASER_MAPPING_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
+
 #include "laser_mapping_param.h"
 #include "livox_ros_driver/CustomMsg.h"
 #include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/Image.h>
-#include <sensor_msgs/Imu.h>
 #include <sensor_msgs/CompressedImage.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/Imu.h>
 
 #include <rosbag/bag.h>
-#include "im.h"
+#include "fast_lio.h"
 #include "pointcloud_preprocess.h"
-#include "resple_lio.h"
 #include "stamp_pose.h"
-#include <cv_bridge/cv_bridge.h>
-namespace faster_lio {
 
-/// Data pipeline around the odometry algorithm: ROS IO, buffering and time sync,
-/// publishing and result saving. The estimation itself lives in IeskfLio.
+namespace kuma_lio {
+
+
 class LaserMapping {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
@@ -28,27 +48,26 @@ class LaserMapping {
         LOG(INFO) << "laser mapping deconstruct";
     }
 
-    /// init without ros
-    bool Init(const std::string &config_fname);
-    void Run();
-    void PostUpdate();
-    void PublishROSMsg();
+    bool Init(const std::string &config_fname, const std::string& camera_fname, const std::string& pgo_fname = "");
+    void RunFastLio();
+    void PostUpdateFastLio();
+    void PublishROSMsgFastLio();
     // callbacks of lidar and imu
     void StandardPCLCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void LivoxPCLCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg);
-    void VelodyneScanCallBack(const velodyne_msgs::VelodyneScan::ConstPtr &msg);
     void IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in);
-    void ImageMsgCallBack(const sensor_msgs::Image::ConstPtr &msg_in);
-    void CompressedImageCallBack(const sensor_msgs::CompressedImage::ConstPtr &msg_in);
+    void ImageCallBack(const sensor_msgs::Image::ConstPtr &msg);
+    void CompressedImageCallback(const sensor_msgs::CompressedImage::ConstPtr &msg);
+    bool ReadObsNav(const std::string &obs_fname, const std::string &nav_fname, const std::string &sol_fname);
+    PointCloud::Ptr ScanFromPCL(const sensor_msgs::PointCloud2::ConstPtr &msg) const;
+    PointCloud::Ptr ScanFromLivox(const livox_ros_driver::CustomMsg::ConstPtr &msg) const;
+    void PushScan(const PointCloud::Ptr &scan);
     void AddScanToBuffer(const PointCloud::Ptr &scan);
-    // sync lidar with imu
-    bool CollectMeasures(const std::int64_t& meas_end);
-    ////////////////////////////// debug save / show ////////////////////////////////////////////////////////////////
-    void PublishOdometry();
-    void PublishFrameWorld();
-    void PublishFrameEffectWorld();
-    void PublishImage();
-    void PublishFrustrum();
+    // The next frame of the FAST-LIO front end: lba.frame_dt long, or up to the next image.
+    void ClearMeasuresBefore(const std::int64_t& time_ns);
+    bool CollectMeasuresFastLio();
+    void PublishOdometry(const Eigen::Isometry3d& pub_pose, std::int64_t time_ns);
+    void PublishFrustrum(std::int64_t time_ns);
     void Savetrajectory();
 
     void Finish();
@@ -56,8 +75,8 @@ class LaserMapping {
     void InitialSubscribers(ros::NodeHandle& nh);
     void InitialPublishers(ros::NodeHandle& nh);
    public:
-    /// modules
-    std::shared_ptr<RESPLE_LIO> resple_lio_ = nullptr;
+    // modules
+    std::shared_ptr<FastLio> fast_lio_ = nullptr;
     std::shared_ptr<PointCloudPreprocess> preprocess_ = nullptr;  // point cloud preprocess
 
     ros::Subscriber sub_pcl_;
@@ -67,34 +86,27 @@ class LaserMapping {
     ros::Publisher pub_laser_cloud_effect_world_;
     ros::Publisher pub_odom_aft_mapped_;
     ros::Publisher pub_path_;
-    ros::Publisher pub_image_;
     ros::Publisher pub_frustrum_;
-
-    double global_offset_time = std::numeric_limits<double>::quiet_NaN();
 
     std::mutex mtx_buffer_;
     std::deque<Point> points_buffer_;
     std::deque<Imu> imu_buffer_;
-    std::deque<Image> image_buffer_;
-
-    double last_timestamp_lidar_ = 0;
-    double last_timestamp_imu_ = -1.0;
-    double last_timestamp_camera_ = 0.0;
+    std::deque<RgbImage> image_buff_;
+    obs_t obss{};
+    nav_t nav{};
+    std::deque<int64_t> obss_time_ns_buff_;
+    std::deque<int> obss_id_buff_;
 
     MeasureGroup measures_;
-    PointCloud::Ptr wait_save_points_{new PointCloud()};
     Trajectory trajectory_;
 
     std::shared_ptr<LaserMappingParam> param;
     rosbag::Bag bag_;
 
-    // prior pose for localization, forwarded to the odometry in Init()
-    Eigen::Vector3d prior_init_position_ = Eigen::Vector3d::Zero();
-    Eigen::Quaterniond prior_init_rotation_ = Eigen::Quaterniond::Identity();
+    bool if_inertial_initialized = false;
+    bool if_localmap_initialized = false;
    public:
     std::string output_dir;
 };
 
-}  // namespace faster_lio
-
-#endif  // FASTER_LIO_LASER_MAPPING_H
+}  // namespace kuma_lio

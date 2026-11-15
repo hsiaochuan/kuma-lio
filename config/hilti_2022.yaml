@@ -1,36 +1,77 @@
 common:
   lid_topic: "/hesai/pandar"
   imu_topic: "/alphasense/imu"
-  camera_topic: "/alphasense/cam0/image_raw"
-  camera_enable: false
-  visual_update: false
-  imu_enable: true
+  img_topic: ""
   acc_ratio: false
   lidar_time_offset: 0
-  camera_time_offset: 0
-  image_skip: 1
+  image_time_offset: 0
 
+num_threads: 4
 lidar_type: HESAI
+# Livox points are dropped when any bit of this mask is set in their tag: 32 drops return numbers 2 and 3 only (FAST-LIO's rule); unused for other lidars
+livox_tag_mask: 32
 blind: 0.5
 point_filter_num: 2
-det_range:     100.0
-
-extrin_t_il: [ -0.001, -0.00855, 0.055 ]
-extrin_R_il: [ 0.7071068, -0.7071068, 0, 0 ]
-
-ds_scan_voxel: 0.25
-ds_lm_voxel: 0.25
-knot_hz:      100               # control points per second of the B-spline trajectory
-w_pt:         0.01              # per-point measurement variance of the LiDAR residual
-plane_thresh: 0.05              # max |point-to-plane| of the 5 neighbours when fitting [m]
-nn_thresh:    0.5               # point-to-plane residual gate [m]
-coeff_cov:    2.0               # accept a point when lid_cov < w_pt * coeff_cov
-std_sys_pos:  0.05              # spline process noise, position
-std_sys_ort:  0.05              # spline process noise, orientation
-cov_acc:      [1.0, 1.0, 1.0]   # accelerometer measurement variance
-cov_gyro:     [0.1, 0.1, 0.1]   # gyroscope measurement variance
-
+img_filter: 1  # keep one image in img_filter (1 = every image)
+det_range: 100.0
+extrin_t_il: [-0.001, -0.00855, 0.055]
+extrin_R_il: [0.7071068, -0.7071068, 0, 0]
 pcd_save_en: true
-pcd_save_interval: 30
+pcd_save_interval: 1.0
 bag_save_en: false
 image_save_en: false
+image_save_interval: 1.5
+fastlio:
+  mode: LIO
+  # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
+  sub_max: 4
+  # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
+  sub_std_acc: 0.0
+  sub_std_gyr: 0.0
+  down_size: 0.25
+  cov_gyr: 0.01
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  r_base: 0.0005
+
+lba:
+  win_size: 10
+  voxel_size: 0.5
+  plane_eigen_ratio: 0.1      # 平面判据 lambda_0/lambda_1 的上限，无量纲
+  min_plane_size: 0.1        # 平面面内较小方向的最小标准差，按本层格子边长的比例给（铺满约 0.289）
+  clutter_points: 30         # 一个 cell 点数超过此值且不属于任何平面就清空其中的点，0 为关闭
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  sigma_num: 3
+  pose_var: 1.0e-4
+  range_err: 0.02
+  angle_err: 0.05
+  frame_dt: 0.1
+  map_range: 200.0
+
+gnss:
+  lever_arm: [0.0, 0.0, 0.0]
+  ali_min_travel: 10.0
+  ali_refine: true  # fastlio: yaw of the alignment re-estimated from the TDCP displacements
+  max_gap: 0.1
+  tdcp_dop_slip: 1.0  # [m] |phase change - integrated Doppler| above this is a cycle slip (the old fixed value)
+  tdcp_enable: true
+  tdcp_std: 0.02
+  tdcp_outlier: 0.5
+  tdcp_chi2: 10.83
+  tdcp_min_sat: 5
+  tdcp_init_weight: 1.0
+  tdcp_init_min_horiz: 0.05
+  tdcp_init_max_std: 0.5
+  std_clk: 10.0
+  std_isb: 0.01
+  std_clk_init: 10.0
+  std_ext_yaw_init: 0.2
+  std_ext_pos_init: 5.0

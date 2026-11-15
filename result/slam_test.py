@@ -16,17 +16,16 @@ from pathlib import Path
 from enum import Enum
 import shutil
 import re
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 # Use the evo checked out in third_party/evo (not any pip-installed evo) for ATE evaluation
 _EVO_DIR = str(Path(__file__).resolve().parent.parent / "third_party" / "evo")
 if _EVO_DIR not in sys.path:
     sys.path.insert(0, _EVO_DIR)
-from evo.tools.settings import SETTINGS
 from evo.core import metrics, sync
+from evo import main_ape
 from evo.tools import file_interface
+
+
 # ──────────────────────────────────────────────
 # Data Structures
 # ──────────────────────────────────────────────
@@ -45,19 +44,14 @@ class RunTask:
     run_mode: RunMode = RunMode.OFFLINE
     start: float = 0.0
     duration: float = -1.0
-    prior_map_fname: str = ""  # prior map for localization mode
-    prior_init_pose: str = ""  # init pose for localization mode
     name: str = ""  # automatically extracted from bag_file
     ground_truth_fname: str = ""
-    is_localization: bool = False
-
-    @property
-    def localization_args(self) -> List[str]:
-        if not self.is_localization:
-            return []
-        args = ["--prior_map_fname", self.prior_map_fname]
-        args += ["--prior_init_pose", self.prior_init_pose]
-        return args
+    gnss_obs_fname: str = ""
+    gnss_nav_fname: str = ""
+    clean_config: str = "../config/clean.yaml"
+    pgo_config: str = "../config/pgo.yaml"
+    ba_config: str = "../config/ba.yaml"
+    camera_config: str = ""
 
 
 @dataclass
@@ -65,22 +59,28 @@ class DatasetConfig:
     """Dataset configuration"""
     name: str
     bag_files: List[str]
-    config: Dict[str,str] = field(default_factory=dict)
+    config: Dict[str, str] = field(default_factory=dict)
     start: float = 0.0
     duration: float = -1.0
     run_mode: RunMode = RunMode.OFFLINE
-    prior_init_pose: Dict[str, str] = field(default_factory=dict)
-    prior_map: Dict[str, str] = field(default_factory=dict)
     ground_truth_dir: str = ""
-    is_localization: bool = False
+    gnss_dir: str = ""
+    clean_config: str = "../config/clean.yaml"  # run_clean parameters
+    pgo_config: str = "../config/pgo.yaml"  # run_pgo parameters, they depend on the sensor's field of view
+    ba_config: str = "../config/ba.yaml"  # run_ba parameters
+    camera_config: Dict[str, str] = field(default_factory=dict)
+
 
 @dataclass
 class TestResult:
     bag_name: str
     bag_file: str
     points_count: int = 0
-    duration_sec: float = 0.0
+    duration_sec: float = 0.0  # SLAM only
     ate: float = 0.0
+    ate_pgo: float = 0.0
+    ate_ba: float = 0.0
+
 
 @dataclass
 class SuiteResult:
@@ -94,32 +94,6 @@ class SuiteResult:
 # ──────────────────────────────────────────────
 # Utility Functions
 # ──────────────────────────────────────────────
-
-
-def pcd_points_count(pcd_fname: str) -> int:
-    """Read PCD file header, return point count; return -1 on failure"""
-    try:
-        with open(pcd_fname, 'r', errors='ignore') as f:
-            for line in f:
-                if line.startswith('POINTS'):
-                    return int(line.split()[1])
-                if line.startswith('DATA'):
-                    break
-        return 0
-    except Exception as e:
-        return -1
-
-
-def count_points_in_dir(maps_dir: str) -> int:
-    """Count total points in all PCD files in the directory"""
-    total = 0
-    if not os.path.isdir(maps_dir):
-        return 0
-    for fname in os.listdir(maps_dir):
-        if fname.endswith('.pcd'):
-            total += max(0, pcd_points_count(os.path.join(maps_dir, fname)))
-    return total
-
 
 def get_git_info() -> Tuple[str, str]:
     """Return (branch, commit_id); return empty strings on failure"""
@@ -149,21 +123,31 @@ class SLAMTestRunner:
     def __init__(
             self,
             offline_app: str = "../build/run_mapping_offline",
-            online_app: str = "../build/run_mapping_online",
-            points_post_app: str = "../build/points_jet",
+            mls_app: str = "../build/run_mls",
+            pgo_app: str = "../build/run_pgo",
+            clean_app: str = "../build/run_clean",
+            ba_app: str = "../build/run_ba",
+            merge_app: str = "../build/run_merge",
 
             build_dir: str = "../build",
             output_root: str = "./test_results",
 
             if_delete_result_dir: bool = False,
             if_slam: bool = True,
-            if_postprocess: bool = False,
+            if_pgo: bool = False,
+            if_clean: bool = False,
+            if_ba: bool = False,
+            if_merge: bool = False,
+            if_mls: bool = False,
     ):
         self.git_branch = get_git_info()[0]
         self.git_commit = get_git_info()[1]
         self.offline_app = offline_app
-        self.online_app = online_app
-        self.points_post_app = points_post_app
+        self.mls_app = mls_app
+        self.pgo_app = pgo_app
+        self.clean_app = clean_app
+        self.ba_app = ba_app
+        self.merge_app = merge_app
 
         self.build_dir = build_dir
         self.output_root = output_root
@@ -172,7 +156,11 @@ class SLAMTestRunner:
 
         self.if_delete_result_dir = if_delete_result_dir
         self.if_slam = if_slam
-        self.if_postprocess = if_postprocess
+        self.if_pgo = if_pgo
+        self.if_clean = if_clean
+        self.if_ba = if_ba
+        self.if_merge = if_merge
+        self.if_mls = if_mls
 
     # ── Build ──────────────────────────────────
 
@@ -184,7 +172,11 @@ class SLAMTestRunner:
                 ["make",
                  "-C", self.build_dir,
                  "run_mapping_offline",
-                 # "run_mapping_online",
+                 "run_pgo",
+                 "run_clean",
+                 "run_ba",
+                 "run_merge",
+                 "run_mls",
                  "-j", str(jobs)],
                 check=True,
                 stdout=subprocess.PIPE,
@@ -207,6 +199,10 @@ class SLAMTestRunner:
                  "--output_dir", task.output_dir,
                  "--start", str(task.start),
                  '--duration', str(task.duration),
+                 "--gnss_obs_fname", task.gnss_obs_fname,
+                 "--nav_fname", task.gnss_nav_fname,
+                 "--camera_fname", task.camera_config,
+                 "--pgo_config", task.pgo_config,
                  ],
                 check=True,
             )
@@ -216,55 +212,96 @@ class SLAMTestRunner:
             print(f"  run_mapping_offline exited with code {e.returncode}")
             return False
 
-    def run_post_process(self, output_dir: str):
-        subprocess.run([
-            self.points_post_app,
-            '--input', os.path.join(output_dir, "final.pcd"),
-            '--output', os.path.join(output_dir, "final_post.pcd"),
-        ], check=True)
-
-    def run_online(self, task: RunTask) -> bool:
-        roscore = rviz = online_proc = None
+    def run_step(self, name: str, command: List[str]) -> bool:
+        print(f"  {name}")
         try:
-            roscore = subprocess.Popen(
-                ["roscore"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            rviz = subprocess.Popen(
-                ["rviz", "-d", "../rviz_cfg/loam_livox.rviz"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-
-            time.sleep(5)
-
-            online_proc = subprocess.Popen(
-                [self.online_app,
-                 "--output_dir", task.output_dir,
-                 "--config_fname", task.config] + task.localization_args,
-            )
-
-            if task.is_localization:
-                time.sleep(30)
-            bag_play_command = [
-                "rosbag", "play",
-                "--start", str(task.start),
-                task.bag_file,
-            ]
-            if task.duration > 0:
-                bag_play_command += ["--duration", str(task.duration)]
-            subprocess.run(
-                bag_play_command,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                check=True,
-            )
+            subprocess.run(command, check=True)
             return True
-        except Exception as e:
-            print(f"  Online mode exception: {e}")
+        except (subprocess.CalledProcessError, OSError) as e:
+            print(f"  {name} failed: {e}")
             return False
-        finally:
-            for proc in [online_proc, rviz, roscore]:
-                if proc:
-                    proc.terminate()
+
+    def run_mapping(self, task: RunTask):
+        """SLAM scans -> loop closure -> dynamic point removal -> bundle adjustment -> merged map -> smoothed map.
+
+        Every step takes what the steps before it produced: without --if_pgo the scans are placed by
+        traj_log.txt, without --if_clean the merged map has the dynamic points and run_ba adjusts with them,
+        without --if_ba the merged map is placed by the poses of run_pgo.  Poses are picked by which files exist,
+        even from an earlier run: run_ba starts from pgo/traj_pgo.txt, else traj_log.txt; run_merge takes
+        ba/traj_ba.txt, else pgo/traj_pgo.txt, else traj_log.txt.
+        """
+        output_dir = task.output_dir
+        scans_dir = os.path.join(output_dir, "scans")
+        poses = os.path.join(output_dir, "traj_log.txt")  # its first column is the file stem of each scan
+        map_fname = os.path.join(output_dir, "map.ply")
+        if not (self.if_pgo or self.if_clean or self.if_ba or self.if_merge or self.if_mls):
+            return
+        if not os.path.isdir(scans_dir):
+            print(f"  no {scans_dir}, mapping steps skipped: they need front_end: fastlio and pcd_save_en: true")
+            return
+
+        if self.if_pgo:
+            pgo_dir = os.path.join(output_dir, "pgo")
+            if not self.run_step("run_pgo", [
+                self.pgo_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--config", task.pgo_config,
+                "--out", pgo_dir,
+            ]):
+                return
+            poses = os.path.join(pgo_dir, "traj_pgo.txt")
+
+        if self.if_clean:
+            clean_dir = os.path.join(output_dir, "clean")
+            if not self.run_step("run_clean", [
+                self.clean_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--config", task.clean_config,
+                "--out", clean_dir,
+            ]):
+                return
+
+        if self.if_ba:
+            ba_dir = os.path.join(output_dir, "ba")
+            traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
+            poses = traj_pgo if os.path.exists(traj_pgo) else os.path.join(output_dir, "traj_log.txt")
+            if not self.run_step("run_ba", [
+                self.ba_app,
+                "--scans_dir", scans_dir,
+                "--pose_fname", poses,
+                "--config", task.ba_config,
+                "--out", ba_dir,
+                "--images_dir", os.path.join(output_dir, "images"),
+                "--calib_fname", task.camera_config,
+            ]):
+                return
+
+        if self.if_merge:
+            traj_log = os.path.join(output_dir, "traj_log.txt")
+            traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
+            traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
+            # the best poses there are: run_ba's, else run_pgo's, else the SLAM trajectory
+            poses = traj_ba if os.path.exists(traj_ba) else traj_pgo if os.path.exists(traj_pgo) else traj_log
+
+            clean_scans_dir = os.path.join(output_dir, "clean")
+            scans = clean_scans_dir if os.path.isdir(clean_scans_dir) else scans_dir
+            if not self.run_step("run_merge", [
+                self.merge_app,
+                "--trajectory", poses,
+                "--pcd_dir", scans,
+                "--output", map_fname,
+                "--voxel_size", "0.02",
+            ]):
+                return
+
+        if self.if_mls:
+            self.run_step("run_mls", [
+                self.mls_app,
+                "--input", map_fname,
+                "--output", os.path.join(output_dir, "map_post.ply"),
+            ])
 
     def run_single(self, task: RunTask) -> TestResult:
         output_dir = task.output_dir
@@ -280,72 +317,35 @@ class SLAMTestRunner:
         # pipeline
         start_time = time.time()
         if self.if_slam:
-            if task.run_mode == RunMode.OFFLINE:
-                self.run_offline(task)
-            else:
-                self.run_online(task)
-
-        if self.if_postprocess:
-            self.run_post_process(output_dir)
-
+            self.run_offline(task)
         end_time = time.time()
 
+        self.run_mapping(task)
+
         result.duration_sec = round(end_time - start_time, 1)
-        # result.points_count = count_points_in_dir(os.path.join(output_dir, "maps"))
         if os.path.exists(task.ground_truth_fname):
-            result.ate = self.evaluate_ate(task.ground_truth_fname, output_dir)
-            print("ATE RMSE: {}".format(result.ate))
+            traj_log = os.path.join(output_dir, "traj_log.txt")
+            if os.path.exists(traj_log):
+                result.ate = self.evaluate_ate(task.ground_truth_fname, traj_log)
+                print("ATE RMSE LIO: {}".format(result.ate))
+            traj_pgo = os.path.join(output_dir, "pgo", "traj_pgo.txt")
+            if os.path.exists(traj_pgo):
+                result.ate_pgo = self.evaluate_ate(task.ground_truth_fname, traj_pgo)
+                print("ATE RMSE PGO: {}".format(result.ate_pgo))
+            traj_ba = os.path.join(output_dir, "ba", "traj_ba.txt")
+            if os.path.exists(traj_ba):
+                result.ate_ba = self.evaluate_ate(task.ground_truth_fname, traj_ba)
+                print("ATE RMSE BA: {}".format(result.ate_ba))
         else:
             print("Fail to evaluate the ATE RMSE")
         return result
 
-    def evaluate_ate(self, ground_truth_fname: str, output_dir: str) -> float:
-        est_fname = os.path.join(output_dir, "traj_log.txt")
+    def evaluate_ate(self, ground_truth_fname: str, traj_fname: str) -> float:
         traj_ref = file_interface.read_tum_trajectory_file(ground_truth_fname)
-        traj_est = file_interface.read_tum_trajectory_file(est_fname)
+        traj_est = file_interface.read_tum_trajectory_file(traj_fname)
         traj_ref, traj_est = sync.associate_trajectories(traj_ref, traj_est, max_diff=0.05)
-        traj_est.align(traj_ref, correct_scale=False)
-
-        ape_metric = metrics.APE(metrics.PoseRelation.translation_part)
-        ape_metric.process_data((traj_ref, traj_est))
-
-        self.save_ate_plots(traj_ref, traj_est, ape_metric, output_dir)
-
-        return ape_metric.get_statistic(metrics.StatisticsType.rmse)
-
-    def save_ate_plots(self, traj_ref, traj_est, ape_metric: "metrics.APE", output_dir: str):
-        try:
-            from evo.tools import plot
-            """Save the same two plots `evo_ape --save_plot` produces: the raw APE error
-            over the trajectory index, and the trajectory colored by APE error."""
-            error_array = ape_metric.error
-            stats = ape_metric.get_all_statistics()
-
-            fig_error = plt.figure(figsize=SETTINGS.plot_figsize)
-            plot.error_array(
-                fig_error.gca(), error_array,
-                statistics={s: stats[s] for s in SETTINGS.plot_statistics if s not in ("min", "max")},
-                name="APE", title="APE w.r.t. translation part (m)", xlabel="index",
-            )
-            fig_error.savefig(os.path.join(output_dir, "ate_error.png"))
-            plt.close(fig_error)
-
-            plot_mode = plot.PlotMode.xy
-            fig_traj = plt.figure(figsize=SETTINGS.plot_figsize)
-            ax = plot.prepare_axis(fig_traj, plot_mode)
-            plot.traj(ax, plot_mode, traj_ref, style=SETTINGS.plot_reference_linestyle,
-                      color=SETTINGS.plot_reference_color, label="reference",
-                      alpha=SETTINGS.plot_reference_alpha)
-            plot.traj_colormap(
-                ax, traj_est, error_array, plot_mode,
-                min_map=stats["min"], max_map=stats["max"],
-                title="ATE mapped onto trajectory (aligned)",
-            )
-            fig_traj.savefig(os.path.join(output_dir, "ate_trajectory.png"))
-            plt.close(fig_traj)
-        except :
-            print("Error in plotting ATE")
-
+        result = main_ape.ape(traj_ref, traj_est, metrics.PoseRelation.translation_part, align=True)
+        return result.stats["rmse"]
 
     # ── Dataset run ────────────────────────────
 
@@ -374,14 +374,8 @@ class SLAMTestRunner:
             for pattern, config_fname in dataset.config.items():
                 if re.search(pattern, name):
                     break
-            prior_map_fname = ""
-            for pattern, prior_map_fname in dataset.prior_map.items():
-                if re.search(pattern, name):
-                    break
-            prior_init_pose = ""
-            for pattern, prior_init_pose in dataset.prior_init_pose.items():
-                if re.search(pattern, name):
-                    break
+            # unlike `config`, no match means no camera rather than the last entry
+            camera_fname = next((c for pattern, c in dataset.camera_config.items() if re.search(pattern, name)), "")
             task = RunTask(
                 bag_file=bag_file,
                 config=config_fname,
@@ -390,10 +384,13 @@ class SLAMTestRunner:
                 run_mode=dataset.run_mode,
                 start=dataset.start,
                 duration=dataset.duration,
-                prior_map_fname=prior_map_fname,
-                prior_init_pose=prior_init_pose,
-                ground_truth_fname= os.path.join(dataset.ground_truth_dir, name + ".txt"),
-                is_localization=dataset.is_localization,
+                ground_truth_fname=os.path.join(dataset.ground_truth_dir, name + ".txt"),
+                gnss_obs_fname=os.path.join(dataset.gnss_dir, name + ".o"),
+                gnss_nav_fname=os.path.join(dataset.gnss_dir, name + ".rnx"),
+                clean_config=dataset.clean_config,
+                pgo_config=dataset.pgo_config,
+                ba_config=dataset.ba_config,
+                camera_config=camera_fname,
             )
             test_result = self.run_single(task)
             suite.test_results.append(test_result)
@@ -410,9 +407,9 @@ class SLAMTestRunner:
             f.write("-" * 65 + "\n")
             for suite_result in suite_results:
                 for test_result in suite_result.test_results:
-                    f.write("{},\t{},\t{}、n\n".format(test_result.bag_name, test_result.duration_sec, test_result.ate))
+                    f.write("{},\t{},\t{},\t{},\t{}\n".format(test_result.bag_name, test_result.duration_sec,
+                                                              test_result.ate, test_result.ate_pgo, test_result.ate_ba))
             f.write("-" * 65 + "\n")
-
 
     # ── Main entry ────────────────────────────────
 
@@ -436,29 +433,11 @@ class SLAMTestRunner:
 # CLI
 # ──────────────────────────────────────────────
 def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
-
     mcd_viral = DatasetConfig(
         name="mcd_viral",
         config={
             "ntu": "../config/mcd_viral_atv.yaml",
             "kth|tuhh": "../config/mcd_viral_handheld.yaml",
-        },
-        is_localization=False,
-        prior_map={
-            "ntu": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/NTU/map.pcd",
-            "tuhh": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/TUHH/map.pcd",
-            "kth": "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/map/KTH/map.pcd",
-        },
-        prior_init_pose={
-            "ntu_day_01": "49.260631711144441, 107.371797989246588, 7.635809572392588, 0.936118452267473, -0.351663294301812, 0.003894594980225, -0.000053806028052",
-            "ntu_day_02": "61.961311814185514, 119.593225444885661, 7.696161795293277, 0.393007783516859, -0.919096202232126, -0.005400025874432, -0.027890730686113",
-            "ntu_day_10": "39.916532928019564, 23.052257138316396, 7.299254388426964, 0.886432211042536, 0.292027951287205, 0.156779604991748, 0.323075480889327",
-            "tuhh_day_02": "45.690090862136245, 447.141417866168638, 14.609562334189976, -0.197423661689090, 0.979502111007773, 0.001873158034956, 0.039950013962013",
-            "tuhh_day_03": "43.608801682558919, 446.534935432984810, 14.597698878700372, -0.154246716717734, 0.987560512077699, -0.009204072595886, 0.029111345112889",
-            "tuhh_day_04": "35.139850852161452, 114.906595889361554, -1.274419348455590, -0.413172157260666, 0.910454794447510, -0.007934554354419, 0.017259159287378",
-            "kth_day_06": "64.393253256515791, 66.483233094665749, 38.514334105006881, 0.289019760011319, 0.956543598228710, -0.018788172343168, -0.033748001284148",
-            "kth_day_09": "70.392009196482377, 63.111919578407303, 38.304007735781937, 0.974443073722663, -0.223447643378903, -0.022907254727646, -0.002665412385693",
-            "kth_day_10": "69.125536959169182, 63.567368550279582, 38.383523176445017, 0.305395593145653, 0.952159100742401, 0.002354607087536, -0.011001562893546",
         },
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/MCD_VIRAL/bag/ntu_day_01.bag",
@@ -486,17 +465,16 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     mcd_viral_ouster = DatasetConfig(
         name="mcd_viral_ouster",
-        config={".":"../config/mcd_viral_ouster.yaml"},
+        config={".": "../config/mcd_viral_ouster.yaml"},
         bag_files=[
             "/media/hsiaochuan/hsiaochuan-data/MCD_VIRAL/raw/ouster/ntu_day_02_os1_128.bag",
         ],
         run_mode=RunMode.OFFLINE,
     )
 
-
     hilti_2022 = DatasetConfig(
         name="hilti_2022",
-        config={".":"../config/hilti_2022.yaml"},
+        config={".": "../config/hilti_2022.yaml"},
         bag_files=[
             "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp01_construction_ground_level.bag",
             "/media/hsiaochuan/hsiaochuan-data/hilti2022/exp03_construction_stairs.bag",
@@ -542,7 +520,7 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 
     ntu_viral = DatasetConfig(
         name="ntu_viral",
-        config={".":"../config/ntu_viral.yaml"},
+        config={".": "../config/ntu_viral.yaml"},
         bag_files=[
             "/mnt/data/home/hsiaochuan/data/ntu_viral/eee_03/eee_03.bag",
         ],
@@ -550,15 +528,93 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
     )
     mars_lvig = DatasetConfig(
         name="mars_lvig",
-        config={".":"../config/mars_lvig.yaml"},
+        config={".": "../config/mars_lvig.yaml"},
         bag_files=[
-            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS03.bag",
+            # "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMtown01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMtown02.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMtown03.bag",
+            # "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMvalley01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMvalley02.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/AMvalley03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland02.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland03.bag",
+            # "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport02.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS02.bag",
             "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKisland_GNSS03.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS01.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS02.bag",
+            "/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/HKairport_GNSS03.bag",
         ],
+        gnss_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/GNSS",
         run_mode=RunMode.OFFLINE,
         ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth",
+        # HKisland / HKairport and AMtown / AMvalley have different camera calibrations
+        camera_config={"HKisland|HKairport": "../config/mars_lvig_hk_cameras.yaml",
+                       "AMtown|AMvalley": "../config/mars_lvig_am_cameras.yaml"},
     )
-    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig]
+    m3dgr = DatasetConfig(
+        name="m3dgr",
+        config={".": "../config/m3dgr.yaml"},
+        bag_files=[
+            f"/media/hsiaochuan/hsiaochuan-data/M3DGR/{seq}.bag"
+            for seq in [
+                "Dark01",
+                "Dark02",
+                "Occlusion03",
+                "Occlusion04",
+                "Outdoor01",
+                "Varying-illu03",
+                "Varying-illu04",
+                "Varying-illu05",
+                "GNSS-denial01",
+                "GNSS-denial02",
+            ]
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/groundtruth",
+        gnss_dir="/media/hsiaochuan/hsiaochuan-data/M3DGR/GNSS",
+    )
+    i2nav_robot = DatasetConfig(
+        name="i2nav_robot",
+        config={".": "../config/i2nav_robot.yaml"},
+        bag_files=[
+            f"/media/hsiaochuan/hsiaochuan-data/inav-robot/{seq}.bag"
+            for seq in [
+                "building00",
+                "building01",
+                "parking00",
+                "parking01",
+            ]
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/inav-robot/groundtruth",
+        pgo_config="../config/pgo.yaml",
+        camera_config={".": "../config/i2nav_robot_camera.yaml"},
+    )
+
+    fusionportablev2 = DatasetConfig(
+        name="fusionportablev2",
+        config={".": "../config/fusionportablev2.yaml"},
+        bag_files=[
+            f"/media/hsiaochuan/hsiaochuan-data/fusionportablev2/{seq}.bag"
+            for seq in [
+                "ugv_parking03",
+                "ugv_campus00",
+                "ugv_campus01",
+                "ugv_transition00",
+                "ugv_transition01",
+            ]
+        ],
+        run_mode=RunMode.OFFLINE,
+        ground_truth_dir="/media/hsiaochuan/hsiaochuan-data/fusionportablev2/groundtruth",
+        camera_config={".": "../config/fusionportablev2_camera.yaml"},
+    )
+    all_datasets = [mcd_viral, mcd_viral_ouster, hilti_2022, fast_livo2, ntu_viral, mars_lvig, m3dgr, i2nav_robot,
+                    fusionportablev2]
     run_datasets = []
     for dataset in all_datasets:
         if dataset.name in name_list:
@@ -569,14 +625,20 @@ def DatasetsList(name_list: List[str]) -> List[DatasetConfig]:
 def main():
     parser = argparse.ArgumentParser(description="SLAM Test Framework")
     parser.add_argument("--datasets", nargs="+",
-                        default=["mcd_viral"],
+                        default=["m3dgr"],
                         help="Run only specified datasets (by name)")
-    parser.add_argument("--if_delete_result_dir", action="store_true", default=True, help="Delete result dir if exists")
+    parser.add_argument("--if_delete_result_dir", action="store_true", default=False,
+                        help="Delete result dir if exists")
     parser.add_argument("--if_slam", action="store_true", default=True, help="Run SLAM")
-    parser.add_argument("--if_postprocess", action="store_true", default=False, help="Run points post-processing")
-    parser.add_argument("--if_rviz", action="store_true", default=False, help="Run rviz")
-    parser.add_argument("--start", type=float, default=0.0, help="Start time (sec) for offline mode")
-    parser.add_argument("--duration", type=float, default=-1.0,
+    parser.add_argument("--if_pgo", action="store_true", default=False, help="Run run_pgo on the SLAM scans")
+    parser.add_argument("--if_clean", action="store_true", default=False, help="Run run_clean, dynamic point removal")
+    parser.add_argument("--if_ba", action="store_true", default=False,
+                        help="Run run_ba, BALM3 bundle adjustment of the poses")
+    parser.add_argument("--if_merge", action="store_true", default=False, help="Run run_merge, writes map.pcd")
+    parser.add_argument("--if_mls", action="store_true", default=False, help="Run run_mls on map.pcd")
+    parser.add_argument("--if_rviz", action="store_true", default=True, help="Run rviz")
+    parser.add_argument("--start", type=float, default=0, help="Start time (sec) for offline mode")
+    parser.add_argument("--duration", type=float, default=-1,
                         help="Duration (sec) for offline mode, -1 for full length")
     args = parser.parse_args()
     if args.if_rviz:
@@ -598,7 +660,11 @@ def main():
     runner = SLAMTestRunner()
     runner.if_delete_result_dir = args.if_delete_result_dir
     runner.if_slam = args.if_slam
-    runner.if_postprocess = args.if_postprocess
+    runner.if_pgo = args.if_pgo
+    runner.if_clean = args.if_clean
+    runner.if_ba = args.if_ba
+    runner.if_merge = args.if_merge
+    runner.if_mls = args.if_mls
     runner.run_all(datasets)
 
 

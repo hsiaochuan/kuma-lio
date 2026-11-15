@@ -1,15 +1,38 @@
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "stamp_pose.h"
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 
+#include <algorithm>
 #include <boost/filesystem.hpp>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 
-namespace faster_lio {
+namespace kuma_lio {
 
 StampedPose::StampedPose() : time(0), pose(Eigen::Isometry3d::Identity()) {}
 
@@ -87,8 +110,7 @@ void TrajectoryGenerator::save_to_tumtxt(const Trajectory &traj, const std::stri
 void TrajectoryGenerator::save_to_pcd(const Trajectory &traj, const std::string &filename, double axis_length,
                                       int points_per_axis) {
     pcl::PointCloud<pcl::PointXYZRGB> cloud;
-    cloud.clear();
-
+    cloud.reserve(traj.size() * 3 * points_per_axis);
     // For each pose in trajectory, create coordinate axes represented by points
     for (const auto &stamped_pose : traj) {
         const Eigen::Vector3d &pos = stamped_pose.pose.translation();
@@ -154,7 +176,7 @@ void TrajectoryGenerator::save_to_pcd(const Trajectory &traj, const std::string 
 
     // Save to PCD file
     if (cloud.size() > 0)
-        pcl::io::savePCDFileASCII(filename, cloud);
+        pcl::io::savePCDFileBinary(filename, cloud);
 }
 
 Eigen::Isometry3d interpolate_pose(const Eigen::Isometry3d &T0, const Eigen::Isometry3d &T1, double t) {
@@ -176,9 +198,15 @@ double TrajectoryInterpolator::t_end() const {
     return traj_.back().time;
 }
 
-Eigen::Isometry3d TrajectoryInterpolator::query(double t) const {
-    if (t <= traj_.front().time) return traj_.front().pose;
-    if (t >= traj_.back().time) return traj_.back().pose;
+std::optional<Eigen::Isometry3d> TrajectoryInterpolator::query(double t, double thr) const {
+    if (t <= traj_.front().time) {
+        if (traj_.front().time - t > thr) return std::nullopt;
+        return traj_.front().pose;
+    }
+    if (t >= traj_.back().time) {
+        if (t - traj_.back().time > thr) return std::nullopt;
+        return traj_.back().pose;
+    }
 
     // Binary search for adjacent frames
     std::size_t lo = 0, hi = traj_.size() - 1;
@@ -186,6 +214,8 @@ Eigen::Isometry3d TrajectoryInterpolator::query(double t) const {
         std::size_t mid = (lo + hi) / 2;
         (traj_[mid].time <= t ? lo : hi) = mid;
     }
+    // the nearest stamp is one of the two neighbours
+    if (std::min(t - traj_[lo].time, traj_[hi].time - t) > thr) return std::nullopt;
     double span = traj_[hi].time - traj_[lo].time;
     double frac = (span > 1e-12) ? (t - traj_[lo].time) / span : 0.0;
     return interpolate_pose(traj_[lo].pose, traj_[hi].pose, frac);
@@ -195,5 +225,5 @@ const Trajectory &TrajectoryInterpolator::trajectory() const {
     return traj_;
 }
 
-}  // namespace faster_lio
+}  // namespace kuma_lio
 

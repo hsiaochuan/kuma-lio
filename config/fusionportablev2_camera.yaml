@@ -1,0 +1,12 @@
+# run_ba / run_mapping_offline --camera_fname: FusionPortableV2 left frame camera (frame_cam00, FLIR BFS-U3, UGV
+# sequences), from github.com/fusionportable/calibration_files 20230426_calib/calib/frame_cam00.yaml
+# extrin = T_imu_cam: P_imu = R * P_cam + t, the inverse of frame_cam00.yaml quaternion/translation_sensor_body_imu
+# (T_frame_cam00_body_imu); right only when the poses are IMU poses T_world_imu
+extrin_R: [-0.00603312, 0.00090498, 0.99998139,
+           -0.99986061, 0.01556288, -0.00604647,
+           -0.01556806, -0.99987848, 0.00081096]
+extrin_t: [0.08529097, 0.06908451, -0.01807886]  # [m]
+# COLMAP cameras.txt line: CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]
+# OPENCV: fx, fy, cx, cy, k1, k2, p1, p2; cx, cy +0.5 (COLMAP's pixel-centre convention); plumb_bob k3 = 0
+camera: |
+  1 OPENCV 1024 768 601.26178 601.177307 517.123047 396.485901 -0.0897810012 0.0848949999 0.000813000021 0.00043700001

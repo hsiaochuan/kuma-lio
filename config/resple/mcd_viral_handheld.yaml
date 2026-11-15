@@ -1,0 +1,42 @@
+common:
+  lid_topic: "/livox/lidar"
+  imu_topic: "/vn200/imu"
+  acc_ratio: false
+  lidar_time_offset: 0
+
+num_threads: 4
+lidar_type: LIVOX
+# Livox points are dropped when any bit of this mask is set in their tag: 32 drops return numbers 2 and 3 only (FAST-LIO's rule); unused for other lidars
+livox_tag_mask: 32
+blind: 0.5          # RESPLE mcd config
+point_filter_num: 2  # RESPLE mcd config
+det_range: 100.0
+extrin_t_il: [0.020, 0.000, -0.037]  # t_lb of RESPLE mcd hh; config/mcd_viral_handheld.yaml has [0.020, 0.000, 0.037]
+extrin_R_il: [1.000, 0.000, 0.000,
+              0.000, -1.000, 0.000,
+              0.000, 0.000, -1.000]
+bag_save_en: false
+resple:
+  knot_hz: 100
+  ds_scan_voxel: 0.5
+  w_pt: 0.01
+  nn_thresh: 0.5
+  coeff_cov: 2.0
+  plane_thresh: 0.1  # max |point-to-plane| of the 5 neighbours when fitting [m]
+  imu_acc_outlier: 10.0
+  imu_gyro_outlier: 5.0
+  q_std_pos_old: 0.0447214  # sqrt(2) x RESPLE: it adds Q twice per knot (propRCP at the knot and again before the update)
+  q_std_ort_old: 0.0447214
+  q_std_pos_new: 0.141421
+  q_std_ort_new: 0.141421
+  q_std_bg: 0.0  # RESPLE has no bias random walk
+  q_std_ba: 0.0
+  cov_P0: 0.02
+  cov_acc: [1.0, 1.0, 1.0]
+  cov_gyro: [0.1, 0.1, 0.1]
+  cov_bg: [0.2, 0.2, 0.2]
+  cov_ba: [0.2, 0.2, 0.2]
+  # ikd-tree local map
+  ds_lm_voxel: 0.5             # ikd-tree downsample leaf [m]
+  cube_len: 2000.0         # local map cube edge length [m]
+  nn_search_radius: 2.236  # Nearest_Search max distance [m]

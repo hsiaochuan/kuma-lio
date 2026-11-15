@@ -1,5 +1,4 @@
-#ifndef THREAD_POOL_H
-#define THREAD_POOL_H
+#pragma once
 
 #include <vector>
 #include <queue>
@@ -94,5 +93,3 @@ inline ThreadPool::~ThreadPool()
     for(std::thread &worker: workers)
         worker.join();
 }
-
-#endif

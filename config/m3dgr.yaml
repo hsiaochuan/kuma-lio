@@ -1,0 +1,81 @@
+common:
+  lid_topic: "/livox/avia/lidar"
+  imu_topic: "/livox/avia/imu"
+  img_topic: ""
+  acc_ratio: false
+  lidar_time_offset: 0
+  image_time_offset: 0
+
+num_threads: 4
+lidar_type: LIVOX
+livox_tag_mask: 32
+blind: 0.5
+point_filter_num: 1
+img_filter: 1  # keep one image in img_filter (1 = every image)
+det_range: 300.0
+# Livox Avia with its internal IMU (same extrinsic as the FAST-LIO2 / Voxel-SLAM baselines)
+extrin_t_il: [0.04165, 0.02326, -0.0284]
+extrin_R_il: [1, 0, 0,
+              0, 1, 0,
+              0, 0, 1]
+pcd_save_en: false
+pcd_save_interval: 1.0
+bag_save_en: false
+image_save_en: false
+image_save_interval: 1.5
+fastlio:
+  mode: LIO
+  # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
+  sub_max: 4
+  # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
+  sub_std_acc: 0.0
+  sub_std_gyr: 0.0
+  down_size: 0.2
+  cov_gyr: 0.01
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  r_base: 0.0005
+
+lba:
+  win_size: 10
+  voxel_size: 1.0
+  plane_eigen_ratio: 0.1
+  min_plane_size: 0.1
+  clutter_points: 20
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  sigma_num: 3
+  pose_var: 1.0e-4
+  range_err: 0.02
+  angle_err: 0.05
+  frame_dt: 0.1
+  map_range: 200.0
+
+gnss:
+  # M3DGR calibration.md "GNSS antenna -> avia" T = (-0.358, 0.086, 0.429), p_avia = p_ant + T, so the antenna is at T
+  # in the Avia frame; plus avia -> avia_imu (0.04165, 0.02326, -0.0284) = extrin_t_il gives the antenna in the IMU frame
+  lever_arm: [-0.31635, 0.10926, 0.4006]
+  ali_min_travel: 10.0
+  ali_refine: true  # fastlio: yaw of the alignment re-estimated from the TDCP displacements
+  max_gap: 0.1
+  tdcp_dop_slip: 0.05  # [m] |phase change - integrated Doppler| above this is a cycle slip; Outdoor01: p99.9 0.036 m
+  tdcp_enable: true
+  tdcp_std: 0.02
+  tdcp_outlier: 0.5
+  tdcp_chi2: 10.83
+  tdcp_min_sat: 5
+  tdcp_init_weight: 1.0
+  tdcp_init_min_horiz: 0.05
+  tdcp_init_max_std: 0.5
+  std_clk: 10.0
+  std_isb: 0.01
+  std_clk_init: 10.0
+  std_ext_yaw_init: 0.2
+  std_ext_pos_init: 5.0

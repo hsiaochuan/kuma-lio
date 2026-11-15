@@ -1726,5 +1726,5 @@ bool KD_TREE<PointType>::point_cmp_z(PointType a, PointType b) { return a.z < b.
 template class KD_TREE<pcl::PointXYZ>;
 template class KD_TREE<pcl::PointXYZI>;
 template class KD_TREE<pcl::PointXYZINormal>;
-template class KD_TREE<faster_lio::Point>;
+template class KD_TREE<kuma_lio::Point>;
 

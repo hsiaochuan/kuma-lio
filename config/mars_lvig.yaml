@@ -1,37 +1,102 @@
+# ╔═══════════════════════════════════════════════════════════════════════════════════════╗
+# ║                     Configuration Settings                                            ║
+# ╠═══════════════════════════════════════════════════════════════════════════════════════╣
+# ║    Series   │      ID     │ img_time_offset │ exposure_time_init │  -s (start hover)  ║
+# ╠═══════════════════════════════════════════════════════════════════════════════════════╣
+# ║  HKairport  │ HKairport01 │       0.1       │         0.0        │         75         ║
+# ║             │ HKairport02 │      -0.1       │         0.0        │         60         ║
+# ║             │ HKairport03 │      -0.1       │         0.0        │         62         ║
+# ╠═══════════════════════════════════════════════════════════════════════════════════════╣
+# ║  HKisland   │ HKisland01  │       0.0       │         0.0        │        118         ║
+# ║             │ HKisland02  │       0.1       │         0.0        │         80         ║
+# ║             │ HKisland03  │      -0.1       │         0.0        │         72         ║
+# ╠═══════════════════════════════════════════════════════════════════════════════════════╣
+# ║  AMtown     │ AMtown01    │      -0.1       │       0.0285       │         75         ║
+# ║             │ AMtown02    │      -0.1       │       0.0285       │         50         ║
+# ║             │ AMtown03    │      -0.1       │       0.0285       │        106         ║
+# ╠═══════════════════════════════════════════════════════════════════════════════════════╣
+# ║  AMvalley   │ AMvalley01  │      -0.1       │       0.0132       │         70         ║
+# ║             │ AMvalley02  │      -0.1       │       0.0132       │         65         ║
+# ║             │ AMvalley03  │      -0.1       │       0.0132       │         68         ║
+# ╚═══════════════════════════════════════════════════════════════════════════════════════╝
 common:
   lid_topic: "/livox/lidar"
   imu_topic: "/livox/imu"
-  camera_topic: ""
-  camera_enable: false
-  visual_update: false
-  imu_enable: true
+  img_topic: "/left_camera/image/compressed"
   acc_ratio: true
   lidar_time_offset: 0
-  camera_time_offset: 0
-  image_skip: 1
+  image_time_offset: 0
 
+num_threads: 8
 lidar_type: LIVOX
+# Livox points are dropped when any bit of this mask is set in their tag: 32 drops return numbers 2 and 3 only (FAST-LIO's rule); unused for other lidars
+livox_tag_mask: 32
 blind: 1.0
-point_filter_num: 1
+point_filter_num: 2
+img_filter: 1  # keep one image in img_filter (1 = every image)
 det_range: 450.0
-
 extrin_t_il: [0.04165, 0.02326, -0.0284]
-extrin_R_il: [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-ds_scan_voxel: 0.5
-ds_lm_voxel: 0.5
-
-knot_hz:      100               # control points per second of the B-spline trajectory
-w_pt:         0.01              # per-point measurement variance of the LiDAR residual
-plane_thresh: 0.1               # max |point-to-plane| of the 5 neighbours when fitting [m]
-nn_thresh:    0.5               # point-to-plane residual gate [m]
-coeff_cov:    2.0               # accept a point when lid_cov < w_pt * coeff_cov
-std_sys_pos:  0.1               # spline process noise, position
-std_sys_ort:  0.1               # spline process noise, orientation
-cov_acc:      [1.0, 1.0, 1.0]   # accelerometer measurement variance
-cov_gyro:     [0.1, 0.1, 0.1]   # gyroscope measurement variance
-
+extrin_R_il: [1, 0, 0,
+              0, 1, 0,
+              0, 0, 1]
 pcd_save_en: false
-pcd_save_interval: 30
+pcd_save_interval: 0
 bag_save_en: false
 image_save_en: false
+image_save_interval: 10.0  # [m] the drone flies 80-130 m up: 10 m is a 4-7 deg view change, enough overlap for COLMAP
+fastlio:
+  mode: LIGO
+  # FR-LIO sub-frames: a frame is cut into at most sub_max slices, each updated on its own, then smoothed; 1 = one update per frame
+  sub_max: 4
+  # IMU std within a frame at which sub_max slices are used (accel [m/s^2], gyro [rad/s]); both <= 0: always sub_max
+  sub_std_acc: 0.0
+  sub_std_gyr: 0.0
+  down_size: 0.2
+  cov_gyr: 0.01
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  r_base: 0.001
+
+lba:
+  win_size: 10
+  voxel_size: 2.0
+  plane_eigen_ratio: 0.1      # 平面判据 lambda_0/lambda_1 的上限，无量纲
+  min_plane_size: 0.1        # 平面面内较小方向的最小标准差，按本层格子边长的比例给（铺满约 0.289）
+  clutter_points: 30         # 一个 cell 点数超过此值且不属于任何平面就清空其中的点，0 为关闭
+  min_points: 5
+  max_fix_points: 20
+  max_iter: 3
+  imu_coef: 0.000025
+  cov_gyr: 0.0001
+  cov_acc: 1.0
+  rdw_gyr: 1.0e-4
+  rdw_acc: 1.0e-4
+  sigma_num: 3
+  pose_var: 1.0e-4
+  range_err: 0.02
+  angle_err: 0.15
+  frame_dt: 0.1
+  map_range: 1000.0
+
+gnss:
+  # raw GNSS (u-blox) antenna in the IMU frame: CAD_extrinsic.yaml "Raw GNSS receiver antenna phase center in
+  # LiDAR frame" (-0.3501, 0.1631, 0) + extrin_t_il; the RTK antenna entry is the ground truth's, not this one
+  lever_arm: [-0.30845, 0.18636, -0.0284]
+  ali_min_travel: 10.0
+  ali_refine: true  # fastlio: yaw of the alignment re-estimated from the TDCP displacements
+  max_gap: 1.0
+  tdcp_dop_slip: 1.0  # [m] |phase change - integrated Doppler| above this is a cycle slip (the old fixed value)
+  tdcp_enable: true
+  tdcp_std: 0.1
+  tdcp_outlier: 0.5
+  tdcp_chi2: 10.83
+  tdcp_min_sat: 5
+  tdcp_init_weight: 1.0
+  tdcp_init_min_horiz: 0.05
+  tdcp_init_max_std: 0.5
+  std_clk: 10.0
+  std_isb: 0.01
+  std_clk_init: 10.0
+  std_ext_yaw_init: 0.2
+  std_ext_pos_init: 5.0

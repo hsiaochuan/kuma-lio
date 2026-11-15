@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""Extract MARS-LVIG ground truth as TUM files.
+
+The dataset has no ground-truth files: the reference is the on-board RTK
+stream inside every bag.  This script takes /dji_osdk_ros/rtk_position
+(NavSatFix, 5 Hz) as it is -- the RTK antenna position, with its recorded
+stamps -- converts it to a local ENU frame anchored at the first valid fix,
+and writes it in TUM format with an identity orientation.
+
+Usage:
+  source /opt/ros/noetic/setup.bash
+  python3 extract_mars_lvig_gt.py /media/hsiaochuan/hsiaochuan-data/MARS-LVIG \
+      -o /media/hsiaochuan/hsiaochuan-data/MARS-LVIG/ground-truth --overwrite
+"""
 import argparse
 import glob
 import math
@@ -12,8 +25,6 @@ except ImportError:
              "(e.g. `source /opt/ros/noetic/setup.bash`)")
 
 RTK_POS_TOPIC = "/dji_osdk_ros/rtk_position"
-GPS_POS_TOPIC = "/dji_osdk_ros/gps_position"
-UBLOX_LLA_TOPIC = "/ublox_driver/receiver_lla"
 
 # WGS84
 WGS84_A = 6378137.0
@@ -48,8 +59,7 @@ def ecef_to_enu(x, y, z, ref_lat_deg, ref_lon_deg, ref_ecef):
 
 
 def stamp_of(msg, bag_time):
-    """Prefer the header stamp: in MARS-LVIG it is GPS-disciplined and shares a
-    clock with /livox/lidar, while the bag record time carries write jitter."""
+    """The header stamp as recorded, else the bag record time."""
     header = getattr(msg, "header", None)
     if header is not None and (header.stamp.secs or header.stamp.nsecs):
         return header.stamp.to_sec()
@@ -59,48 +69,27 @@ def stamp_of(msg, bag_time):
 def extract(bag_path, out_path):
     name = os.path.splitext(os.path.basename(bag_path))[0]
     with rosbag.Bag(bag_path, "r") as bag:
-        available = set(bag.get_type_and_topic_info().topics.keys())
-
-        pos_topic = None
-        for cand in (RTK_POS_TOPIC, GPS_POS_TOPIC, UBLOX_LLA_TOPIC):
-            if cand in available:
-                pos_topic = cand
-                break
-        if pos_topic is None:
-            print("  [skip] %s: no NavSatFix ground-truth topic" % name)
+        if RTK_POS_TOPIC not in bag.get_type_and_topic_info().topics:
+            print("  [skip] %s: no %s" % (name, RTK_POS_TOPIC))
             return False
-        if pos_topic != RTK_POS_TOPIC:
-            print("  [warn] %s: %s missing, falling back to %s (lower accuracy)"
-                  % (name, RTK_POS_TOPIC, pos_topic))
-
-        fixes = [(stamp_of(msg, t), msg)
-                 for _, msg, t in bag.read_messages(topics=[pos_topic])]
-
-    if not fixes:
-        print("  [skip] %s: %s carries no messages" % (name, pos_topic))
-        return False
-
-    fixes.sort(key=lambda p: p[0])
+        fixes = [(stamp_of(msg, t), msg) for _, msg, t in bag.read_messages(topics=[RTK_POS_TOPIC])]
+    fixes.sort(key=lambda f: f[0])
 
     rows = []
     ref = None
-    n_nan, n_dup = 0, 0
+    n_invalid, n_dup = 0, 0
     last_ts = None
     for ts, msg in fixes:
-        if not all(map(math.isfinite, (msg.latitude, msg.longitude, msg.altitude))):
-            n_nan += 1
-            continue
-        if msg.latitude == 0.0 and msg.longitude == 0.0:
-            n_nan += 1
+        if not all(map(math.isfinite, (msg.latitude, msg.longitude, msg.altitude))) or \
+                (msg.latitude == 0.0 and msg.longitude == 0.0):
+            n_invalid += 1
             continue
         if last_ts is not None and ts <= last_ts:
             n_dup += 1
             continue
         last_ts = ts
-
         if ref is None:
-            ref = (msg.latitude, msg.longitude, msg.altitude,
-                   lla_to_ecef(msg.latitude, msg.longitude, msg.altitude))
+            ref = (msg.latitude, msg.longitude, msg.altitude, lla_to_ecef(msg.latitude, msg.longitude, msg.altitude))
         x, y, z = lla_to_ecef(msg.latitude, msg.longitude, msg.altitude)
         rows.append((ts,) + ecef_to_enu(x, y, z, ref[0], ref[1], ref[3]))
 
@@ -111,23 +100,17 @@ def extract(bag_path, out_path):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         f.write("# MARS-LVIG ground truth extracted from %s\n" % os.path.basename(bag_path))
-        f.write("# source topic: %s (position only, identity orientation)\n" % pos_topic)
-        f.write("# local ENU frame anchored at lat=%.9f lon=%.9f alt=%.4f\n"
-                % (ref[0], ref[1], ref[2]))
+        f.write("# source topic: %s (RTK antenna position, identity orientation)\n" % RTK_POS_TOPIC)
+        f.write("# local ENU frame anchored at lat=%.9f lon=%.9f alt=%.4f\n" % ref[:3])
         f.write("# timestamp tx ty tz qx qy qz qw\n")
         for ts, e, n, u in rows:
             f.write("%.9f %.6f %.6f %.6f 0.0 0.0 0.0 1.0\n" % (ts, e, n, u))
 
-    xs = [r[1] for r in rows]
-    ys = [r[2] for r in rows]
-    zs = [r[3] for r in rows]
     length = sum(math.dist(rows[i][1:4], rows[i - 1][1:4]) for i in range(1, len(rows)))
     print("  [ok]   %s -> %s" % (name, out_path))
-    print("         %d poses, %.1f s, path %.1f m, extent E %.1f m / N %.1f m / U %.1f m"
-          % (len(rows), rows[-1][0] - rows[0][0], length,
-             max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)))
-    if n_nan or n_dup:
-        print("         dropped: %d invalid, %d non-monotonic" % (n_nan, n_dup))
+    print("         %d poses, %.1f s, path %.1f m" % (len(rows), rows[-1][0] - rows[0][0], length))
+    if n_invalid or n_dup:
+        print("         dropped: %d invalid, %d non-monotonic" % (n_invalid, n_dup))
     return True
 
 

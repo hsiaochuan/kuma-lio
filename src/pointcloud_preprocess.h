@@ -1,5 +1,26 @@
-#ifndef FASTER_LIO_POINTCLOUD_PROCESSING_H
-#define FASTER_LIO_POINTCLOUD_PROCESSING_H
+// MIT License
+//
+// Copyright (c) 2026 hsiaochuan
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
 
 #include <livox_ros_driver/CustomMsg.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -11,10 +32,6 @@
 #include <glog/logging.h>
 #include "common_lib.h"
 
-#include <velodyne_msgs/VelodyneScan.h>
-#include <velodyne_pointcloud/pointcloudXYZIRT.h>
-#include <velodyne_pointcloud/rawdata.h>
-#include "laser_mapping_param.h"
 namespace velodyne_ros {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
@@ -85,13 +102,12 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(hesai_ros::Point,
 )
 // clang-format on
 
-namespace faster_lio {
+namespace kuma_lio {
 
 enum class LidarType {
     LIVOX = 1,
     OUSTER,
     HESAI,
-    VELODYNE_SCAN,
     VELODYNE_POINTCLOUD2,
 };
 inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
@@ -101,14 +117,20 @@ inline LidarType LidarTypeFromString(const std::string &lidar_type_str) {
         return LidarType::OUSTER;
     } else if (lidar_type_str == "HESAI") {
         return LidarType::HESAI;
-    } else if (lidar_type_str == "VELODYNE_SCAN") {
-        return LidarType::VELODYNE_SCAN;
     } else if (lidar_type_str == "VELODYNE_POINTCLOUD2") {
         return LidarType::VELODYNE_POINTCLOUD2;
     }else {
         throw std::runtime_error("unknown lidar type: " + lidar_type_str);
     }
 }
+
+// What the handlers read, filled from the config by the app that owns the preprocess.
+struct PreprocessParam {
+    int livox_tag_mask = 0x3F;  // Livox points are dropped when any of these tag bits is set
+    int point_filter_num = 1;   // keep one point in point_filter_num
+    double blind = 0.0;         // [m] closer returns are dropped
+    float det_range_ = 100.0f;  // [m] farther returns are dropped
+};
 
 /**
  * point cloud preprocess
@@ -118,24 +140,13 @@ class PointCloudPreprocess {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    PointCloudPreprocess() {
-        std::string calibration_fname = "/opt/ros/noetic/share/velodyne_pointcloud/params/32db.yaml";
-        // VLP16, 32C, 32E, VLS128, 64E
-        if (raw_data.setupOffline(calibration_fname, "32E", 200.0, 0.0)) {
-            throw std::runtime_error("failed to setup offline raw data");
-        }
-
-    }
+    PointCloudPreprocess() = default;
     ~PointCloudPreprocess() = default;
 
     PointCloud::Ptr LivoxHandler(const livox_ros_driver::CustomMsg::ConstPtr &msg, std::int64_t scan_start);
     PointCloud::Ptr OusterHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
     PointCloud::Ptr HesaiHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
     PointCloud::Ptr VelodynePointsHandler(const sensor_msgs::PointCloud2::ConstPtr &msg, std::int64_t scan_start);
-    PointCloud::Ptr VelodyneScanHandler(const velodyne_msgs::VelodyneScan::ConstPtr &msg, std::int64_t scan_start);
-    velodyne_rawdata::RawData raw_data;
-    std::shared_ptr<LaserMappingParam> param;
+    PreprocessParam param;
 };
-}  // namespace faster_lio
-
-#endif
+}  // namespace kuma_lio

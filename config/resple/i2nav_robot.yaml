@@ -1,0 +1,53 @@
+common:
+#  lid_topic: "/hesai/at128/points"
+  lid_topic: "/livox/mid360/points"
+  imu_topic: "/adi/adis16465/imu"
+  acc_ratio: false
+  lidar_time_offset: 0
+
+num_threads: 8
+lidar_type: LIVOX
+# Livox points are dropped when any bit of this mask is set in their tag: 63 keeps only tag 0 (the Mid360's good returns)
+livox_tag_mask: 63
+blind: 2.0
+point_filter_num: 1
+det_range: 50.0
+# HESAI lidar
+#extrin_t_il: [0.042, -0.018, -0.063]
+#extrin_R_il: [0.99993817, -0.00770257, -0.00802099,
+#              -0.0077132, -0.99996941, -0.00129509,
+#              -0.00801077, 0.00135687, -0.99996699]
+# MID360 lidar
+extrin_t_il: [0.0, 0.0, -0.159]
+extrin_R_il: [0.99997669, 0.00548118, -0.00407184,
+              0.00549873, -0.99997558, 0.00431282,
+              -0.0040481, -0.00433511, -0.99998241]
+bag_save_en: false
+resple:
+  knot_hz: 100
+  ds_scan_voxel: 0.1
+  w_pt: 0.01
+  nn_thresh: 0.5
+  coeff_cov: 2.0
+  plane_thresh: 0.1  # max |point-to-plane| of the 5 neighbours when fitting [m]
+  # Off.  Bumps reach 17 m/s^2; the default 10 drops those rows, and in the AT128's 48 ms without points
+  # nothing is left to hold the spline's even/odd knot zig-zag, which then grows to meters.
+  imu_acc_outlier: 1000000.0
+  imu_gyro_outlier: 5.0
+  # Stiff: each 10 ms window sees a 24 deg fan, so a 0.1 deg tilt error moves z by 2 cm from one fan to the next.
+  # A loose spline follows that and z saws at the frame rate; a cart does not move like that.
+  q_std_pos_old: 0.00316228
+  q_std_ort_old: 0.01
+  q_std_pos_new: 0.01
+  q_std_ort_new: 0.03
+  q_std_bg: 1.0e-3
+  q_std_ba: 1.0e-2
+  cov_P0: 0.02
+  cov_acc: [1.0, 1.0, 1.0]
+  cov_gyro: [0.0001, 0.0001, 0.0001]
+  cov_bg: [0.000001, 0.000001, 0.000001]
+  cov_ba: [0.2, 0.2, 0.2]
+  # ikd-tree local map
+  ds_lm_voxel: 0.1             # ikd-tree downsample leaf [m]
+  cube_len: 2000.0         # local map cube edge length [m]
+  nn_search_radius: 2.236  # Nearest_Search max distance [m]
